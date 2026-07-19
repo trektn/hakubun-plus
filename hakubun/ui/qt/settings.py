@@ -531,8 +531,15 @@ class SettingsDialog(QDialog):
             "for shows on your list after every sync, using a MyAnimeList "
             "account added in Hakubun+. Not needed if this account already "
             "is MyAnimeList.")
+        self.load_mal_scores_btn = QPushButton('Load MAL Scores Now')
+        self.load_mal_scores_btn.setToolTip(
+            "Fetch MAL scores for the current list right now, without "
+            "waiting for a sync or enabling the automatic option above.")
+        self.load_mal_scores_btn.clicked.connect(self.s_load_mal_scores)
         g_mal_scores_layout = QVBoxLayout()
         g_mal_scores_layout.addWidget(self.add_mal_scores)
+        g_mal_scores_layout.addWidget(
+            self.load_mal_scores_btn, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         g_mal_scores.setLayout(g_mal_scores_layout)
 
         # UI layout
@@ -1029,6 +1036,15 @@ class SettingsDialog(QDialog):
     def s_player_browse(self):
         self.player.setText(QFileDialog.getOpenFileName(
             caption='Choose player executable')[0])
+
+    def s_load_mal_scores(self):
+        try:
+            self.worker.engine.fetch_mal_scores()
+        except utils.EngineError as e:
+            QMessageBox.warning(self, 'MAL Scores', str(e))
+        else:
+            QMessageBox.information(
+                self, 'MAL Scores', 'Fetching MAL scores in the background.')
 
     def s_searchdirs_add(self):
         self._add_dir(QFileDialog.getExistingDirectory(

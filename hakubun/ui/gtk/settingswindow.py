@@ -120,6 +120,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_classic_progress = Gtk.Template.Child()
     checkbox_filter_global = Gtk.Template.Child()
     checkbox_add_mal_scores = Gtk.Template.Child()
+    btn_load_mal_scores = Gtk.Template.Child()
 
     colorbutton_rows_playing = Gtk.Template.Child()
     colorbutton_rows_queued = Gtk.Template.Child()
@@ -344,6 +345,25 @@ class SettingsWindow(Gtk.Window):
         self.save_config()
         self.emit('settings-saved')
         self.destroy()
+
+    @Gtk.Template.Callback()
+    def _on_btn_load_mal_scores_clicked(self, btn):
+        try:
+            self.engine.fetch_mal_scores()
+        except utils.EngineError as e:
+            self._message_dialog(str(e), Gtk.MessageType.ERROR)
+        else:
+            self._message_dialog(
+                'Fetching MAL scores in the background.', Gtk.MessageType.INFO)
+
+    def _message_dialog(self, msg, icon):
+        def response(widget, response_id):
+            widget.destroy()
+
+        dialog = Gtk.MessageDialog(
+            self, Gtk.DialogFlags.MODAL, icon, Gtk.ButtonsType.OK, str(msg))
+        dialog.show_all()
+        dialog.connect("response", response)
 
     @Gtk.Template.Callback()
     def _on_switch_tracker_state_set(self, switch, state):

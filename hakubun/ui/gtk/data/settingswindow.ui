@@ -2074,6 +2074,22 @@
                 <property name="position">3</property>
               </packing>
             </child>
+            <child>
+              <object class="GtkButton" id="btn_load_mal_scores">
+                <property name="label" translatable="yes">Load MAL Scores Now</property>
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">True</property>
+                <property name="halign">start</property>
+                <property name="tooltip_text" translatable="yes">Fetch MAL scores for the current list right now, without waiting for a sync or enabling the automatic option above.</property>
+                <signal name="clicked" handler="_on_btn_load_mal_scores_clicked" swapped="no"/>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">4</property>
+              </packing>
+            </child>
           </object>
           <packing>
             <property name="position">2</property>

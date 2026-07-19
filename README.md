@@ -85,6 +85,16 @@ Additional optional Python dependencies:
 Installation
 ------------
 
+### Arch Linux (AUR)
+
+An [AUR package](https://aur.archlinux.org/packages/hakubun-plus-git) tracking the latest `master` is available:
+
+```sh
+$ yay -S hakubun-plus-git
+# or
+$ paru -S hakubun-plus-git
+```
+
 ### Manual installation
 
 Make sure you've installed the proper dependencies (listed above)
@@ -107,7 +117,7 @@ Or download the source code and install:
 $ git clone --recursive https://github.com/trektn/hakubun-plus.git
 $ cd hakubun-plus
 $ uv build
-$ pip3 install dist/hakubun_plus-0.11-py3-none-any.whl
+$ pip3 install dist/hakubun_plus-0.12-py3-none-any.whl
 ```
 
 ### Extras (User Interfaces)
