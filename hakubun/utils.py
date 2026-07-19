@@ -32,7 +32,7 @@ import time
 import uuid
 from enum import Enum, auto
 
-VERSION = '0.12'
+VERSION = '0.12.1'
 
 DATADIR = os.path.dirname(__file__) + '/data'
 

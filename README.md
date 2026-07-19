@@ -117,7 +117,7 @@ Or download the source code and install:
 $ git clone --recursive https://github.com/trektn/hakubun-plus.git
 $ cd hakubun-plus
 $ uv build
-$ pip3 install dist/hakubun_plus-0.12-py3-none-any.whl
+$ pip3 install dist/hakubun_plus-0.12.1-py3-none-any.whl
 ```
 
 ### Extras (User Interfaces)
