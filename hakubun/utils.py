@@ -633,40 +633,40 @@ class APIFatal(HakubunFatal):
 
 # Configuration defaults
 config_defaults = {
-    'player': 'mpv',
+    'player': '/usr/bin/mpv',
     # When True and 'player' resolves to mpv, playing an episode is
     # handed off to an already-running mpv instance (via its JSON IPC
     # socket, see mpv_ipc_loadfile) instead of spawning a new mpv
     # process/window each time. Falls back to spawning normally if no
     # instance is listening yet.
-    'player_reuse_mpv_instance': False,
+    'player_reuse_mpv_instance': True,
     'searchdir': ['~/Videos'],
     'tracker_enabled': True,
-    'tracker_update_wait_s': 120,
+    'tracker_update_wait_s': 300,
     # When False, the MPRIS tracker updates at 80% of the episode's
     # actual duration (from the player's reported position/length)
     # instead of the fixed wait above -- matches the Plex/Kodi trackers'
     # own obey_update_wait_s toggles, which do the same thing for their
     # own duration sources.
-    'mpris_obey_update_wait_s': True,
+    'mpris_obey_update_wait_s': False,
     # How far into an episode (MPRIS-reported duration) counts as
     # "watched", when the toggle above is off.
     'tracker_update_percentage': 80,
     'tracker_update_close': False,
     'tracker_update_prompt': False,
-    'tracker_not_found_prompt': False,
+    'tracker_not_found_prompt': True,
     'tracker_interval': 10,
     'tracker_process': 'mplayer|mplayer2|mpv',
-    'autoretrieve': 'days',
+    'autoretrieve': 'always',
     'autoretrieve_days': 3,
-    'autosend': 'minutes',
+    'autosend': 'always',
     'autosend_minutes': 60,
     'autosend_size': 5,
     'autosend_at_exit': True,
     'library_autoscan': True,
     'library_full_path': False,
     'scan_whole_list': False,
-    'add_dialog_default_status': 'current',
+    'add_dialog_default_status': 'start',
     'sync_on_settings_apply': False,
     'debug_disable_lock': True,
     'auto_status_change': True,
@@ -772,7 +772,7 @@ gtk_defaults = {
     'remember_geometry': False,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
     'episodebar_style': 1,
     'filter_global': False,
     'colors': {
@@ -801,7 +801,7 @@ qt_defaults = {
     'last_y': 0,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
     'inline_edit': True,
     'columns_state': None,
     'columns_per_api': False,
@@ -827,7 +827,7 @@ qt_defaults = {
 }
 
 qt_per_api_defaults = {
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
     'columns_state': None,
 }
 
