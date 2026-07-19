@@ -1,6 +1,6 @@
 pkgbase = hakubun-plus-git
 	pkgdesc = Multi-site anime/manga list manager; independent Trackma fork with Taiga mode
-	pkgver = 0.10.3.r34.gea654c5
+	pkgver = r1945.g0e29e7f
 	pkgrel = 1
 	url = https://github.com/trektn/hakubun-plus
 	arch = any
