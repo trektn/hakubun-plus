@@ -25,6 +25,18 @@ Features
 - Highly scalable, easy to code new interfaces and support for other sites
 - Secure, uses HTTPS wherever possible.
 
+Which tracker should I use?
+--------
+There isn't a single "best" tracker. Each has different goals and strengths.
+
+| Project | Choose it if... |
+|---------|-----------------|
+| [**Taiga**](https://github.com/erengy/taiga) | You primarily use **Windows**, and/or **torrent anime**, or prefer its built-in search. |
+| [**Hakubun**](https://github.com/trektn/hakubun) | You use ***nix** and wanted **Trackma** with a more opinionated UI/UX, or you use **Kitsu** and want GraphQL support. |
+| [**Trackma**](https://github.com/z411/trackma) | You prefer a **CLI-first** workflow, are building wrappers or automation around it, or simply want to support the original project and its maintainers. |
+| [**Hakubun+**](https://github.com/trektn/hakubun-plus) | The same as Hakubun but you also want features not available elsewhere, such as the **airing schedule** or **MAL score** additions. It should work across platforms, including Windows, but Windows is not tested. Expect it to be less stable than all of these other options on *nix or Windows. |
+
+
 Currently supported websites
 ----------------------------
 
