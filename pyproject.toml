@@ -1,15 +1,14 @@
 [project]
-name = "trackma"
-version = "0.10.4"
-description = "Open multi-site list manager"
-authors = [{ name = "z411", email = "z411@omaera.org" }]
+name = "hakubun-plus"
+version = "0.11"
+description = "Open multi-site list manager for Unix-like systems (independent fork of Trackma, with Taiga mode and an airing schedule window)"
+authors = [{ name = "trektn", email = "trekt@poopf.art" }]
 requires-python = ">=3.9,<4"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["COPYING"]
 keywords = [
     "list manager",
-    "curses",
     "gtk",
     "qt",
     "myanimelist",
@@ -43,13 +42,11 @@ qt = [
     "pyqt6>=6.2.0,<7",
     "pillow>=11.0.0,<12",
 ]
-curses = ["urwid>=2.1.2,<3"]
 ui = [
     "pygobject>=3.42.1,<4",
     "pycairo>=1.20.0,<2",
     "pillow>=11.0.0,<12",
     "pyqt6>=6.2.0,<7",
-    "urwid>=2.1.2,<3",
 ]
 trackers = [
     "inotify>=0.2.10,<0.3",
@@ -60,19 +57,20 @@ discord_rpc = ["pypresence>=4.2.1,<5"]
 anitopy = ["anitopy>=2.0.0,<3"]
 
 [project.urls]
-Homepage = "https://z411.github.io/trackma/"
-Repository = "https://github.com/z411/trackma"
+Homepage = "https://github.com/trektn/hakubun-plus"
+Repository = "https://github.com/trektn/hakubun-plus"
+Upstream = "https://github.com/z411/trackma"
 
 [project.scripts]
-trackma = "trackma.ui.cli:main"
-trackma-curses = "trackma.ui.curses:main"
-trackma-gtk = "trackma.ui.gtk:main"
-trackma-qt = "trackma.ui.qt:main"
+hakubun-plus = "hakubun.ui.cli:main"
+hakubun-plus-gtk = "hakubun.ui.gtk:main"
+hakubun-plus-qt = "hakubun.ui.qt:main"
 
 [tool.uv]
 
 [tool.uv.build-backend]
 module-root = ""
+module-name = "hakubun"
 
 [build-system]
 requires = ["uv_build>=0.8.13"]

@@ -1,0 +1,1891 @@
+# This file is part of Hakubun.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import base64
+import os
+
+from PyQt6 import QtCore, QtGui
+from PyQt6.QtGui import QAction, QActionGroup
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox,
+                             QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+                             QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
+                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
+                             QTabBar, QToolButton, QVBoxLayout, QWidget)
+
+from hakubun import messenger
+from hakubun import utils
+from hakubun.accounts import AccountManager
+from hakubun.ui.qt.accounts import AccountDialog
+from hakubun.ui.qt.add import AddDialog
+from hakubun.ui.qt.airing import AiringScheduleDialog
+from hakubun.ui.qt.details import DetailsDialog
+from hakubun.ui.qt.nowplaying import NowPlayingWidget
+from hakubun.ui.qt.settings import SettingsDialog
+from hakubun.ui.qt.util import FilterBar, getIcon
+from hakubun.ui.qt.widgets import HoverProgressBar, PlaybackBar, ScoreSlider, ShowsTableView
+from hakubun.ui.qt.workers import EngineWorker, ImageWorker
+
+class MainWindow(QMainWindow):
+    """
+    Main GUI class
+
+    """
+    debug = False
+    config = None
+    tray = None
+    mediainfo = None
+    accountman = None
+    accountman_widget = None
+    worker = None
+    image_worker = None
+    started = False
+    selected_show_id = None
+    show_lists = None
+    finish = False
+    was_maximized = False
+
+    def __init__(self, debug=False, force_taiga=False):
+        QMainWindow.__init__(self, None)
+        self.debug = debug
+
+        # Load QT specific configuration
+        self.configfile = utils.to_config_path('ui-qt.json')
+        self.config = utils.parse_config(self.configfile, utils.qt_defaults)
+        if force_taiga:
+            # --taiga: this run only, not written back to disk.
+            self.config['taiga_mode'] = True
+        # Snapshotted once here rather than read live from self.config
+        # everywhere below: the settings dialog mutates self.config
+        # in place immediately on Apply/OK (before any restart happens,
+        # since taiga_mode is restart-gated), which would otherwise make
+        # post-startup code believe it's in taiga mode -- and start
+        # touching taiga-only widgets that were never built because the
+        # window itself was constructed for the other mode.
+        self._taiga_mode = self.config['taiga_mode']
+
+        # Build UI
+        self.app_name = 'Taiga-qt' if self._taiga_mode else 'Hakubun+-qt'
+        if self._taiga_mode:
+            QApplication.setWindowIcon(
+                QtGui.QIcon(utils.DATADIR + '/taiga_icon.png'))
+        elif os.name != "nt":
+            QApplication.setWindowIcon(QtGui.QIcon(utils.DATADIR + '/icon.png'))
+        else:
+            QApplication.setWindowIcon(QtGui.QIcon(utils.DATADIR + '/icon.ico'))
+        self.setWindowTitle(self.app_name)
+
+        self.accountman = AccountManager()
+
+        # Go directly into the application if a default account is set
+        # Open the selection dialog otherwise
+        default = self.accountman.get_default()
+        if default:
+            self.start(default)
+        else:
+            self.accountman_create()
+            self.accountman_widget.show()
+
+    def accountman_create(self):
+        self.accountman_widget = AccountDialog(None, self.accountman)
+        self.accountman_widget.selected.connect(self.accountman_selected)
+
+    def accountman_selected(self, account_num, remember):
+        account = self.accountman.get_account(account_num)
+
+        if remember:
+            self.accountman.set_default(account_num)
+        else:
+            self.accountman.set_default(None)
+
+        if self.started:
+            self.reload(account)
+        else:
+            self.start(account)
+
+    def start(self, account):
+        """
+        Start engine and everything
+
+        """
+        # Workers
+        self.worker = EngineWorker()
+        self.account = account
+
+        # Get API specific configuration
+        self.api_config = self._get_api_config(account['api'])
+
+        # Timers
+        self.image_timer = QtCore.QTimer()
+        self.image_timer.setInterval(500)
+        self.image_timer.setSingleShot(True)
+        self.image_timer.timeout.connect(self.s_download_image)
+
+        self.busy_timer = QtCore.QTimer()
+        self.busy_timer.setInterval(100)
+        self.busy_timer.setSingleShot(True)
+        self.busy_timer.timeout.connect(self.s_busy)
+
+        # Build menus
+        self.action_play_next = QAction(
+            getIcon('media-playback-start'), 'Play &Next', self)
+        self.action_play_next.setStatusTip('Play the next unwatched episode.')
+        self.action_play_next.setShortcut('Ctrl+N')
+        self.action_play_next.triggered.connect(lambda: self.s_play(True))
+        self.action_play_dialog = QAction('Play Episode...', self)
+        self.action_play_dialog.setStatusTip('Select an episode to play.')
+        self.action_play_dialog.triggered.connect(self.s_play_number)
+        self.action_details = QAction('Show &details...', self)
+        self.action_details.setStatusTip(
+            'Show detailed information about the selected show.')
+        self.action_details.triggered.connect(self.s_show_details)
+        self.action_altname = QAction('Change &alternate name...', self)
+        self.action_altname.setStatusTip(
+            'Set an alternate title for the tracker.')
+        self.action_altname.triggered.connect(self.s_altname)
+        action_play_random = QAction('Play &random show', self)
+        action_play_random.setStatusTip(
+            'Pick a random show with a new episode and play it.')
+        action_play_random.setShortcut('Ctrl+R')
+        action_play_random.triggered.connect(self.s_play_random)
+        self.action_add = QAction(
+            getIcon('edit-find'), 'Search', self)
+        self.action_add.setShortcut('Ctrl+A')
+        self.action_add.triggered.connect(self.s_add)
+        self.action_airing_schedule = QAction(
+            getIcon('view-calendar'), 'Airing Schedule', self)
+        self.action_airing_schedule.setStatusTip(
+            'See when the airing shows in your list air next.')
+        self.action_airing_schedule.triggered.connect(self.s_airing_schedule)
+        self.action_delete = QAction(getIcon('edit-delete'), '&Delete', self)
+        self.action_delete.setStatusTip('Remove this show from your list.')
+        self.action_delete.setShortcut(QtCore.Qt.Key.Key_Delete)
+        self.action_delete.triggered.connect(self.s_delete)
+        action_quit = QAction(getIcon('application-exit'), '&Quit', self)
+        action_quit.setShortcut('Ctrl+Q')
+        action_quit.setStatusTip('Exit Hakubun+.')
+        action_quit.triggered.connect(self._exit)
+
+        self.action_undo = QAction(getIcon('edit-undo'), '&Undo', self)
+        self.action_undo.setStatusTip('Undo the last episode/score/status/tags change.')
+        self.action_undo.setShortcut('Ctrl+Z')
+        self.action_undo.setEnabled(False)
+        self.action_undo.triggered.connect(self.s_undo)
+        self.action_redo = QAction(getIcon('edit-redo'), '&Redo', self)
+        self.action_redo.setStatusTip('Redo the last undone change.')
+        self.action_redo.setShortcuts(['Ctrl+Shift+Z', 'Ctrl+Y'])
+        self.action_redo.setEnabled(False)
+        self.action_redo.triggered.connect(self.s_redo)
+
+        self.action_sync = QAction(getIcon('view-refresh'), '&Sync', self)
+        self.action_sync.setStatusTip(
+            'Send changes and then retrieve remote list')
+        self.action_sync.setShortcut('Ctrl+S')
+        self.action_sync.triggered.connect(lambda: self.s_send(True))
+        self.action_send = QAction('S&end changes', self)
+        self.action_send.setShortcut('Ctrl+E')
+        self.action_send.setStatusTip(
+            'Upload any changes made to the list immediately.')
+        self.action_send.triggered.connect(self.s_send)
+        self.action_retrieve = QAction('Re&download list', self)
+        self.action_retrieve.setShortcut('Ctrl+D')
+        self.action_retrieve.setStatusTip(
+            'Discard any changes made to the list and re-download it.')
+        self.action_retrieve.triggered.connect(self.s_retrieve)
+        action_scan_library = self.action_scan_library = QAction(
+            'Rescan &Library (quick)', self)
+        action_scan_library.setShortcut('Ctrl+L')
+        action_scan_library.triggered.connect(self.s_scan_library)
+        action_rescan_library = self.action_rescan_library = QAction(
+            'Rescan &Library (full)', self)
+        action_rescan_library.triggered.connect(self.s_rescan_library)
+        action_open_folder = QAction('Open containing folder', self)
+        action_open_folder.triggered.connect(self.s_open_folder)
+
+        self.action_reload = QAction('Switch &Account', self)
+        self.action_reload.setStatusTip('Switch to a different account.')
+        self.action_reload.triggered.connect(self.s_switch_account)
+        action_settings = QAction(getIcon('preferences-system'), '&Settings...', self)
+        action_settings.triggered.connect(self.s_settings)
+
+        action_about = QAction(getIcon('help-about'), 'About...', self)
+        action_about.triggered.connect(self.s_about)
+        action_about_qt = QAction('About Qt...', self)
+        action_about_qt.triggered.connect(self.s_about_qt)
+
+        menubar = self.menuBar()
+
+        if self._taiga_mode:
+            # Taiga's own menu bar/toolbar are much simpler than
+            # Hakubun+'s -- File/Services/Tools/Help instead of
+            # Show/List/Mediatype/Options/Help. Actions that don't have
+            # a natural home in that structure (undo/redo, rescan,
+            # mediatype switch, switch account) stay reachable via
+            # File > Library folders or their existing shortcuts rather
+            # than disappearing outright.
+            self.menu_library_folders = QMenu('Library folders', self)
+            self.menu_mediatype = QMenu('Mediatype', self)
+            self.mediatype_actiongroup = QActionGroup(self)
+            self.mediatype_actiongroup.setExclusive(True)
+            self.mediatype_actiongroup.triggered.connect(self.s_mediatype)
+
+            menu_file = menubar.addMenu('&File')
+            menu_file.addMenu(self.menu_library_folders)
+            menu_file.addMenu(self.menu_mediatype)
+            menu_file.addAction(action_play_random)
+            menu_file.addSeparator()
+            menu_file.addAction(self.action_reload)
+            menu_file.addSeparator()
+            menu_file.addAction(action_quit)
+
+            self.menu_services = menubar.addMenu('&Services')
+            self.menu_services.addAction(self.action_sync)
+            self.menu_services.addSeparator()
+            # The per-service section (profile/stats/history links) is
+            # built in _rebuild_services_menu() once the active
+            # account's API and username are known.
+
+            menu_tools = menubar.addMenu('&Tools')
+            menu_tools.addAction(self.action_altname)
+            menu_tools.addAction(self.action_add)
+            menu_tools.addAction(self.action_airing_schedule)
+
+            menu_help = menubar.addMenu('&Help')
+            menu_help.addAction(action_about)
+            menu_help.addAction(action_about_qt)
+
+            # Keep these working by shortcut even with no menu entry.
+            for action in (self.action_undo, self.action_redo,
+                          action_scan_library, action_rescan_library):
+                self.addAction(action)
+
+            toolbar = self.addToolBar('Main')
+            toolbar.setMovable(False)
+            toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            toolbar.addAction(self.action_sync)
+            self.library_folders_btn = QToolButton()
+            self.library_folders_btn.setText('Library folders')
+            self.library_folders_btn.setMenu(self.menu_library_folders)
+            self.library_folders_btn.setPopupMode(
+                QToolButton.ToolButtonPopupMode.InstantPopup)
+            toolbar.addWidget(self.library_folders_btn)
+            toolbar.addAction(action_settings)
+        else:
+            self.menu_show = menubar.addMenu('&Show')
+            self.menu_show.addAction(self.action_play_next)
+            self.menu_show.addAction(self.action_play_dialog)
+            self.menu_show.addAction(self.action_details)
+            self.menu_show.addAction(self.action_altname)
+            self.menu_show.addSeparator()
+            self.menu_show.addAction(action_play_random)
+            self.menu_show.addSeparator()
+            self.menu_show.addAction(self.action_add)
+            self.menu_show.addAction(self.action_airing_schedule)
+            self.menu_show.addAction(self.action_delete)
+            self.menu_show.addSeparator()
+            self.menu_show.addAction(action_quit)
+
+            # Search, Sync, and Settings are common enough to need more
+            # than a buried menu item.
+            toolbar = self.addToolBar('Main')
+            toolbar.setMovable(False)
+            toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            toolbar.addAction(self.action_add)
+            toolbar.addAction(self.action_airing_schedule)
+            toolbar.addAction(self.action_sync)
+            toolbar.addSeparator()
+            toolbar.addAction(self.action_undo)
+            toolbar.addAction(self.action_redo)
+            toolbar.addSeparator()
+            toolbar.addAction(action_settings)
+
+        self.menu_play = QMenu('Play')
+        # Populated per-account in _rebuild_statuses(), once the API's
+        # statuses are known.
+        self.menu_move_to = QMenu('Move to', self)
+
+        # Context menu for right click on list item
+        self.menu_show_context = QMenu()
+        self.menu_show_context.addMenu(self.menu_play)
+        self.menu_show_context.addAction(self.action_details)
+        self.menu_show_context.addMenu(self.menu_move_to)
+        self.menu_show_context.addAction(action_open_folder)
+        self.menu_show_context.addAction(self.action_altname)
+        self.menu_show_context.addSeparator()
+        self.menu_show_context.addAction(self.action_delete)
+
+        # Make icons for viewed episodes
+        rect = QtCore.QSize(16, 16)
+        buffer = QtGui.QPixmap(rect)
+        ep_icon_states = {'all': QStyle.StateFlag.State_On,
+                          'part': QStyle.StateFlag.State_NoChange,
+                          'none': QStyle.StateFlag.State_Off}
+        self.ep_icons = {}
+        for key, state in ep_icon_states.items():
+            buffer.fill(QtCore.Qt.GlobalColor.transparent)
+            painter = QtGui.QPainter(buffer)
+            opt = QStyleOptionButton()
+            opt.state = state
+            self.style().drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorMenuCheckMark, opt, painter)
+            self.ep_icons[key] = QtGui.QIcon(buffer)
+            painter.end()
+
+        if not self._taiga_mode:
+            menu_list = menubar.addMenu('&List')
+            menu_list.addAction(self.action_undo)
+            menu_list.addAction(self.action_redo)
+            menu_list.addSeparator()
+            menu_list.addAction(self.action_sync)
+            menu_list.addSeparator()
+            menu_list.addAction(self.action_send)
+            menu_list.addAction(self.action_retrieve)
+            menu_list.addSeparator()
+            menu_list.addAction(action_scan_library)
+            menu_list.addAction(action_rescan_library)
+            self.menu_mediatype = menubar.addMenu('&Mediatype')
+            self.mediatype_actiongroup = QActionGroup(self)
+            self.mediatype_actiongroup.setExclusive(True)
+            self.mediatype_actiongroup.triggered.connect(self.s_mediatype)
+            menu_options = menubar.addMenu('&Options')
+            menu_options.addAction(self.action_reload)
+            menu_options.addSeparator()
+            menu_options.addAction(action_settings)
+            menu_help = menubar.addMenu('&Help')
+            menu_help.addAction(action_about)
+            menu_help.addAction(action_about_qt)
+
+        # Build layout
+        main_layout = QVBoxLayout()
+        top_hbox = QHBoxLayout()
+        main_hbox = QHBoxLayout()
+        self.list_box = QVBoxLayout()
+        filter_bar_box_layout = QHBoxLayout()
+        self.filter_bar_box = QWidget()
+        left_box = QFormLayout()
+        small_btns_hbox = QHBoxLayout()
+
+        self.show_title = QLabel(self.app_name)
+        show_title_font = QtGui.QFont()
+        show_title_font.setBold(True)
+        show_title_font.setPointSize(12)
+        self.show_title.setFont(show_title_font)
+
+        self.api_icon = QLabel('icon')
+        self.api_user = QLabel('user')
+
+        top_hbox.addWidget(self.show_title, 1)
+        top_hbox.addWidget(self.api_icon)
+        top_hbox.addWidget(self.api_user)
+
+        # Create main models and view
+        self.notebook = QTabBar()
+        self.notebook.currentChanged.connect(self.s_tab_changed)
+
+        self.view = ShowsTableView(palette=self.config['colors'])
+        self.view.context_menu = self.menu_show_context
+        self.view.horizontalHeader().customContextMenuRequested.connect(
+            self.s_show_menu_columns)
+        self.view.horizontalHeader().sortIndicatorChanged.connect(self.s_update_sort)
+        self.view.selectionModel().currentRowChanged.connect(self.s_show_selected)
+        self.view.itemDelegate().setBarStyle(
+            self.config['episodebar_style'], self.config['episodebar_text'])
+        self.view.middleClicked.connect(lambda: self.s_play(True))
+        self.view.doubleClicked.connect(self.s_show_details)
+        self._apply_view()
+
+        self.view.model().sourceModel().progressChanged.connect(self.s_set_episode)
+        self.view.model().sourceModel().scoreChanged.connect(self.s_set_score)
+
+        # Context menu for right click on list header
+        self.menu_columns = QMenu()
+        self.column_keys = {'id': 0,
+                            'title': 1,
+                            'progress': 2,
+                            'score': 3,
+                            'percent': 4,
+                            'next_ep': 5,
+                            'date_start': 6,
+                            'date_end': 7,
+                            'my_start': 8,
+                            'my_end': 9,
+                            'tag': 10,
+                            'my_last_update': 12,
+                            'season': 13,
+                            'type': 14,
+                            'platform_score': 15,
+                            'mal_score': 16}
+
+        for i, column_name in enumerate(self.view.model().sourceModel().columns):
+            action = QAction(column_name, self, checkable=True)
+            action.setData(i)
+            if column_name in self.api_config['visible_columns']:
+                action.setChecked(True)
+
+            action.triggered.connect(self.s_toggle_column)
+            self.menu_columns.addAction(action)
+
+        # Create filter list
+        self.show_filter = QLineEdit()
+        self.show_filter.setClearButtonEnabled(True)
+        self.show_filter.textChanged.connect(self.s_filter_changed)
+        # Filters the current list as you type, but Enter jumps straight
+        # to a full remote search/add.
+        self.show_filter.returnPressed.connect(
+            lambda: self.s_add(self.show_filter.text().strip() or None))
+        filter_tooltip = (
+            "General Search: All fields (columns) of each show will be matched against the search term."
+            "\nAdvanced Searching: A field can be specified by using its key followed by a colon"
+            " e.g. 'title:My_Show date_start:2016'."
+            "\n  Any field may be specified multiple times to match terms in any order e.g. 'tag:Battle+Shounen tag:Ecchi'. "
+            "\n  + and _ are replaced with spaces when searching specific fields."
+            "\n  If colon is used after something that is not a column key, it will treat it as a general term."
+            "\n  ALL terms not attached to a field will be combined into a single general search term"
+            "\n         - 'My date_end:2016 Show' will match shows that have 'My Show' in any field and 2016 in the End Date field."
+            "\n  Available field keys are: "
+        )
+        colkeys = ', '.join(sorted(self.column_keys.keys()))
+        self.show_filter.setToolTip(filter_tooltip + colkeys + '.')
+        self.show_filter_invert = QCheckBox()
+        self.show_filter_invert.stateChanged.connect(self.s_filter_invert_changed)
+        self.show_filter_casesens = QCheckBox()
+        self.show_filter_casesens.stateChanged.connect(self.s_filter_changed)
+
+        if self.config['remember_geometry']:
+            self.resize(self.config['last_width'], self.config['last_height'])
+            self.move(self.config['last_x'], self.config['last_y'])
+        else:
+            self.resize(740, 480)
+
+        spinbox_width = 75
+        self.show_image = QLabel()
+        self.show_image.setFixedHeight(149)
+        self.show_image.setMinimumWidth(100)
+        self.show_image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self._set_default_poster()
+        show_progress_label = QLabel('Progress:')
+        self.show_progress = QSpinBox()
+        self.show_progress.setMinimumWidth(spinbox_width)
+        # Taiga mode overlays the +/- controls on the bar itself
+        # (revealed on hover) instead of using separate buttons beside it.
+        self.show_progress_bar = (
+            HoverProgressBar() if self._taiga_mode else QProgressBar())
+        self.show_progress_btn = QPushButton('Update')
+        self.show_progress_btn.setToolTip(
+            'Set number of episodes watched to the value entered above')
+        self.show_progress_btn.clicked.connect(self.s_set_episode)
+        self.show_play_btn = QToolButton()
+        self.show_play_btn.setIcon(getIcon('media-playback-start'))
+        self.show_play_btn.setToolTip(
+            'Play the next unwatched episode\nHold to play other episodes')
+        self.show_play_btn.clicked.connect(lambda: self.s_play(True))
+        self.show_play_btn.setMenu(self.menu_play)
+        self.show_play_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+
+        if self._taiga_mode:
+            self.show_inc_btn = self.show_progress_bar.inc_btn
+            self.show_dec_btn = self.show_progress_bar.dec_btn
+            self.show_progress_bar.incremented.connect(self.s_plus_episode)
+            self.show_progress_bar.decremented.connect(self.s_rem_episode)
+        else:
+            self.show_inc_btn = QToolButton()
+            self.show_inc_btn.setIcon(getIcon('list-add'))
+            self.show_inc_btn.clicked.connect(self.s_plus_episode)
+            self.show_dec_btn = QToolButton()
+            self.show_dec_btn.setIcon(getIcon('list-remove'))
+            self.show_dec_btn.clicked.connect(self.s_rem_episode)
+
+        self.show_inc_btn.setShortcut('Ctrl+Right')
+        self.show_inc_btn.setToolTip('Increment number of episodes watched')
+        self.show_dec_btn.setShortcut('Ctrl+Left')
+        self.show_dec_btn.setToolTip('Decrement number of episodes watched')
+        show_score_label = QLabel('Score:')
+        self.show_score = ScoreSlider()
+        self.show_score.setMinimumWidth(220)
+        self.show_score_btn = QPushButton('Set')
+        self.show_score_btn.setToolTip('Set score to the value entered above')
+        self.show_score_btn.clicked.connect(self.s_set_score)
+        self.show_score.add_extra_widget(self.show_score_btn)
+        self.show_tags_btn = QPushButton('Edit Tags...')
+        self.show_tags_btn.setToolTip(
+            'Open a dialog to edit your tags for this show')
+        self.show_tags_btn.clicked.connect(self.s_set_tags)
+        self.show_status = QComboBox()
+        self.show_status.setToolTip('Change your watching status of this show')
+        self.show_status.currentIndexChanged.connect(self.s_set_status)
+
+        # Hidden entirely until something's actually playing -- see
+        # _update_now_playing_sidebar().
+        self.now_playing_group = QGroupBox('Now Playing')
+        self.now_playing_group.setFlat(True)
+        self.now_playing_status = QLabel('Nothing playing')
+        self.now_playing_status.setWordWrap(True)
+        now_playing_status_font = QtGui.QFont()
+        now_playing_status_font.setBold(True)
+        self.now_playing_status.setFont(now_playing_status_font)
+
+        self.now_playing_bar = PlaybackBar(progress_color=self.config['colors']['progress_fg'])
+
+        now_playing_btn_row = QHBoxLayout()
+        self.now_playing_last_btn = QPushButton('Previous Episode')
+        self.now_playing_last_btn.clicked.connect(
+            lambda: self._now_playing_play(-1))
+        self.now_playing_next_btn = QPushButton('Next Episode')
+        self.now_playing_next_btn.clicked.connect(
+            lambda: self._now_playing_play(1))
+        now_playing_btn_row.addWidget(self.now_playing_last_btn)
+        now_playing_btn_row.addWidget(self.now_playing_next_btn)
+
+        self.now_playing_position = QLabel('')
+        self.now_playing_position.setWordWrap(True)
+        # A theme's own de-emphasized-text role, not a fixed color --
+        # stays legible whether the theme is light or dark.
+        self.now_playing_position.setStyleSheet(
+            'color: palette(placeholder-text);')
+
+        now_playing_layout = QVBoxLayout()
+        now_playing_layout.addWidget(self.now_playing_status)
+        now_playing_layout.addWidget(self.now_playing_bar)
+        now_playing_layout.addLayout(now_playing_btn_row)
+        now_playing_layout.addWidget(self.now_playing_position)
+        self.now_playing_group.setLayout(now_playing_layout)
+        self.now_playing_group.hide()
+        self._now_playing_show = None
+        self._now_playing_episode = None
+
+        left_box.addRow(self.show_image)
+
+        if self._taiga_mode:
+            # Taiga's sidebar only shows the picture, the mode caption,
+            # and whatever's playing (progress + play controls). Every
+            # other editing control (progress spinbox, score, status,
+            # tags) moves into a second "Edit" tab in the Details
+            # dialog instead -- see s_show_details().
+            self.taiga_mode_label = QLabel('Taiga Mode')
+            self.taiga_mode_label.setAlignment(
+                QtCore.Qt.AlignmentFlag.AlignCenter)
+            left_box.addRow(self.taiga_mode_label)
+
+            # show_dec_btn/show_inc_btn are already overlaid on the bar
+            # itself (see HoverProgressBar) -- just add the bar.
+            left_box.addRow(self.show_progress_bar)
+
+            small_btns_hbox.addWidget(self.show_play_btn)
+            small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            left_box.addRow(small_btns_hbox)
+
+            # Switches the main content area between the show list and
+            # the dedicated Now Playing screen -- see _on_view_mode.
+            self.action_view_anime_list = QPushButton('Anime List')
+            self.action_view_anime_list.setCheckable(True)
+            self.action_view_anime_list.setChecked(True)
+            self.action_view_now_playing = QPushButton('Now Playing')
+            self.action_view_now_playing.setCheckable(True)
+            self.view_mode_group = QButtonGroup(self)
+            self.view_mode_group.setExclusive(True)
+            self.view_mode_group.addButton(self.action_view_anime_list)
+            self.view_mode_group.addButton(self.action_view_now_playing)
+            self.view_mode_group.buttonClicked.connect(self._on_view_mode_changed)
+
+            view_mode_hbox = QHBoxLayout()
+            view_mode_hbox.addWidget(self.action_view_now_playing)
+            view_mode_hbox.addWidget(self.action_view_anime_list)
+            left_box.addRow(view_mode_hbox)
+
+            edit_form = QFormLayout()
+            edit_form.addRow(show_progress_label)
+            edit_form.addRow(self.show_progress, self.show_progress_btn)
+            edit_form.addRow(show_score_label)
+            edit_form.addRow(self.show_score)
+            edit_form.addRow(self.show_status)
+            edit_form.addRow(self.show_tags_btn)
+            self.taiga_edit_widget = QWidget()
+            self.taiga_edit_widget.setLayout(edit_form)
+        else:
+            small_btns_hbox.addWidget(self.show_dec_btn)
+            small_btns_hbox.addWidget(self.show_play_btn)
+            small_btns_hbox.addWidget(self.show_inc_btn)
+            small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+            left_box.addRow(self.show_progress_bar)
+            left_box.addRow(small_btns_hbox)
+
+            left_box.addRow(show_progress_label)
+            left_box.addRow(self.show_progress, self.show_progress_btn)
+            left_box.addRow(show_score_label)
+            left_box.addRow(self.show_score)
+            left_box.addRow(self.now_playing_group)
+            left_box.addRow(self.show_status)
+            left_box.addRow(self.show_tags_btn)
+
+        filter_bar_box_layout.addWidget(
+            QLabel('Search:' if self._taiga_mode else 'Filter:'))
+        filter_bar_box_layout.addWidget(self.show_filter)
+        filter_bar_box_layout.addWidget(QLabel('Invert'))
+        filter_bar_box_layout.addWidget(self.show_filter_invert)
+        filter_bar_box_layout.addWidget(QLabel('Case Sensitive'))
+        filter_bar_box_layout.addWidget(self.show_filter_casesens)
+        self.filter_bar_box.setLayout(filter_bar_box_layout)
+
+        if self.config['filter_bar_position'] is FilterBar.PositionHidden:
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+            self.filter_bar_box.hide()
+        elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
+            self.list_box.addWidget(self.filter_bar_box)
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+        elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+            self.list_box.addWidget(self.filter_bar_box)
+
+        main_hbox.addLayout(left_box)
+
+        if self._taiga_mode:
+            list_page = QWidget()
+            list_page.setLayout(self.list_box)
+
+            self.now_playing_widget = NowPlayingWidget(
+                self, self.worker, progress_color=self.config['colors']['progress_fg'])
+            self.now_playing_widget.playRequested.connect(self.s_play_show_episode)
+            self.now_playing_widget.playRandomRequested.connect(self.s_play_random)
+
+            self.content_stack = QStackedWidget()
+            self.content_stack.addWidget(list_page)
+            self.content_stack.addWidget(self.now_playing_widget)
+
+            main_hbox.addWidget(self.content_stack, 1)
+        else:
+            main_hbox.addLayout(self.list_box, 1)
+
+        main_layout.addLayout(top_hbox)
+        main_layout.addLayout(main_hbox)
+
+        self.main_widget = QWidget(self)
+        self.main_widget.setLayout(main_layout)
+        self.setCentralWidget(self.main_widget)
+
+        # Statusbar
+        self.status_text = QLabel(self.app_name)
+        self.tracker_text = QLabel('Tracker: N/A')
+        self.tracker_text.setMinimumWidth(120)
+        self.queue_text = QLabel('Unsynced items: N/A')
+        self.statusBar().addWidget(self.status_text, 1)
+        self.statusBar().addPermanentWidget(self.tracker_text)
+        self.statusBar().addPermanentWidget(self.queue_text)
+
+        # Tray icon
+        tray_menu = QMenu(self)
+        action_hide = QAction('Show/Hide', self)
+        action_hide.triggered.connect(self.s_hide)
+        tray_menu.addAction(action_hide)
+        tray_menu.addAction(action_quit)
+
+        self.tray = QSystemTrayIcon(self.windowIcon())
+        self.tray.setContextMenu(tray_menu)
+        self.tray.activated.connect(self.s_tray_clicked)
+        self._apply_tray()
+
+        # Connect worker signals
+        self.worker.changed_status.connect(self.ws_changed_status)
+        self.worker.raised_error.connect(self.error)
+        self.worker.raised_fatal.connect(self.fatal)
+        self.worker.changed_show.connect(self.ws_changed_show)
+        self.worker.changed_show_status.connect(self.ws_changed_show_status)
+        self.worker.changed_list.connect(self.ws_changed_list)
+        self.worker.changed_queue.connect(self.ws_changed_queue)
+        self.worker.tracker_state.connect(self.ws_tracker_state)
+        self.worker.playing_show.connect(self.ws_changed_show)
+        self.worker.prompt_for_update.connect(self.ws_prompt_update)
+        self.worker.prompt_for_add.connect(self.ws_prompt_add)
+        self.worker.undo_stack_changed.connect(self.ws_undo_stack_changed)
+
+        # Show main window
+        if not (self.config['show_tray'] and self.config['start_in_tray']):
+            self.show()
+
+        # Start loading engine
+        self.started = True
+        self._busy(False)
+        self.worker_call('start', self.r_engine_loaded, account)
+
+    def reload(self, account=None, mediatype=None):
+        if self.config['remember_columns']:
+            self._store_columnstate()
+
+        if account:
+            self.account = account
+
+            # Get API specific configuration
+            self.api_config = self._get_api_config(account['api'])
+
+        self.menu_columns.setEnabled(False)
+        for action in self.menu_columns.actions():
+            action.setChecked(
+                action.text() in self.api_config['visible_columns'])
+        self.menu_columns.setEnabled(True)
+
+        self.show()
+        self._busy(False)
+        self.worker_call('reload', self.r_engine_loaded, account, mediatype)
+
+    def closeEvent(self, event):
+        if not self.started or not self.worker.engine.loaded:
+            event.accept()
+            if self.finish:
+                QApplication.instance().quit()
+        elif self.config['show_tray'] and self.config['close_to_tray']:
+            event.ignore()
+            self.s_hide()
+        else:
+            event.ignore()
+            self._exit()
+
+    def status(self, message):
+        self.status_text.setText(message)
+        print(message)
+
+    def error(self, msg):
+        self.status('Error: {}'.format(msg))
+        QMessageBox.critical(self, 'Error', str(msg), QMessageBox.StandardButton.Ok)
+
+    def fatal(self, msg):
+        QMessageBox.critical(
+            self, 'Fatal Error', "Fatal Error! Reason:\n\n{0}".format(msg), QMessageBox.StandardButton.Ok)
+        self.accountman.set_default(None)
+        self._busy()
+        self.finish = False
+        self.worker_call('unload', self.r_engine_unloaded)
+
+    def worker_call(self, function, ret_function, *args, **kwargs):
+        # Run worker in a thread
+        self.worker.set_function(function, ret_function, *args, **kwargs)
+        self.worker.start()
+
+    # GUI Functions
+    def _get_api_config(self, api):
+        if self.config['columns_per_api']:
+            if 'api' not in self.config:
+                self.config['api'] = {}
+            if api not in self.config['api']:
+                self.config['api'][api] = dict(utils.qt_per_api_defaults)
+            return self.config['api'][api]
+        else:
+            # API settings are universal
+            return self.config
+
+    def _save_config(self):
+        utils.save_config(self.config, self.configfile)
+
+    def _exit(self):
+        self._busy()
+        if self.config['remember_geometry']:
+            self._store_geometry()
+        if self.config['remember_columns']:
+            self._store_columnstate()
+        self.finish = True
+        self.worker_call('unload', self.r_engine_unloaded)
+
+    def _store_geometry(self):
+        self.config['last_x'] = self.x()
+        self.config['last_y'] = self.y()
+        self.config['last_width'] = self.width()
+        self.config['last_height'] = self.height()
+        utils.save_config(self.config, self.configfile)
+
+    def _store_columnstate(self):
+        columns_state = {}
+
+        state = self.view.horizontalHeader().saveState()
+        columns_state = base64.b64encode(state).decode('ascii')
+
+        self.api_config['columns_state'] = columns_state
+        self._save_config()
+
+    def _enable_widgets(self, enable):
+        self.view.setEnabled(enable)
+        self._enable_show_widgets(bool(self.selected_show_id and enable))
+
+        self.action_add.setEnabled(enable)
+        self.action_airing_schedule.setEnabled(enable)
+        self.action_sync.setEnabled(enable)
+        self.action_send.setEnabled(enable)
+        self.action_retrieve.setEnabled(enable)
+        self.action_reload.setEnabled(enable)
+
+        self.show_filter.setEnabled(enable)
+        self.show_filter_invert.setEnabled(enable)
+        self.show_filter_casesens.setEnabled(enable)
+
+    def _enable_show_widgets(self, enable):
+        self.show_progress.setEnabled(enable)
+        self.show_score.setEnabled(enable)
+        self.show_progress_btn.setEnabled(enable)
+        self.show_score_btn.setEnabled(enable)
+        self.show_tags_btn.setEnabled(
+            bool(self.mediainfo and self.mediainfo.get('can_tag') and enable))
+        self.show_inc_btn.setEnabled(enable)
+        self.show_dec_btn.setEnabled(enable)
+        self.show_play_btn.setEnabled(enable)
+        self.show_status.setEnabled(enable)
+        self.action_play_next.setEnabled(enable)
+        self.action_play_dialog.setEnabled(enable)
+        self.action_altname.setEnabled(enable)
+        self.action_delete.setEnabled(enable)
+        self.action_details.setEnabled(enable)
+
+    def _update_queue_counter(self, queue):
+        self.queue_text.setText("Unsynced items: %d" % queue)
+
+    def _update_tracker_info(self, status):
+        state = status['state']
+        timer = status['timer']
+        paused = status['paused']
+
+        if state == utils.Tracker.NOVIDEO:
+            st = 'Listen'
+        elif state == utils.Tracker.PLAYING:
+            (m, s) = divmod(timer or 0, 60)
+            st = "+{0}:{1:02d}{2}".format(m, s, ' [P]' if paused else '')
+        elif state == utils.Tracker.UNRECOGNIZED:
+            st = 'Unrecognized'
+        elif state == utils.Tracker.NOT_FOUND:
+            st = 'Not found'
+        elif state == utils.Tracker.IGNORED:
+            st = 'Ignored'
+        else:
+            st = '???'
+
+        self.tracker_text.setText("Tracker: {}".format(st))
+
+    def _update_config(self):
+        self._apply_view()
+        self._apply_tray()
+        self._apply_filter_bar()
+        # TODO: Reload listviews?
+        if self._taiga_mode:
+            self._rebuild_library_folders_menu()
+        if self.worker.engine.get_config('sync_on_settings_apply'):
+            self.s_send(False)
+
+    def _apply_view(self):
+        if self.config['inline_edit']:
+            self.view.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
+        else:
+            self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+    def _apply_tray(self):
+        if self.tray.isVisible() and not self.config['show_tray']:
+            self.tray.hide()
+        elif not self.tray.isVisible() and self.config['show_tray']:
+            self.tray.show()
+        if self.tray.isVisible():
+            if self.config['tray_api_icon']:
+                self.tray.setIcon(QtGui.QIcon(
+                    utils.available_libs[self.account['api']][1]))
+            else:
+                self.tray.setIcon(self.windowIcon())
+
+    def _apply_filter_bar(self):
+        self.list_box.removeWidget(self.filter_bar_box)
+        self.list_box.removeWidget(self.notebook)
+        self.list_box.removeWidget(self.view)
+        self.filter_bar_box.show()
+        if self.config['filter_bar_position'] is FilterBar.PositionHidden:
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+            self.filter_bar_box.hide()
+        elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
+            self.list_box.addWidget(self.filter_bar_box)
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+        elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
+            self.list_box.addWidget(self.notebook)
+            self.list_box.addWidget(self.view)
+            self.list_box.addWidget(self.filter_bar_box)
+
+    def _busy(self, wait=False):
+        if wait:
+            self.busy_timer.start()
+        else:
+            self._enable_widgets(False)
+
+    def _unbusy(self):
+        if self.busy_timer.isActive():
+            self.busy_timer.stop()
+        else:
+            self._enable_widgets(True)
+
+    def _rebuild_statuses(self):
+        # Rebuild statuses
+        self.show_status.blockSignals(True)
+        self.notebook.blockSignals(True)
+
+        self.show_status.clear()
+        self.menu_move_to.clear()
+
+        # Clear notebook
+        while self.notebook.count() > 0:
+            self.notebook.removeTab(0)
+
+        # Add one page per status
+        for i, status in enumerate(self.mediainfo['statuses']):
+            name = self.mediainfo['statuses_dict'][status]
+
+            self.notebook.addTab(name)
+            self.notebook.setTabData(i, status)
+
+            self.show_status.addItem(name)
+
+            action = self.menu_move_to.addAction(name)
+            action.triggered.connect(
+                lambda checked=False, s=status: self._set_show_status_from_menu(s))
+
+        self.notebook.addTab("All")
+
+        self.show_status.blockSignals(False)
+        self.notebook.blockSignals(False)
+
+    def _rebuild_library_folders_menu(self):
+        self.menu_library_folders.clear()
+        self.menu_library_folders.addAction(self.action_scan_library)
+        self.menu_library_folders.addAction(self.action_rescan_library)
+        self.menu_library_folders.addSeparator()
+
+        folders = self.worker.engine.get_config('searchdir')
+        if not folders:
+            empty = self.menu_library_folders.addAction('(no folders configured)')
+            empty.setEnabled(False)
+            return
+
+        for folder in folders:
+            action = self.menu_library_folders.addAction(folder)
+            action.triggered.connect(
+                lambda checked=False, f=folder: utils.open_folder(f))
+
+    def _rebuild_services_menu(self):
+        # Trim back to the "Sync lists" action + separator built in
+        # start(); everything after that is the per-service section,
+        # rebuilt here once the active account's API/username are known.
+        for action in self.menu_services.actions()[2:]:
+            self.menu_services.removeAction(action)
+
+        api = self.account['api']
+        username = self.worker.engine.get_userconfig('username')
+        if not username:
+            return
+
+        sections = {
+            'anilist': [
+                ('Go to my Profile', 'https://anilist.co/user/%s' % username),
+                ('Stats', 'https://anilist.co/user/%s/stats' % username),
+            ],
+            'kitsu': [
+                ('Go to my library', 'https://kitsu.app/users/%s/library' % username),
+                ('Go to my Profile', 'https://kitsu.app/users/%s' % username),
+            ],
+            'mal': [
+                ('Go to my Profile', 'https://myanimelist.net/profile/%s' % username),
+                ('Go to my History', 'https://myanimelist.net/history/%s' % username),
+            ],
+        }
+
+        entries = sections.get(api)
+        if not entries:
+            return
+
+        for label, url in entries:
+            action = self.menu_services.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, u=url: QtGui.QDesktopServices.openUrl(QtCore.QUrl(u)))
+
+    def _set_show_status_from_menu(self, status):
+        if self.selected_show_id:
+            self._set_show_status(self.selected_show_id, status)
+
+    def _recalculate_counts(self):
+        showlist = self.worker.engine.get_list()
+
+        self.counts = {status: 0 for status in self.mediainfo['statuses']}
+        self.counts['!ALL'] = 0
+
+        for show in showlist:
+            self.counts[show['my_status']] += 1
+            self.counts['!ALL'] += 1
+
+        self._update_counts()
+
+    def _update_counts(self):
+        for page in range(self.notebook.count()):
+            status = self.notebook.tabData(page)
+            if status is not None:
+                status_name = self.mediainfo['statuses_dict'][status]
+            else:
+                status_name = "All"
+                status = "!ALL"
+
+            self.notebook.setTabText(page, "{} ({})".format(
+                status_name, self.counts[status]))
+
+    def _rebuild_view(self):
+        """
+        Using a full showlist, rebuilds main view
+
+        """
+        showlist = self.worker.engine.get_list()
+        altnames = self.worker.engine.altnames()
+        library = self.worker.engine.library()
+
+        # Set allowed ranges (this will be reported by the engine later)
+        self.show_score.setMediaInfo(self.mediainfo)
+
+        # Get the new list and pass it to our model
+        self.view.setSortingEnabled(False)
+        self.view.model().setFilterStatus(
+            self.notebook.tabData(self.notebook.currentIndex()))
+        self.view.model().sourceModel().setMediaInfo(self.mediainfo)
+        self.view.model().sourceModel().setShowList(showlist, altnames, library)
+        self.view.resizeRowsToContents()
+        self.view.setSortingEnabled(True)
+
+        self.s_filter_changed()
+
+    def _init_view(self):
+        # Set view options
+        self.view.sortByColumn(self.config['sort_index'], QtCore.Qt.SortOrder(self.config['sort_order']))
+
+        # Hide invisible columns
+        for i, column in enumerate(self.view.model().sourceModel().columns):
+            if column not in self.api_config['visible_columns']:
+                self.view.setColumnHidden(i, True)
+
+        self.view.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.view.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+
+        # Recover column state
+        if self.config['remember_columns'] and isinstance(self.api_config['columns_state'], str):
+            state = QtCore.QByteArray(base64.b64decode(
+                self.api_config['columns_state']))
+            self.view.horizontalHeader().restoreState(state)
+        else:
+            self.view.horizontalHeader().resizeSection(3, 70)
+            self.view.horizontalHeader().resizeSection(4, 100)
+
+    def _set_default_poster(self):
+        # With no show selected, fill the poster box with a placeholder
+        # logo rather than bare "<app name>" text: the hanko mark for
+        # Hakubun+, Taiga's own icon in Taiga mode (mirrors the window
+        # icon set on the QApplication).
+        logo = 'taiga_icon.png' if self._taiga_mode else 'hanko.png'
+        self.show_image.setPixmap(QtGui.QPixmap(
+            utils.DATADIR + '/' + logo).scaledToHeight(
+                100, QtCore.Qt.TransformationMode.SmoothTransformation))
+
+    def _select_show(self, show):
+        # Stop any running image timer
+        if self.image_timer is not None:
+            self.image_timer.stop()
+
+        # Unselect show
+        if not show:
+            self.selected_show_id = None
+
+            self.show_title.setText(self.app_name)
+            self._set_default_poster()
+            self.show_progress.setValue(0)
+            self.show_score.setValue(0)
+            self.show_progress_bar.setValue(0)
+            self.show_progress_bar.setFormat('?/?')
+            self._enable_show_widgets(False)
+
+            return
+
+        # Block signals
+        self.show_status.blockSignals(True)
+
+        # Set proper ranges
+        if show['total']:
+            self.show_progress.setMaximum(show['total'])
+            self.show_progress_bar.setFormat(
+                '%p%' if self._taiga_mode else '%v/%m')
+            self.show_progress_bar.setMaximum(show['total'])
+            # Regenerate Play Episode Menu
+            self.generate_episode_menus(
+                self.menu_play, show['total'], show['my_progress'])
+        else:
+            self.show_progress.setMaximum(
+                utils.estimate_aired_episodes(show) or 10000)
+            self.generate_episode_menus(
+                self.menu_play, utils.estimate_aired_episodes(show), show['my_progress'])
+            self.show_progress_bar.setFormat(
+                '{}/?'.format(show['my_progress']))
+
+        # Update information
+        metrics = QtGui.QFontMetrics(self.show_title.font())
+        title = metrics.elidedText(
+            show['title'], QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
+        self.show_title.setText(title)
+
+        self.show_progress.setValue(show['my_progress'])
+        self.show_status.setCurrentIndex(
+            self.mediainfo['statuses'].index(show['my_status']))
+        self.show_score.setValue(show['my_score'])
+
+        # Enable relevant buttons
+        self._enable_show_widgets(True)
+
+        # Download image or use cache
+        if show.get('image_thumb') or show.get('image'):
+            if self.image_worker is not None:
+                self.image_worker.cancel()
+
+            utils.make_dir(utils.to_cache_path())
+            filename = utils.to_cache_path("%s_%s_%s.jpg" % (
+                self.api_info['shortname'], self.api_info['mediatype'], show['id']))
+
+            if os.path.isfile(filename):
+                self.s_show_image(filename)
+            else:
+                if "imaging_available" in os.environ:
+                    self.show_image.setText('Waiting...')
+                    self.image_timer.start()
+                else:
+                    self.show_image.setText('Not available')
+        else:
+            self.show_image.setText('No image')
+
+        if show['total']:
+            self.show_progress_bar.setValue(show['my_progress'])
+        else:
+            self.show_progress_bar.setValue(0)
+
+        # Make it global
+        self.selected_show_id = show['id']
+
+        # Unblock signals
+        self.show_status.blockSignals(False)
+
+    def generate_episode_menus(self, menu, max_eps=1, watched_eps=0):
+        bp_top = 5  # No more than this many submenus/episodes in the root menu
+        bp_mid = 10  # No more than this many submenus in submenus
+        bp_btm = 13  # No more than this many episodes in the submenus
+        # The number of episodes where we ditch the submenus entirely since Qt doesn't deserve this abuse
+        breakpoint_no_menus = bp_top * bp_btm * bp_mid * bp_mid
+
+        menu.clear()
+        # Make basic actions
+        action_play_next = QAction(
+            getIcon('media-skip-forward'), 'Play &Next Episode', self)
+        action_play_next.triggered.connect(lambda: self.s_play(True))
+        action_play_last = QAction(
+            getIcon('view-refresh'), 'Play Last Watched Ep (#%d)' % watched_eps, self)
+        action_play_last.triggered.connect(lambda: self.s_play(False))
+        action_play_dialog = QAction('Play Episode...', self)
+        action_play_dialog.setStatusTip('Select an episode to play.')
+        action_play_dialog.triggered.connect(self.s_play_number)
+
+        menu.addAction(action_play_next)
+        menu.addAction(action_play_last)
+
+        if max_eps < 1 or max_eps > breakpoint_no_menus:
+            menu.addAction(action_play_dialog)
+            return menu
+
+        if max_eps > 60:
+            # Typing a number beats digging through nested submenus once a
+            # show has this many episodes.
+            menu.addAction(action_play_dialog)
+
+        menu.addSeparator()
+
+        ep_actions = []
+        for ep in range(1, max_eps+1):
+            action = QAction('Ep. %d' % ep, self)
+            action.triggered.connect(self.s_play_ep_number(action, ep))
+            if ep <= watched_eps:
+                action.setIcon(self.ep_icons['all'])
+            else:
+                action.setIcon(self.ep_icons['none'])
+            ep_actions.append(action)
+
+        if max_eps <= bp_top:
+            # Just put the eps in the root menu
+            for action in ep_actions:
+                menu.addAction(action)
+
+        else:
+            # We need to go deeper. For now, put all the episodes into bottom-level submenus.
+            # I don't like this scoping. If you find a way to transfer ownership of the submenu to the menu feel free to fix this.
+            self.play_ep_submenus = []
+            # A bit hacky but avoids a special case for the first submenu
+            current_actions = bp_btm + 1
+            for action in ep_actions:
+                if current_actions >= bp_btm:
+                    current_actions = 0
+                    length = len(self.play_ep_submenus)
+                    self.play_ep_submenus.append(
+                        QMenu('Episodes %d-%d:' % (length*bp_btm + 1, min((length+1)*bp_btm, max_eps)), menu))
+                    if watched_eps > min((length+1)*bp_btm, max_eps):
+                        self.play_ep_submenus[-1].setIcon(self.ep_icons['all'])
+                    elif watched_eps > length*bp_btm:
+                        self.play_ep_submenus[-1].setIcon(
+                            self.ep_icons['part'])
+                    else:
+                        self.play_ep_submenus[-1].setIcon(
+                            self.ep_icons['none'])
+                self.play_ep_submenus[-1].addAction(action)
+                current_actions += 1
+
+            # Now to put the bottom level menus into other things
+            if len(self.play_ep_submenus) <= bp_top:  # Straight into the root menu, easy!
+                for submenu in self.play_ep_submenus:
+                    menu.addMenu(submenu)
+            else:  # For now, put them into another level of submenus
+                self.play_ep_sub2menus = []
+                current_menus = bp_mid + 1
+                for s in self.play_ep_submenus:
+                    if current_menus >= bp_mid:
+                        current_menus = 0
+                        length = len(self.play_ep_sub2menus)
+                        self.play_ep_sub2menus.append(QMenu(
+                            'Episodes %d-%d:' % (length*bp_btm*bp_mid + 1, min((length+1)*bp_btm*bp_mid, max_eps)), s))
+                    self.play_ep_sub2menus[-1].addMenu(s)
+                    if watched_eps > min((length+1)*bp_btm*bp_mid, max_eps):
+                        self.play_ep_sub2menus[-1].setIcon(
+                            self.ep_icons['all'])
+                    elif watched_eps > length*bp_btm*bp_mid:
+                        self.play_ep_sub2menus[-1].setIcon(
+                            self.ep_icons['part'])
+                    else:
+                        self.play_ep_sub2menus[-1].setIcon(
+                            self.ep_icons['none'])
+                    current_menus += 1
+
+                if len(self.play_ep_sub2menus) <= bp_top:
+                    for submenu in self.play_ep_sub2menus:
+                        menu.addMenu(submenu)
+                else:
+                    # I seriously hope this additional level is not needed, but maybe someone will want to set smaller breakpoints.
+                    self.play_ep_sub3menus = []
+                    current_menus = bp_mid + 1
+                    for s in self.play_ep_sub2menus:
+                        if current_menus >= bp_mid:
+                            current_menus = 0
+                            length = len(self.play_ep_sub3menus)
+                            self.play_ep_sub3menus.append(QMenu(
+                                'Episodes %d-%d:' % (length*bp_btm*bp_mid*bp_mid + 1, min((length+1)*bp_btm*bp_mid*bp_mid, max_eps)), s))
+                        self.play_ep_sub3menus[-1].addMenu(s)
+                        if watched_eps > min((length+1)*bp_btm*bp_mid*bp_mid, max_eps):
+                            self.play_ep_sub3menus[-1].setIcon(
+                                self.ep_icons['all'])
+                        elif watched_eps > length*bp_btm*bp_mid*bp_mid:
+                            self.play_ep_sub3menus[-1].setIcon(
+                                self.ep_icons['part'])
+                        else:
+                            self.play_ep_sub3menus[-1].setIcon(
+                                self.ep_icons['none'])
+                        current_menus += 1
+                    # No more levels, our sanity check earlier ensured that.
+                    for submenu in self.play_ep_sub3menus:
+                        menu.addMenu(submenu)
+        return menu
+
+    # Slots
+    def s_hide(self):
+        if self.isVisible():
+            self.was_maximized = self.isMaximized()
+            self.hide()
+        else:
+            self.setGeometry(self.geometry())
+            if self.was_maximized:
+                self.showMaximized()
+            else:
+                self.show()
+
+    def s_tray_clicked(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.s_hide()
+
+    def s_busy(self):
+        self._enable_widgets(False)
+
+    def s_show_selected(self, new, old=None):
+        if new:
+            index = self.view.model().index(new.row(), 0)
+            selected_id = self.view.model().data(index)
+
+            if selected_id:
+                show = self.worker.engine.get_show_info(selected_id)
+                self._select_show(show)
+        else:
+            self._select_show(None)
+
+    def s_update_sort(self, index, order):
+        self.config['sort_index'] = index
+        self.config['sort_order'] = order.value
+
+    def s_download_image(self):
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+        self.show_image.setText('Downloading...')
+        filename = utils.to_cache_path("%s_%s_%s.jpg" % (
+            self.api_info['shortname'], self.api_info['mediatype'], show['id']))
+
+        self.image_worker = ImageWorker(
+            show.get('image_thumb') or show['image'], filename, (100, 140))
+        self.image_worker.finished.connect(self.s_show_image)
+        self.image_worker.start()
+
+    def s_tab_changed(self, index):
+        # Change the filter of the main view to the specified status
+        status = self.notebook.tabData(index)
+        self.view.model().setFilterStatus(status)
+        self.view.resizeRowsToContents()  # TODOMVC : Find a faster way
+
+        self.s_show_selected(None)
+        self.s_filter_changed()  # Refresh filter
+
+    def s_filter_changed(self):
+        # TODOMVC DEPRECATED
+        expression = self.show_filter.text()
+
+        # Determine if a show matches a filter. True -> match -> do not hide
+        # Advanced search: Separate the expression into specific field terms, fail if any are not met
+        if ':' in expression:
+            exprs = expression.split(' ')
+            expr_dict = {}
+            expr_list = []
+            for expr in exprs:
+                if ':' in expr:
+                    expr_terms = expr.split(':', 1)
+                    if expr_terms[0] in self.column_keys:
+                        col = self.column_keys[expr_terms[0]]
+                        sub_expr = expr_terms[1].replace(
+                            '_', ' ').replace('+', ' ')
+                        expr_dict[col] = sub_expr
+                    else:  # If it's not a field key, let it be a regular search term
+                        expr_list.append(expr)
+                else:
+                    expr_list.append(expr)
+            expression = ' '.join(expr_list)
+            self.view.model().setFilterColumns(expr_dict)
+
+        if self.show_filter_casesens.isChecked():
+            self.view.model().setFilterCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseSensitive)
+        else:
+            self.view.model().setFilterCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        self.view.model().setFilterFixedString(expression)
+
+    def s_filter_invert_changed(self):
+        self.view.model().setFilterInvert(self.show_filter_invert.isChecked())
+
+    def s_plus_episode(self):
+        self._busy(True)
+        self.worker_call('set_episode', self.r_generic,
+                         self.selected_show_id, self.show_progress.value()+1)
+
+    def s_rem_episode(self):
+        if not self.show_progress.value() <= 0:
+            self._busy(True)
+            self.worker_call('set_episode', self.r_generic,
+                             self.selected_show_id, self.show_progress.value()-1)
+
+    def s_set_episode(self, showid=None, ep=None):
+        self._busy(True)
+        self.worker_call('set_episode', self.r_generic,
+                         showid or self.selected_show_id, ep if ep is not None else self.show_progress.value())
+
+    def s_set_score(self, showid=None, score=None):
+        self._busy(True)
+
+        if not showid:
+            showid = self.selected_show_id
+        if score is None:
+            score = self.show_score.value()
+
+        self.worker_call('set_score', self.r_generic, showid, score)
+
+    def s_set_status(self, index):
+        if self.selected_show_id:
+            self._set_show_status(
+                self.selected_show_id, self.mediainfo['statuses'][index])
+
+    def _set_show_status(self, showid, status):
+        self._busy(True)
+        self.worker_call('set_status', self.r_generic, showid, status)
+
+    def s_undo(self):
+        self._busy(True)
+        self.worker_call('undo', self.r_generic)
+
+    def s_redo(self):
+        self._busy(True)
+        self.worker_call('redo', self.r_generic)
+
+    def s_set_tags(self):
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+        if 'my_tags' in show and show['my_tags']:
+            tags = show['my_tags']
+        else:
+            tags = ''
+        tags, ok = QInputDialog.getText(self, 'Edit Tags',
+                                        'Enter desired tags (comma separated)',
+                                        text=tags)
+        if ok:
+            self.s_edit_tags(show, tags)
+
+    def s_edit_tags(self, show, tags):
+        self._busy(True)
+        self.worker_call('set_tags', self.r_generic, show['id'], tags)
+
+    def s_play(self, play_next, episode=0):
+        if self.selected_show_id:
+            show = self.worker.engine.get_show_info(self.selected_show_id)
+
+            # episode = 0 # Engine plays next unwatched episode
+            if not play_next and not episode:
+                episode = self.show_progress.value()
+
+            self._busy(True)
+            self.worker_call('play_episode', self.r_play_episode, show, episode)
+
+    def s_play_random(self):
+        self._busy(True)
+        self.worker_call('play_random', self.r_play_episode)
+
+    def s_play_show_episode(self, show_id, episode):
+        # Like s_play, but for an explicit show rather than the one
+        # selected in the list (used by Taiga mode's Now Playing screen,
+        # whose show usually isn't the current list selection).
+        show = self.worker.engine.get_show_info(show_id)
+        self._busy(True)
+        self.worker_call('play_episode', self.r_play_episode, show, episode)
+
+    def _on_view_mode_changed(self, button):
+        self.content_stack.setCurrentWidget(
+            self.now_playing_widget if button is self.action_view_now_playing
+            else self.content_stack.widget(0))
+
+    def s_play_number(self):
+        if self.selected_show_id:
+            show = self.worker.engine.get_show_info(self.selected_show_id)
+            ep_default = 1
+            ep_min = 1
+            ep_max = utils.estimate_aired_episodes(show)
+            if not ep_max:
+                # If we don't know the total just allow anything
+                ep_max = show['total'] or 10000
+
+            episode, ok = QInputDialog.getInt(self, 'Play Episode',
+                                              'Enter an episode number of %s to play:' % show['title'],
+                                              ep_default, ep_min, ep_max)
+
+            if ok:
+                self.s_play(False, episode)
+
+    def s_play_ep_number(self, action, number):
+        return lambda: [action.setIcon(self.ep_icons['part']), self.s_play(False, number)]
+
+    def s_delete(self):
+        if self.selected_show_id:
+            show = self.worker.engine.get_show_info(self.selected_show_id)
+            reply = QMessageBox.question(self, 'Confirmation',
+                                         'Are you sure you want to delete %s?' % show['title'],
+                                         QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No)
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.worker_call('delete_show', self.r_generic, show)
+
+    def s_scan_library(self):
+        self.worker_call('scan_library', self.r_library_scanned, rescan=False)
+
+    def s_rescan_library(self):
+        self.worker_call('scan_library', self.r_library_scanned, rescan=True)
+
+    def s_altname(self):
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+        current_altname = self.worker.engine.altname(self.selected_show_id)
+
+        new_altname, ok = QInputDialog.getText(self, 'Alternative title',
+                                               'Set the new alternative title for %s (blank to remove):' % show[
+                                                   'title'],
+                                               text=current_altname)
+
+        if ok:
+            self.worker.engine.altname(self.selected_show_id, str(new_altname))
+            self.ws_changed_show(show, altname=new_altname)
+
+    def s_open_folder(self):
+        try:
+            self.worker.engine.open_show_folder(self.selected_show_id)
+        except utils.EngineError as e:
+            self.error(e.args[0])
+
+    def s_retrieve(self):
+        queue = self.worker.engine.get_queue()
+
+        if queue:
+            reply = QMessageBox.question(self, 'Confirmation',
+                                         'There are %d unsynced changes. Do you want to send them first? (Choosing No will discard them!)' % len(
+                                             queue),
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.s_send(True)
+            elif reply == QMessageBox.StandardButton.No:
+                self._busy(True)
+                self.worker_call('list_download', self.r_list_retrieved)
+        else:
+            self._busy(True)
+            self.worker_call('list_download', self.r_list_retrieved)
+
+    def s_send(self, retrieve=False):
+        self._busy(True)
+        if retrieve:
+            self.worker_call('list_upload', self.s_retrieve)
+        else:
+            self.worker_call('list_upload', self.r_generic_ready)
+
+    def s_switch_account(self):
+        if not self.accountman_widget:
+            self.accountman_create()
+        else:
+            self.accountman_widget.rebuild()
+
+        self.accountman_widget.setModal(True)
+        self.accountman_widget.show()
+
+    def s_show_image(self, filename):
+        self.show_image.setPixmap(QtGui.QPixmap(filename))
+
+    def s_show_details(self):
+        if not self.selected_show_id:
+            return
+
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+
+        edit_widget = self.taiga_edit_widget if self._taiga_mode else None
+        self.detailswindow = DetailsDialog(
+            None, self.worker, show, edit_widget=edit_widget)
+        self.detailswindow.setModal(True)
+        self.detailswindow.show()
+
+    def s_add(self, query=None):
+        current_status = self.notebook.tabData(self.notebook.currentIndex())
+
+        self.addwindow = AddDialog(
+            None, self.worker, current_status, default=query or None)
+        self.addwindow.setModal(True)
+        self.addwindow.show()
+        if query:
+            self.addwindow.s_search()
+
+    def s_airing_schedule(self):
+        self.airingwindow = AiringScheduleDialog(None, self.worker)
+        self.airingwindow.setModal(True)
+        self.airingwindow.show()
+
+    def s_mediatype(self, action):
+        index = action.data()
+        if index is not None:
+            mediatype = self.api_info['supported_mediatypes'][index]
+            self.reload(None, mediatype)
+
+    def s_settings(self):
+        dialog = SettingsDialog(
+            None, self.worker, self.config, self.configfile)
+        dialog.saved.connect(self._update_config)
+        dialog.exec()
+
+    def s_about(self):
+        # The window/taskbar icon is the plain hanko mark (see the
+        # QIcon set on QApplication near the top of __init__) -- About
+        # gets the fuller "Hakubun+" wordmark instead, since it has the
+        # room to show it.
+        QMessageBox.about(self, 'About %s %s' % (self.app_name, utils.VERSION),
+                          ('<p align="center"><img src="%s" width="128" height="128"></p>'
+                          '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
+                          '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
+                          '<p>Thanks to all contributors. To see all contributors see AUTHORS file.</p>'
+                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a>, '
+                          'licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Copyright (C) z411</p>'
+                          '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
+                              utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
+
+    def s_about_qt(self):
+        QMessageBox.aboutQt(self, 'About Qt')
+
+    def s_show_menu_columns(self, pos):
+        globalPos = self.sender().mapToGlobal(pos)
+        globalPos += QtCore.QPoint(3, 3)
+        self.menu_columns.exec(globalPos)
+
+    def s_toggle_column(self, visible):
+        w = self.sender()
+        index, column_name = w.data(), w.text()
+        MIN_WIDTH = 30  # Width to restore columns to if too small to see
+
+        if visible:
+            if column_name not in self.api_config['visible_columns']:
+                self.api_config['visible_columns'].append(str(column_name))
+        else:
+            if column_name in self.api_config['visible_columns']:
+                self.api_config['visible_columns'].remove(column_name)
+
+        self._save_config()
+
+        self.view.setColumnHidden(index, not visible)
+        if visible and self.view.columnWidth(index) < MIN_WIDTH:
+            self.view.setColumnWidth(index, MIN_WIDTH)
+
+    # Worker slots
+    def ws_changed_status(self, classname, msgtype, msg):
+        if msgtype != messenger.TYPE_DEBUG:
+            self.status('{}: {}'.format(classname, msg))
+        elif self.debug:
+            print('[D] {}: {}'.format(classname, msg))
+
+    def ws_changed_show(self, show, is_playing=False, episode=None, altname=None):
+        if show:
+            if not self.view:
+                return  # List not built yet; can be safely avoided
+
+            # Update the view of the updated show
+            self.view.model().sourceModel().update(show['id'], is_playing)
+
+            if show['id'] == self.selected_show_id:
+                self._select_show(show)
+
+            if is_playing and self.config['show_tray'] and self.config['notifications']:
+                if episode == (show['my_progress'] + 1):
+                    tracker_status = self.worker.engine.tracker_status() or {}
+                    prefix = "Playing %s (%s / %s). " % (
+                        show['title'], episode, show['total'] or '?')
+
+                    # The "will update in N seconds" countdown measures
+                    # wall-clock time since the file was detected, not how
+                    # much of the episode you've actually watched. When the
+                    # backend reports a real playback position that's
+                    # already past the update threshold (e.g. resuming a
+                    # nearly-finished episode), quoting that countdown is
+                    # misleading -- you've effectively watched it already.
+                    offset = tracker_status.get('viewOffset')
+                    length = tracker_status.get('length')
+                    pct = self.worker.engine.get_config('tracker_update_percentage')
+                    if length and offset is not None and (offset / length) * 100 >= pct:
+                        body = prefix + "Already watched -- will update on completion."
+                    else:
+                        delay = tracker_status.get('wait_s') or \
+                            self.worker.engine.get_config('tracker_update_wait_s')
+                        body = prefix + "Will update in %d seconds." % delay
+
+                    self.tray.showMessage('Hakubun+ Tracker', body)
+
+    def ws_changed_show_status(self, show, old_status=None):
+        # Update the view of the new show
+        self.view.model().sourceModel().update(show['id'])
+
+        # Update counts
+        self.counts[show['my_status']] += 1
+        self.counts[old_status] -= 1
+        self._update_counts()
+
+        # Set notebook to the new page
+        self.notebook.setCurrentIndex(
+            self.mediainfo['statuses'].index(show['my_status']))
+        # Refresh filter
+        self.s_filter_changed()
+
+    def ws_changed_list(self, show):
+        self._rebuild_view()
+        self._recalculate_counts()
+        self.s_filter_changed()
+
+    def ws_changed_queue(self, queue):
+        self._update_queue_counter(queue)
+
+    def ws_tracker_state(self, status):
+        self._update_tracker_info(status)
+        if self._taiga_mode:
+            self.now_playing_widget.update_status(status)
+        else:
+            self._update_now_playing_sidebar(status)
+
+    def _update_now_playing_sidebar(self, status):
+        state = status['state']
+
+        # IGNORED means the tracker recognized the show/episode just fine
+        # but isn't going to update progress for it (e.g. replaying an
+        # already-watched episode from the player's own playlist) -- it
+        # should still show up here, just labeled differently, rather
+        # than the section disappearing as if nothing were playing.
+        if state in (utils.Tracker.PLAYING, utils.Tracker.IGNORED) and status.get('show'):
+            show, episode = status['show']
+            self._now_playing_show = show
+            self._now_playing_episode = episode
+            if state == utils.Tracker.IGNORED:
+                self.now_playing_status.setText(
+                    '%s -- Episode %d (already watched)' % (show['title'], episode))
+            else:
+                self.now_playing_status.setText(
+                    '%s -- Episode %d' % (show['title'], episode))
+            self.now_playing_bar.update_status(status)
+            self.now_playing_position.setText(
+                utils.format_playback_position(
+                    status.get('viewOffset'), status.get('length'),
+                    include_percent=False))
+            self.now_playing_last_btn.setEnabled(episode > 1)
+            self.now_playing_group.show()
+        else:
+            self._now_playing_show = None
+            self._now_playing_episode = None
+            self.now_playing_group.hide()
+
+    def _now_playing_play(self, delta):
+        if self._now_playing_show and self._now_playing_episode:
+            episode = self._now_playing_episode + delta
+            if episode >= 1:
+                self.s_play_show_episode(self._now_playing_show['id'], episode)
+
+    def ws_undo_stack_changed(self):
+        self.action_undo.setEnabled(self.worker.engine.can_undo())
+        self.action_redo.setEnabled(self.worker.engine.can_redo())
+
+    def ws_prompt_update(self, show, episode):
+        box = QMessageBox(self)
+        box.setWindowTitle("Update prompt")
+        box.setText(f"Do you want to update {show['title']} to {episode}?")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        box.setModal(False)
+        box.accepted.connect(lambda:
+                self.worker_call('set_episode', self.r_generic,
+                show['id'], episode))
+        box.show()
+
+    def ws_prompt_add(self, show, episode):
+        page = self.notebook.currentIndex()
+        current_status = self.mediainfo['statuses'][page]
+
+        addwindow = AddDialog(
+            None, self.worker, current_status, default=show['title'])
+        addwindow.setModal(True)
+        if addwindow.exec():
+            self.worker_call('set_episode', self.r_generic,
+                             addwindow.selected_show['id'], episode)
+
+    # Responses from the engine thread
+    def r_generic(self):
+        self._unbusy()
+
+    def r_generic_ready(self):
+        self._unbusy()
+        self.status('Ready.')
+
+    def r_engine_loaded(self, result):
+        if result['success']:
+            showlist = self.worker.engine.get_list()
+            altnames = self.worker.engine.altnames()
+            library = self.worker.engine.library()
+
+            # Set globals
+            self.api_info = self.worker.engine.api_info
+            self.mediainfo = self.worker.engine.mediainfo
+
+            # Rebuild statuses
+            self._rebuild_statuses()
+
+            # Build mediatype menu
+            for action in self.mediatype_actiongroup.actions():
+                self.mediatype_actiongroup.removeAction(action)
+
+            for n, mediatype in enumerate(self.api_info['supported_mediatypes']):
+                action = QAction(mediatype, self, checkable=True)
+                if mediatype == self.api_info['mediatype']:
+                    action.setChecked(True)
+                else:
+                    action.setData(n)
+                self.mediatype_actiongroup.addAction(action)
+                self.menu_mediatype.addAction(action)
+
+            # Show API info
+            self.api_icon.setPixmap(QtGui.QPixmap(
+                utils.available_libs[self.account['api']][1]))
+            if self.config['tray_api_icon']:
+                self.tray.setIcon(QtGui.QIcon(
+                    utils.available_libs[self.account['api']][1]))
+            self.api_user.setText(
+                self.worker.engine.get_userconfig('username'))
+            self.setWindowTitle("%s %s [%s (%s)]" % (
+                self.app_name, utils.VERSION, self.api_info['name'], self.api_info['mediatype']))
+
+            if self._taiga_mode:
+                self._rebuild_services_menu()
+                self._rebuild_library_folders_menu()
+
+            # Show tracker info
+            tracker_info = self.worker.engine.tracker_status()
+            if tracker_info:
+                self._update_tracker_info(tracker_info)
+
+            # Build our main view and show total counts
+            self._rebuild_view()
+            self._init_view()
+            self._recalculate_counts()
+
+            self.s_show_selected(None)
+
+            self.status('Ready.')
+
+        self._unbusy()
+
+    def r_list_retrieved(self, result):
+        if result['success']:
+            self._rebuild_view()
+            self._recalculate_counts()
+
+            self.status('Ready.')
+
+        self._unbusy()
+
+    def r_library_scanned(self, result):
+        if result['success']:
+            self._rebuild_view()
+
+            self.status('Ready.')
+
+        self._unbusy()
+
+    def r_engine_unloaded(self, result):
+        if result['success']:
+            self.close()
+            if not self.finish:
+                self.s_switch_account()
+
+    def r_play_episode(self, result):
+        if result['success']:
+            args = result['result']
+            if len(args) > 1:
+                # QtCore.QProcess.startDetached(args[0], args[1:])
+                process = QtCore.QProcess()
+                for attr in ['setStandardErrorFile', 'setStandardOutputFile']:
+                    getattr(process, attr)(QtCore.QProcess.nullDevice())
+                process.setProgram(args[0])
+                process.setArguments(args[1:])
+                process.startDetached()
+
+        self._unbusy()

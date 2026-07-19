@@ -5,7 +5,9 @@
 *.swp
 *.out
 *.log
-.trackma
+.hakubun
 *.egg-info
 build
 dist
+.claude
+.trackma-local-profile

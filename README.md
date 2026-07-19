@@ -1,8 +1,17 @@
-Trackma
-=======
+![Hakubun+](assets/hakubunplusheader.png)
 
-Trackma aims to be a lightweight and simple but feature-rich program for Unix based systems
-for fetching, updating and using data from personal lists hosted in several media tracking websites.
+Hakubun+ (博聞十)
+=================
+
+Hakubun+ is an open source client for media tracking websites, an
+independent fork of [Trackma](https://github.com/z411/trackma) that adds
+Taiga mode and an airing schedule window on top of the base
+[Hakubun](https://github.com/trektn/hakubun) fork. Not affiliated with
+Trackma or Taiga.moe.
+
+It aims to be a lightweight and simple but feature-rich program for Unix
+based systems for fetching, updating and using data from personal lists
+hosted in several media tracking websites.
 
 Features
 --------
@@ -10,7 +19,7 @@ Features
 - Manage local list and synchronize when necessary, useful when offline
 - Manage multiple accounts on different media tracking sites
 - Support for several media types (as supported by the site)
-- Multiple user interfaces (Qt, GTK, curses, command-line)
+- Multiple user interfaces (Qt, GTK, command-line)
 - Detection of running media player, updates list if necessary
 - Ability to launch media player for a requested media in the list and update list if necessary
 - Highly scalable, easy to code new interfaces and support for other sites
@@ -25,29 +34,10 @@ Currently supported websites
 - [Shikimori](https://shikimori.io/) (Anime, Manga)
 - [VNDB](https://vndb.org/) (VNs)
 
-Screenshots
------------
-
-Qt interface
-
-![Qt](https://z411.github.io/trackma/images/screen_qt.png)
-
-GTK interface
-
-![GTK](https://z411.github.io/trackma/images/screen_gtk.png)
-
-Curses interface
-
-![Curses](https://z411.github.io/trackma/images/screen_curses.png)
-
-CLI
-
-![CLI](https://z411.github.io/trackma/images/screen_cli.png)
-
 Dependencies
 ------------
 
-The only required dependencies to run Trackma are:
+The only required dependencies to run Hakubun+ are:
 
 - Python 3.9+
 - For installation: `python-pip` (to install through `pip`) *or* `python-uv` (to install through `uv`)
@@ -60,7 +50,6 @@ The following user interfaces are available and their requirements are as follow
 | --- | --- |
 | Qt | PyQt6 (`python-pyqt6`) |
 | GTK 3 | PyGI (`python-gi` and `python-cairo`) |
-| curses | Urwid (`python-urwid`) |
 | CLI | None |
 
 The following media recognition trackers are available and their requirements are as follows:
@@ -84,18 +73,6 @@ Additional optional Python dependencies:
 Installation
 ------------
 
-Trackma has user-provided packages for several distributions.
-
-- **Arch Linux:** <https://aur.archlinux.org/packages/trackma>, <http://aur.archlinux.org/packages/trackma-git>
-- **Fedora:** <https://copr.fedoraproject.org/coprs/dyskette/trackma/>
-- **Gentoo Linux:** <http://gpo.zugaina.org/net-misc/trackma>
-- **NixOS:** <https://github.com/NixOS/nixpkgs/blob/master/pkgs/tools/misc/trackma/default.nix>
-- **Void Linux:** <https://github.com/void-linux/void-packages/blob/master/srcpkgs/trackma/template>
-
-A user from the community also is providing a Docker image:
-
-- **Docker:** <https://hub.docker.com/r/frosty5689/trackma/>
-
 ### Manual installation
 
 Make sure you've installed the proper dependencies (listed above)
@@ -103,22 +80,22 @@ according to the user interface you plan to use, and then run the
 following command:
 
 ```sh
-$ pip3 install Trackma
+$ pip3 install hakubun-plus
 ```
 
 You can also install the git (probably unstable, but newer) version like this:
 
 ```sh
-$ pip3 install -U git+https://github.com/z411/trackma.git
+$ pip3 install -U git+https://github.com/trektn/hakubun-plus.git
 ```
 
 Or download the source code and install:
 
 ```sh
-$ git clone --recursive https://github.com/z411/trackma.git
-$ cd trackma
+$ git clone --recursive https://github.com/trektn/hakubun-plus.git
+$ cd hakubun-plus
 $ uv build
-$ pip3 install dist/trackma-0.8.5-py3-none-any.whl
+$ pip3 install dist/hakubun_plus-0.11-py3-none-any.whl
 ```
 
 ### Extras (User Interfaces)
@@ -132,11 +109,9 @@ The following extras are available:
 | --- | --- |
 | `gtk` | The GTK interface. |
 | `qt` | The Qt interface. |
-| `curses` | The curses-based TUI. |
 | `ui` | All user interfaces. |
 | `trackers` | All tracker libraries. |
 | `discord_rpc` | Set your watching activity in Discord. |
-| `twitter` | Announce your watching activity on Twitter. |
 
 If you want to install any of the extras be sure to specify them during installation:
 
@@ -144,8 +119,8 @@ If you want to install any of the extras be sure to specify them during installa
 
 ```sh
 # With pip
-$ pip3 install Trackma[gtk,trackers,curses]
-$ pip3 install Trackma[ui,twitter,discord_rpc]
+$ pip3 install hakubun-plus[gtk,trackers]
+$ pip3 install hakubun-plus[ui,discord_rpc]
 ```
 
 Note that pip does not have a way to install all available extras,
@@ -154,10 +129,9 @@ so you'll have to provide them all manually if desired.
 Then you can run the program with the interface you like.
 
 ```sh
-$ trackma
-$ trackma-curses
-$ trackma-gtk
-$ trackma-qt
+$ hakubun-plus
+$ hakubun-plus-gtk
+$ hakubun-plus-qt
 ```
 
 #### uv
@@ -166,7 +140,7 @@ When using uv on the cloned repository (see above),
 you can install your desired extras as follows:
 
 ```sh
-$ uv sync --extra gtk --extra trackers --extra curses
+$ uv sync --extra gtk --extra trackers
 $ uv sync --extra ui --extra discord_rpc
 $ uv sync --all-extras
 ```
@@ -174,32 +148,30 @@ $ uv sync --all-extras
 Then you can run the interface you like in your virtual environment managed by uv:
 
 ```sh
-$ uv run trackma
-$ uv run trackma-curses
-$ uv run trackma-gtk
-$ uv run trackma-qt
+$ uv run hakubun-plus
+$ uv run hakubun-plus-gtk
+$ uv run hakubun-plus-qt
 ```
 
 Configuration
 -------------
 
-A configuration file will be created in `~/.config/trackma/config.json`, make sure to fill in the directory
-where you store your video files and other settings. Details about what each option does can be done here:
-
-<https://github.com/z411/trackma/wiki/Configuration-File>
+A configuration file will be created in `~/.config/hakubun/config.json`, make sure to fill in the directory
+where you store your video files and other settings. Set the `HAKUBUN_HOME` environment variable to run an
+isolated profile without sharing accounts, configuration, cache, or list data with an installed copy.
 
 Alternatively, the GTK and Qt interfaces provide a visual Settings panel.
 
 Development
 -----------
 
-The code is hosted as a git repository on [GitHub](https://github.com/z411/trackma).
+The code is hosted as a git repository on [GitHub](https://github.com/trektn/hakubun-plus).
 
 Clone the repo and create the virtual environment using `uv`:
 
 ```sh
-$ git clone --recursive https://github.com/z411/trackma.git
-$ cd trackma
+$ git clone --recursive https://github.com/trektn/hakubun-plus.git
+$ cd hakubun-plus
 $ uv sync --all-extras
 ```
 
@@ -207,14 +179,16 @@ Use the above commands from the [uv](#uv) section
 for how to run your desired interface.
 
 If you encounter any problems or have anything to suggest, please don't
-hesitate to submit an issue in the GitHub [issue tracker](https://github.com/z411/trackma/issues).
+hesitate to submit an issue in the GitHub [issue tracker](https://github.com/trektn/hakubun-plus/issues).
 
 License
 -------
 
-Trackma is licensed under the GPLv3 license, please see [LICENSE](../COPYING) for details.
+Hakubun+ is licensed under the GPLv3 license, please see [LICENSE](../COPYING) for details.
 
 Authors
 -------
 
-Trackma was originally written by z411 <z411@omaera.org>. For other contributors see AUTHORS file. GTK icon designed by shuuichi.
+Hakubun+ is maintained by trektn as an independent fork of
+[Trackma](https://github.com/z411/trackma), which was originally written
+by z411 <z411@omaera.org>. For other contributors see AUTHORS file.

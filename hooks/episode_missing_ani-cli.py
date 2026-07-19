@@ -1,6 +1,6 @@
 """
  Author: imsamuka
- Place under ~/.config/trackma/hooks/ or ~/.trackma/hooks/
+ Place under ~/.config/hakubun/hooks/ or ~/.hakubun/hooks/
 
  When an episode is not found, it executes 'ani-cli' to find and
  watch it via streaming automatically!

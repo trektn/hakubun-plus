@@ -6,11 +6,11 @@
 # https://github.com/matoro/
 # https://myanimelist.net/profile/Matoro_Mahri
 #
-# To use, copy this file to ~/.trackma/hooks/
+# To use, copy this file to ~/.hakubun/hooks/
 
 import os
 
 
 def episode_changed(engine, show):
-    os.system('notify-send --icon=/usr/lib/python3.5/site-packages/trackma/data/mal.jpg --app-name=trackma "Updated '+show['title']+'" "Progress: '+str(show['my_progress'])+'/'+str(show['total'])+'"')
+    os.system('notify-send --icon=/usr/lib/python3.5/site-packages/hakubun/data/mal.jpg --app-name=hakubun-plus "Updated '+show['title']+'" "Progress: '+str(show['my_progress'])+'/'+str(show['total'])+'"')
 

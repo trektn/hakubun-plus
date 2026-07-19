@@ -1,3 +1,17 @@
+Unreleased
+- Rebrand: Hakubun+ is an independent fork of Trackma, adding Taiga mode and an airing schedule window on top of the base Hakubun fork.
+- New feature: Optional Kitsu GraphQL backend, selectable in the interface settings. Its library request can retrieve up to 2,000 entries at once, batches detail lookups, and omits synopses from list downloads to reduce transfer time.
+- New feature: Cross-reference MyAnimeList community scores for AniList and Kitsu entries, manually or automatically after sync when a MAL account is configured.
+- New feature: Undo and redo for progress, score, status, and tag changes in the GTK and Qt interfaces.
+- New feature: GTK and Qt now show Season, Type, Platform Score, and MAL Score columns; search results identify shows already in the user's list.
+- New feature: GTK list filtering, drag-and-drop moves between status tabs, status-selection confirmation when adding a show, and Ctrl+Z/Ctrl+Shift+Z (or Ctrl+Y) undo/redo shortcuts.
+- New feature: Qt toolbar actions, a Move to status menu, improved show-detail layout, and a combined exact score slider/spin control.
+- Improvement: Kitsu's REST list download writes its information cache once per download rather than once per page, while retaining sequential page loading for correctness.
+- Improvement: Scores use appropriate decimal precision; Kitsu's quarter-step 0-5 scale is displayed as a 0-10 half-step scale.
+- Improvement: Full library scans are skipped when the watched directories have not changed; automatic retrieval now uses a correct 24-hour day.
+- Improvement: Added `HAKUBUN_HOME` to run an isolated Hakubun+ profile without sharing accounts, configuration, cache, or list data with an installed copy.
+- Bugfix: Corrected the default `my_last_update` key and refreshed current platform-score/type data from AniList, Kitsu, and MAL.
+
 v0.10.3
 - Bugfix: (Qt) Fixed filter's Invert checkbox
 - Bugfix: (MPRIS) Misc bugfixes and cleanup
@@ -293,4 +307,3 @@ First public release, there are still many things to fix and implement but it se
 - Improvement: Shows get colored when queued or playing
 - Improvement: Better curses interface memory management
 - Several bugfixes
-

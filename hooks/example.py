@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-# This file is part of Trackma.
-# This configuration file is licensed under the same terms as Trackma.
+# This file is part of Hakubun.
+# This configuration file is licensed under the same terms as Hakubun+.
 # ===================================
 #
-# To use this file, you must move it to ~/.trackma/hooks/my_hook.py
+# To use this file, you must move it to ~/.hakubun/hooks/my_hook.py
 #
 # ===================================
-# This Python file contains hook functions for Trackma's engine signals.
-# You can customize it freely to make Trackma do what you want after
+# This Python file contains hook functions for Hakubun+'s engine signals.
+# You can customize it freely to make Hakubun+ do what you want after
 # changes in your list have been made.
 #
-# These functions are called upon immediately by Trackma after the
+# These functions are called upon immediately by Hakubun+ after the
 # signal of the same name has been triggered. A reference to the Engine
 # and the relevant arguments are also passed to the function.
 #
