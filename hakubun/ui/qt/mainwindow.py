@@ -1819,10 +1819,10 @@ class MainWindow(QMainWindow):
                              addwindow.selected_show['id'], episode)
 
     # Responses from the engine thread
-    def r_generic(self):
+    def r_generic(self, result=None):
         self._unbusy()
 
-    def r_generic_ready(self):
+    def r_generic_ready(self, result=None):
         self._unbusy()
         self.status('Ready.')
 
