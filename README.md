@@ -162,6 +162,8 @@ isolated profile without sharing accounts, configuration, cache, or list data wi
 
 Alternatively, the GTK and Qt interfaces provide a visual Settings panel.
 
+If you are migrating from Trackma, you can transfer all your settings in `~/.config/trackma/` to `~/.config/hakubun/` and this usually shouldn't be a problem. However I recommend only transferring your account logins in `~/.config/trackma/accounts.dict`
+
 Development
 -----------
 
