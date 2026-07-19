@@ -78,6 +78,12 @@ class SettingsWindow(Gtk.Window):
     entry_jellyfin_username = Gtk.Template.Child()
     entry_jellyfin_api_key = Gtk.Template.Child()
 
+    radio_tracker_kodi = Gtk.Template.Child()
+    entry_kodi_host = Gtk.Template.Child()
+    spin_kodi_port = Gtk.Template.Child()
+    entry_kodi_username = Gtk.Template.Child()
+    entry_kodi_password = Gtk.Template.Child()
+
     combo_mpris_update_mode = Gtk.Template.Child()
     spin_tracker_update_percentage = Gtk.Template.Child()
     checkbox_tracker_update_close = Gtk.Template.Child()
@@ -187,6 +193,8 @@ class SettingsWindow(Gtk.Window):
             self.radio_tracker_plex.set_active(True)
         elif self.engine.get_config('tracker_type') == 'jellyfin':
             self.radio_tracker_jellyfin.set_active(True)
+        elif self.engine.get_config('tracker_type') == 'kodi':
+            self.radio_tracker_kodi.set_active(True)
 
         self.entry_player_process.set_text(
             self.engine.get_config('tracker_process'))
@@ -209,9 +217,6 @@ class SettingsWindow(Gtk.Window):
         self.entry_plex_password.set_text(
             self.engine.get_config('plex_passwd'))
         self._plex_obey_wait = self.engine.get_config('plex_obey_update_wait_s')
-        # Kodi isn't otherwise wired up in the GTK settings window yet, but
-        # its stored value still needs to survive a round trip through
-        # save_config() so opening/saving this dialog doesn't reset it.
         self._kodi_obey_wait = self.engine.get_config('kodi_obey_update_wait_s')
 
         self.entry_jellyfin_host.set_text(
@@ -222,6 +227,12 @@ class SettingsWindow(Gtk.Window):
             self.engine.get_config('jellyfin_user'))
         self.entry_jellyfin_api_key.set_text(
             self.engine.get_config('jellyfin_api_key'))
+
+        self.entry_kodi_host.set_text(self.engine.get_config('kodi_host'))
+        self.spin_kodi_port.set_value(int(self.engine.get_config('kodi_port')))
+        self.entry_kodi_username.set_text(self.engine.get_config('kodi_user'))
+        self.entry_kodi_password.set_text(
+            self.engine.get_config('kodi_passwd'))
 
         self.spin_tracker_update_wait.set_value(
             self.engine.get_config('tracker_update_wait_s'))
@@ -338,6 +349,7 @@ class SettingsWindow(Gtk.Window):
         self.radio_tracker_mpris.set_sensitive(state)
         self.radio_tracker_plex.set_sensitive(state)
         self.radio_tracker_jellyfin.set_sensitive(state)
+        self.radio_tracker_kodi.set_sensitive(state)
 
         if state:
             self._set_tracker_radio_buttons()
@@ -345,6 +357,7 @@ class SettingsWindow(Gtk.Window):
             self._enable_local(state)
             self._enable_plex(state)
             self._enable_jellyfin(state)
+            self._enable_kodi(state)
 
         self.checkbox_tracker_update_close.set_sensitive(state)
         self.checkbox_tracker_update_prompt.set_sensitive(state)
@@ -356,10 +369,12 @@ class SettingsWindow(Gtk.Window):
             self._enable_local(True)
             self._enable_plex(False)
             self._enable_jellyfin(False)
+            self._enable_kodi(False)
         else:
             self._enable_local(False)
             self._enable_plex(True)
             self._enable_jellyfin(True)
+            self._enable_kodi(True)
 
         self._update_streaming_obey_wait()
 
@@ -383,14 +398,19 @@ class SettingsWindow(Gtk.Window):
         self.entry_jellyfin_username.set_sensitive(enable)
         self.entry_jellyfin_api_key.set_sensitive(enable)
 
+    def _enable_kodi(self, enable):
+        self.entry_kodi_host.set_sensitive(enable)
+        self.spin_kodi_port.set_sensitive(enable)
+        self.entry_kodi_username.set_sensitive(enable)
+        self.entry_kodi_password.set_sensitive(enable)
+
     def _update_streaming_obey_wait(self):
         # Only Plex and Kodi have this distinction (obey the fixed wait
-        # time vs. estimate from playback position); Kodi isn't wired up
-        # as a selectable radio button in this window yet, hence getattr.
+        # time vs. estimate from playback position).
         if self.radio_tracker_plex.get_active():
             self.checkbox_streaming_obey_wait.set_sensitive(True)
             self.checkbox_streaming_obey_wait.set_active(self._plex_obey_wait)
-        elif getattr(self, 'radio_tracker_kodi', None) and self.radio_tracker_kodi.get_active():
+        elif self.radio_tracker_kodi.get_active():
             self.checkbox_streaming_obey_wait.set_sensitive(True)
             self.checkbox_streaming_obey_wait.set_active(self._kodi_obey_wait)
         else:
@@ -399,7 +419,7 @@ class SettingsWindow(Gtk.Window):
     def _on_streaming_obey_wait_toggled(self, checkbox):
         if self.radio_tracker_plex.get_active():
             self._plex_obey_wait = checkbox.get_active()
-        elif getattr(self, 'radio_tracker_kodi', None) and self.radio_tracker_kodi.get_active():
+        elif self.radio_tracker_kodi.get_active():
             self._kodi_obey_wait = checkbox.get_active()
 
     def _load_directories(self, paths):
@@ -461,6 +481,13 @@ class SettingsWindow(Gtk.Window):
             'jellyfin_user', self.entry_jellyfin_username.get_text())
         self.engine.set_config(
             'jellyfin_api_key', self.entry_jellyfin_api_key.get_text())
+        self.engine.set_config('kodi_host', self.entry_kodi_host.get_text())
+        self.engine.set_config('kodi_port', str(
+            int(self.spin_kodi_port.get_value())))
+        self.engine.set_config(
+            'kodi_user', self.entry_kodi_username.get_text())
+        self.engine.set_config(
+            'kodi_passwd', self.entry_kodi_password.get_text())
         self.engine.set_config(
             'tracker_enabled', self.switch_tracker.get_active())
         self.engine.set_config(
@@ -492,6 +519,8 @@ class SettingsWindow(Gtk.Window):
             self.engine.set_config('tracker_type', 'plex')
         elif self.radio_tracker_jellyfin.get_active():
             self.engine.set_config('tracker_type', 'jellyfin')
+        elif self.radio_tracker_kodi.get_active():
+            self.engine.set_config('tracker_type', 'kodi')
 
         # Auto-retrieve
         if self.radiobutton_download_always.get_active():
