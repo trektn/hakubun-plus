@@ -1709,7 +1709,15 @@ class Engine:
             if os.name == 'nt':
                 return self._get_tracker_class('win32')
 
-            # Try trackers in this order: pyinotify, inotify, polling
+            # Try trackers in this order: MPRIS, pyinotify, inotify, polling.
+            # MPRIS first since it needs no configuration (no search
+            # directories to set up) and works for any MPRIS-capable
+            # player, not just ones playing from a watched directory.
+            try:
+                return self._get_tracker_class('mpris')
+            except ImportError:
+                pass
+
             try:
                 return self._get_tracker_class('inotify_auto')
             except ImportError:

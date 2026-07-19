@@ -1,3 +1,7 @@
+v0.12.1
+- New feature: Tracker auto-detect in GTK, at parity with Qt -- the "Local" radio was renamed "Auto-detect (recommended)" and now correctly writes `tracker_type: auto` (it previously wrote an unrecognized 'local' value that happened to fall through to the same guessing logic anyway). Auto-detection now also tries MPRIS first before falling back to inotify/polling, since it needs no search directories configured and works with any MPRIS-capable player.
+- Improvement: Adjusted several config defaults for a smoother out-of-the-box experience: reuse an existing mpv window; ask to add a show if it's not already in your list; MPRIS updates at 80% of an episode's duration instead of a fixed wait; wait 300 seconds (instead of 120) before updating for local/Jellyfin/Kodi/Plex trackers; download changes automatically on open and send changes after every update and on close; default a newly added show to Plan to Watch instead of the currently active tab; default player set to `/usr/bin/mpv`; default visible columns now include Season and Platform Score.
+
 v0.12
 - Rebrand: Hakubun+ is an independent fork of Trackma, adding Taiga mode and an airing schedule window on top of the base Hakubun fork.
 - New feature: Optional Kitsu GraphQL backend, selectable in the interface settings. Its library request can retrieve up to 2,000 entries at once, batches detail lookups, and omits synopses from list downloads to reduce transfer time.

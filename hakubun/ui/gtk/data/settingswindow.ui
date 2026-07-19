@@ -178,12 +178,13 @@
                         <property name="spacing">9</property>
                         <child>
                           <object class="GtkRadioButton" id="radio_tracker_local">
-                            <property name="label" translatable="yes">Local</property>
+                            <property name="label" translatable="yes">Auto-detect (recommended)</property>
                             <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="receives_default">False</property>
                             <property name="draw_indicator">True</property>
                             <property name="group">radio_tracker_plex</property>
+                            <property name="tooltip_text" translatable="yes">Prefers MPRIS if available, otherwise falls back to watching your media directories (inotify, or polling with lsof if inotify isn't available).</property>
                             <signal name="toggled" handler="_set_tracker_radio_buttons" swapped="no"/>
                           </object>
                           <packing>
