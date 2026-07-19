@@ -1592,6 +1592,21 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkCheckButton" id="checkbox_filter_global">
+                    <property name="label" translatable="yes">Switch to the All category when filtering</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="receives_default">False</property>
+                    <property name="draw_indicator">True</property>
+                    <property name="tooltip_text" translatable="yes">When typing in the filter bar while on a specific status tab, automatically switch to the All tab so the filter searches your whole list instead of just that status.</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">2</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkCheckButton" id="checkbox_show_tray">
                     <property name="label" translatable="yes">Show tray icon</property>
                     <property name="visible">True</property>
@@ -1602,7 +1617,7 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">2</property>
+                    <property name="position">3</property>
                   </packing>
                 </child>
                 <child>
@@ -1658,7 +1673,7 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">3</property>
+                    <property name="position">4</property>
                   </packing>
                 </child>
               </object>

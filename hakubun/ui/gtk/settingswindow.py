@@ -118,6 +118,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_tray_api_icon = Gtk.Template.Child()
     checkbox_remember_geometry = Gtk.Template.Child()
     checkbox_classic_progress = Gtk.Template.Child()
+    checkbox_filter_global = Gtk.Template.Child()
     checkbox_add_mal_scores = Gtk.Template.Child()
 
     colorbutton_rows_playing = Gtk.Template.Child()
@@ -301,6 +302,7 @@ class SettingsWindow(Gtk.Window):
             self.config['remember_geometry'])
         self.checkbox_classic_progress.set_active(
             not self.config['episodebar_style'])
+        self.checkbox_filter_global.set_active(self.config['filter_global'])
 
         for color_key, color_button in self._color_buttons.items():
             color = getColor(self.config['colors'][color_key])
@@ -578,6 +580,7 @@ class SettingsWindow(Gtk.Window):
         self.config['remember_geometry'] = self.checkbox_remember_geometry.get_active()
         self.config['episodebar_style'] = int(
             not self.checkbox_classic_progress.get_active())
+        self.config['filter_global'] = self.checkbox_filter_global.get_active()
 
         """Update Colors"""
         self.config['colors'] = {key: reprColor(

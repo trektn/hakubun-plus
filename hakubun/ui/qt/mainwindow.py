@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         # Create filter list
         self.show_filter = QLineEdit()
         self.show_filter.setClearButtonEnabled(True)
-        self.show_filter.textChanged.connect(self.s_filter_changed)
+        self.show_filter.textChanged.connect(self.s_filter_text_changed)
         # Filters the current list as you type, but Enter jumps straight
         # to a full remote search/add.
         self.show_filter.returnPressed.connect(
@@ -1387,6 +1387,19 @@ class MainWindow(QMainWindow):
         else:
             self.view.model().setFilterCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         self.view.model().setFilterFixedString(expression)
+
+    def s_filter_text_changed(self):
+        # Separate from s_filter_changed (also invoked by s_tab_changed to
+        # re-apply the existing filter after a tab switch) so switching to
+        # All only happens in response to the user actually typing, not
+        # every time the filter gets reapplied.
+        raw_query = self.show_filter.text()
+        self.s_filter_changed()
+
+        if raw_query and self.config['filter_global']:
+            all_tab = self.notebook.count() - 1
+            if self.notebook.currentIndex() != all_tab:
+                self.notebook.setCurrentIndex(all_tab)
 
     def s_filter_invert_changed(self):
         self.view.model().setFilterInvert(self.show_filter_invert.isChecked())

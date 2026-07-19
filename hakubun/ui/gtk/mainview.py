@@ -448,6 +448,11 @@ class MainView(Gtk.Box):
         for page in self._pages.values():
             page.show_tree_view.get_model().props.model.set_search_query(query)
 
+        if query and self._config['filter_global']:
+            all_page = self._pages[None].pagenumber
+            if self.notebook.get_current_page() != all_page:
+                self.notebook.set_current_page(all_page)
+
     def _on_tab_drag_data_received(self, widget, drag_context, x, y, data, info, time, status):
         # get_text() only recognizes atoms GTK considers text MIME types,
         # which our custom target isn't, so read the raw bytes instead.
