@@ -18,6 +18,7 @@ Unreleased
 - Bugfix: (GTK) The Kodi tracker's host/port/credential fields existed in the settings window but were never wired up, so they couldn't be configured or saved through the UI at all; Kodi now works the same as Plex and Jellyfin in GTK.
 - Improvement: Plex/Jellyfin/Kodi credentials are grouped alphabetically under a single "Streaming Credentials" section at the bottom of the Media settings page (GTK and Qt), instead of being interleaved with the tracker-type picker in an inconsistent order. Their duplicate "use wait time before updating" checkboxes were also consolidated into one shared toggle that follows whichever of Plex/Kodi is currently selected.
 - New feature: Optional "Switch to the All category when filtering" toggle (GTK and Qt) that jumps to the All tab when typing in the filter bar, so the search covers the whole list instead of just the current status tab.
+- New feature: A "Go to" action for search results already in the user's list -- GTK's Add button becomes "Go to" for such results; Qt gets a "Go to" button in the show-details popup. Both jump to the show's status tab in the main list and highlight it, instead of re-adding it.
 
 v0.10.3
 - Bugfix: (Qt) Fixed filter's Invert checkbox
