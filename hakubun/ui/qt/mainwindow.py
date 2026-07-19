@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         # Create filter list
         self.show_filter = QLineEdit()
         self.show_filter.setClearButtonEnabled(True)
-        self.show_filter.textChanged.connect(self.s_filter_changed)
+        self.show_filter.textChanged.connect(self.s_filter_text_changed)
         # Filters the current list as you type, but Enter jumps straight
         # to a full remote search/add.
         self.show_filter.returnPressed.connect(
@@ -1388,6 +1388,19 @@ class MainWindow(QMainWindow):
             self.view.model().setFilterCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         self.view.model().setFilterFixedString(expression)
 
+    def s_filter_text_changed(self):
+        # Separate from s_filter_changed (also invoked by s_tab_changed to
+        # re-apply the existing filter after a tab switch) so switching to
+        # All only happens in response to the user actually typing, not
+        # every time the filter gets reapplied.
+        raw_query = self.show_filter.text()
+        self.s_filter_changed()
+
+        if raw_query and self.config['filter_global']:
+            all_tab = self.notebook.count() - 1
+            if self.notebook.currentIndex() != all_tab:
+                self.notebook.setCurrentIndex(all_tab)
+
     def s_filter_invert_changed(self):
         self.view.model().setFilterInvert(self.show_filter_invert.isChecked())
 
@@ -1587,10 +1600,27 @@ class MainWindow(QMainWindow):
 
         self.addwindow = AddDialog(
             None, self.worker, current_status, default=query or None)
+        self.addwindow.goToRequested.connect(self.s_go_to_show)
         self.addwindow.setModal(True)
         self.addwindow.show()
         if query:
             self.addwindow.s_search()
+
+    def s_go_to_show(self, showid):
+        show = self.worker.engine.get_show_info(showid)
+        for i in range(self.notebook.count() - 1):  # exclude the All tab
+            if self.notebook.tabData(i) == show['my_status']:
+                self.notebook.setCurrentIndex(i)
+                break
+
+        source_model = self.view.model().sourceModel()
+        if showid not in source_model.id_map:
+            return
+        source_index = source_model.index(source_model.id_map[showid], 0)
+        proxy_index = self.view.model().mapFromSource(source_index)
+        if proxy_index.isValid():
+            self.view.setCurrentIndex(proxy_index)
+            self.view.scrollTo(proxy_index)
 
     def s_airing_schedule(self):
         self.airingwindow = AiringScheduleDialog(None, self.worker)
@@ -1789,10 +1819,10 @@ class MainWindow(QMainWindow):
                              addwindow.selected_show['id'], episode)
 
     # Responses from the engine thread
-    def r_generic(self):
+    def r_generic(self, result=None):
         self._unbusy()
 
-    def r_generic_ready(self):
+    def r_generic_ready(self, result=None):
         self._unbusy()
         self.status('Ready.')
 

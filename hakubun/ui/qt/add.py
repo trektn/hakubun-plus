@@ -18,8 +18,9 @@ import html
 from datetime import date
 
 from PyQt6 import QtCore
-from PyQt6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                             QPushButton, QRadioButton, QSpinBox, QSplitter, QStackedWidget, QVBoxLayout)
+from PyQt6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMenu,
+                             QMessageBox, QPushButton, QRadioButton, QSpinBox, QSplitter, QStackedWidget,
+                             QVBoxLayout)
 
 from hakubun import utils
 from hakubun.ui.qt.details import DetailsDialog
@@ -30,6 +31,8 @@ class AddDialog(QDialog):
     worker = None
     selected_show = None
     results = []
+
+    goToRequested = QtCore.pyqtSignal(int)
 
     def __init__(self, parent, worker, current_status, default=None):
         QDialog.__init__(self, parent)
@@ -117,11 +120,17 @@ class AddDialog(QDialog):
         tableview = AddTableDetailsView(
             None, self.worker, mylist=self.mylist, statuses_dict=self.statuses_dict)
         tableview.changed.connect(self.s_selected)
+        tableview.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        tableview.table.customContextMenuRequested.connect(
+            lambda pos: self.s_context_menu(tableview.table, pos))
 
         cardview = AddCardView(
             api_info=self.worker.engine.api_info, mylist=self.mylist, statuses_dict=self.statuses_dict)
         cardview.changed.connect(self.s_selected)
         cardview.doubleClicked.connect(self.s_show_details)
+        cardview.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        cardview.customContextMenuRequested.connect(
+            lambda pos: self.s_context_menu(cardview, pos))
 
         self.contents.addWidget(cardview)
         self.contents.addWidget(tableview)
@@ -162,9 +171,50 @@ class AddDialog(QDialog):
 
     # Slots
     def s_show_details(self):
-        detailswindow = DetailsDialog(self, self.worker, self.selected_show)
+        on_go_to = None
+        if self.selected_show and self.selected_show['id'] in self.mylist:
+            showid = self.selected_show['id']
+            on_go_to = lambda: self.s_go_to(showid)
+
+        detailswindow = DetailsDialog(
+            self, self.worker, self.selected_show, on_go_to=on_go_to)
         detailswindow.setModal(True)
         detailswindow.show()
+
+    def s_go_to(self, showid):
+        self.goToRequested.emit(showid)
+        self.close()
+
+    def s_context_menu(self, view, pos):
+        # Right-click "Move to" for a search result -- only meaningful
+        # for shows already in the user's list, since there's no status
+        # to move a not-yet-added show away from.
+        index = view.indexAt(pos)
+        if not index.isValid():
+            return
+
+        source_row = view.model().mapToSource(index).row()
+        show = view.model().sourceModel().results[source_row]
+        if show['id'] not in self.mylist:
+            return
+
+        menu = QMenu(self)
+        move_to = menu.addMenu('Move to')
+        for status in self.worker.engine.mediainfo['statuses']:
+            action = move_to.addAction(self.statuses_dict.get(status, str(status)))
+            action.triggered.connect(
+                lambda checked=False, s=status, showid=show['id']: self.s_move_to(showid, s))
+        menu.exec(view.viewport().mapToGlobal(pos))
+
+    def s_move_to(self, showid, status):
+        self.worker_call('set_status', self.r_moved, showid, status)
+        if showid in self.mylist:
+            self.mylist[showid]['my_status'] = status
+
+    def r_moved(self, result):
+        if not result['success']:
+            QMessageBox.critical(
+                self, 'Error', 'Could not change the show\'s status.')
 
     def s_change_view(self, item):
         self.contents.currentWidget().getModel().setResults(None)

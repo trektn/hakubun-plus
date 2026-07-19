@@ -206,3 +206,10 @@ Authors
 Hakubun+ is maintained by trektn as an independent fork of
 [Trackma](https://github.com/z411/trackma), which was originally written
 by z411 <z411@omaera.org>. For other contributors see AUTHORS file.
+
+Acknowledgments
+---------------
+
+The optional `anitopy` title parser uses the
+[anitopy](https://github.com/igorcafe/anitopy) library, a Python port of
+[Anitomy](https://github.com/erengy/anitomy).

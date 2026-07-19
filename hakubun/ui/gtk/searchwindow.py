@@ -17,7 +17,7 @@
 import os
 import threading
 
-from gi.repository import GLib, GObject, Gtk
+from gi.repository import Gdk, GLib, GObject, Gtk
 
 from hakubun import utils
 from hakubun.ui.gtk import gtk_dir
@@ -54,7 +54,9 @@ class SearchWindow(Gtk.Window):
 
     __gsignals__ = {
         'search-error': (GObject.SignalFlags.RUN_FIRST, None,
-                         (str,))
+                         (str,)),
+        'go-to-show': (GObject.SignalFlags.RUN_FIRST, None,
+                       (int,)),
     }
 
     btn_add_show = Gtk.Template.Child()
@@ -82,6 +84,7 @@ class SearchWindow(Gtk.Window):
 
         self.showlist = SearchTreeView(colors)
         self.showlist.get_selection().connect("changed", self._on_selection_changed)
+        self.showlist.connect("button-press-event", self._on_show_context_menu)
         self.showlist.set_size_request(250, 350)
         self.showlist.show()
 
@@ -149,7 +152,12 @@ class SearchWindow(Gtk.Window):
     def _on_btn_add_show_clicked(self, btn):
         show = self._get_full_selected_show()
 
-        if show is not None:
+        if show is None:
+            return
+
+        if show['id'] in self._mylist:
+            self.emit('go-to-show', show['id'])
+        else:
             self._add_show(show)
 
     def _get_full_selected_show(self):
@@ -200,6 +208,58 @@ class SearchWindow(Gtk.Window):
         if self._selected_show in self._showdict:
             self.info.load(self._showdict[self._selected_show])
             self.btn_add_show.set_sensitive(True)
+            if self._selected_show in self._mylist:
+                self.btn_add_show.set_label('Go to')
+            else:
+                self.btn_add_show.set_label('Add')
+
+    def _on_show_context_menu(self, tree_view, event):
+        # Right-click "Move to" for a result already in the user's list
+        # -- there's no status to move a not-yet-added show away from.
+        x = int(event.x)
+        y = int(event.y)
+        pthinfo = tree_view.get_path_at_pos(x, y)
+
+        if not (event.type == Gdk.EventType.BUTTON_PRESS and
+                event.button == Gdk.BUTTON_SECONDARY and pthinfo):
+            return False
+
+        path, col, cellx, celly = pthinfo
+        showid = int(tree_view.get_model()[path][0])
+        if showid not in self._mylist:
+            return False
+
+        tree_view.grab_focus()
+        tree_view.set_cursor(path, col, 0)
+
+        menu = Gtk.Menu()
+        mb_move_to = Gtk.MenuItem("Move to")
+        mb_move_to.set_submenu(self._build_move_to_menu(showid))
+        menu.append(mb_move_to)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _build_move_to_menu(self, showid):
+        mediainfo = self._engine.mediainfo
+        menu_move_to = Gtk.Menu()
+        for status in mediainfo['statuses']:
+            mb_status = Gtk.MenuItem(mediainfo['statuses_dict'][status])
+            mb_status.connect(
+                "activate", self._on_move_to_activate, showid, status)
+            menu_move_to.append(mb_status)
+        menu_move_to.show_all()
+        return menu_move_to
+
+    def _on_move_to_activate(self, menu_item, showid, status):
+        try:
+            self._engine.set_status(showid, status)
+        except utils.HakubunError as e:
+            self.emit('search-error', str(e))
+            return
+
+        if showid in self._mylist:
+            self._mylist[showid]['my_status'] = status
 
 
 class SearchTreeView(Gtk.TreeView):

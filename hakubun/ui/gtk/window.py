@@ -329,12 +329,17 @@ class HakubunWindow(Gtk.ApplicationWindow):
         win = SearchWindow(
             self._engine, self._config['colors'], current_status, transient_for=self)
         win.connect('search-error', self._on_search_error)
+        win.connect('go-to-show', self._on_go_to_show)
         win.connect('destroy', self._on_modal_destroy)
         win.present()
         self._modals.append(win)
 
     def _on_search_error(self, search_window, error_msg):
         print(error_msg)
+
+    def _on_go_to_show(self, search_window, showid):
+        self._main_view.go_to_show(showid)
+        search_window.destroy()
 
     def _on_airing_schedule(self, action, param):
         if self._airing_window:

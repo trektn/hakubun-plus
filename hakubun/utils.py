@@ -774,6 +774,7 @@ gtk_defaults = {
     'last_height': 480,
     'visible_columns': ['Title', 'Progress', 'Score', 'Percent'],
     'episodebar_style': 1,
+    'filter_global': False,
     'colors': {
         'is_airing': '#0099CC',
         'is_playing': '#6C2DC7',

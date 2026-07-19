@@ -6,11 +6,21 @@ Unreleased
 - New feature: GTK and Qt now show Season, Type, Platform Score, and MAL Score columns; search results identify shows already in the user's list.
 - New feature: GTK list filtering, drag-and-drop moves between status tabs, status-selection confirmation when adding a show, and Ctrl+Z/Ctrl+Shift+Z (or Ctrl+Y) undo/redo shortcuts.
 - New feature: Qt toolbar actions, a Move to status menu, improved show-detail layout, and a combined exact score slider/spin control.
+- New feature: Taiga Mode (Qt), an optional look that emulates Taiga's UI, including a dedicated Now Playing screen showing what the tracker currently sees playing (title, episode, playback progress, Last/Next Episode buttons) alongside that show's details.
+- New feature: Airing Schedule window (GTK and Qt), a week view of airing shows on the user's list cross-referenced from AniList, showing relative air time and whether the user is caught up.
+- Improvement: Synopses/descriptions from every backend are sanitized into plain text with real paragraph breaks instead of leaking raw `<br>`/`<p>` markup into the UI.
 - Improvement: Kitsu's REST list download writes its information cache once per download rather than once per page, while retaining sequential page loading for correctness.
 - Improvement: Scores use appropriate decimal precision; Kitsu's quarter-step 0-5 scale is displayed as a 0-10 half-step scale.
 - Improvement: Full library scans are skipped when the watched directories have not changed; automatic retrieval now uses a correct 24-hour day.
 - Improvement: Added `HAKUBUN_HOME` to run an isolated Hakubun+ profile without sharing accounts, configuration, cache, or list data with an installed copy.
 - Bugfix: Corrected the default `my_last_update` key and refreshed current platform-score/type data from AniList, Kitsu, and MAL.
+- Bugfix: (Qt) Fixed a crash on nearly every list action (setting episode/score/status, undo, redo, editing tags, deleting a show, list upload) caused by a worker-callback signature mismatch introduced by the rebrand's worker-dispatch rewrite.
+- Bugfix: The library-scanning "whole list" toggle was labeled "Search entire list" in GTK and "Scan through whole list" in Qt for the same setting; both now read "Scan through whole list when matching local files" and explain what it does via tooltip. Added matching tooltips to the status-auto-change, push-sync-on-apply, and per-API-columns settings.
+- Bugfix: (GTK) The Kodi tracker's host/port/credential fields existed in the settings window but were never wired up, so they couldn't be configured or saved through the UI at all; Kodi now works the same as Plex and Jellyfin in GTK.
+- Improvement: Plex/Jellyfin/Kodi credentials are grouped alphabetically under a single "Streaming Credentials" section at the bottom of the Media settings page (GTK and Qt), instead of being interleaved with the tracker-type picker in an inconsistent order. Their duplicate "use wait time before updating" checkboxes were also consolidated into one shared toggle that follows whichever of Plex/Kodi is currently selected.
+- New feature: Optional "Switch to the All category when filtering" toggle (GTK and Qt) that jumps to the All tab when typing in the filter bar, so the search covers the whole list instead of just the current status tab.
+- New feature: A "Go to" action for search results already in the user's list -- GTK's Add button becomes "Go to" for such results; Qt gets a "Go to" button in the show-details popup. Both jump to the show's status tab in the main list and highlight it, instead of re-adding it.
+- New feature: Right-click "Move to" on search results (GTK and Qt) for results already in the user's list, matching the main list's existing Move to submenu.
 
 v0.10.3
 - Bugfix: (Qt) Fixed filter's Invert checkbox
