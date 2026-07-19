@@ -620,6 +620,22 @@ class MainView(Gtk.Box):
 
         return self._current_page.selected_show
 
+    def go_to_show(self, showid):
+        """Switches to the tab matching showid's current status and
+        highlights it there (called after "Go to" on an already-listed
+        search result)."""
+        try:
+            show = self._engine.get_show_info(showid)
+        except utils.EngineError:
+            return
+
+        status = show['my_status']
+        if status not in self._pages:
+            return
+
+        self.notebook.set_current_page(self._pages[status].pagenumber)
+        self._pages[status].show_tree_view.select(show)
+
     def _on_column_toggled(self, page, column_name, visible):
         if visible:
             # Make column visible

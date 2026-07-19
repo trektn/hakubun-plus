@@ -31,6 +31,8 @@ class AddDialog(QDialog):
     selected_show = None
     results = []
 
+    goToRequested = QtCore.pyqtSignal(int)
+
     def __init__(self, parent, worker, current_status, default=None):
         QDialog.__init__(self, parent)
         self.resize(950, 700)
@@ -162,9 +164,19 @@ class AddDialog(QDialog):
 
     # Slots
     def s_show_details(self):
-        detailswindow = DetailsDialog(self, self.worker, self.selected_show)
+        on_go_to = None
+        if self.selected_show and self.selected_show['id'] in self.mylist:
+            showid = self.selected_show['id']
+            on_go_to = lambda: self.s_go_to(showid)
+
+        detailswindow = DetailsDialog(
+            self, self.worker, self.selected_show, on_go_to=on_go_to)
         detailswindow.setModal(True)
         detailswindow.show()
+
+    def s_go_to(self, showid):
+        self.goToRequested.emit(showid)
+        self.close()
 
     def s_change_view(self, item):
         self.contents.currentWidget().getModel().setResults(None)

@@ -54,7 +54,9 @@ class SearchWindow(Gtk.Window):
 
     __gsignals__ = {
         'search-error': (GObject.SignalFlags.RUN_FIRST, None,
-                         (str,))
+                         (str,)),
+        'go-to-show': (GObject.SignalFlags.RUN_FIRST, None,
+                       (int,)),
     }
 
     btn_add_show = Gtk.Template.Child()
@@ -149,7 +151,12 @@ class SearchWindow(Gtk.Window):
     def _on_btn_add_show_clicked(self, btn):
         show = self._get_full_selected_show()
 
-        if show is not None:
+        if show is None:
+            return
+
+        if show['id'] in self._mylist:
+            self.emit('go-to-show', show['id'])
+        else:
             self._add_show(show)
 
     def _get_full_selected_show(self):
@@ -200,6 +207,10 @@ class SearchWindow(Gtk.Window):
         if self._selected_show in self._showdict:
             self.info.load(self._showdict[self._selected_show])
             self.btn_add_show.set_sensitive(True)
+            if self._selected_show in self._mylist:
+                self.btn_add_show.set_label('Go to')
+            else:
+                self.btn_add_show.set_label('Add')
 
 
 class SearchTreeView(Gtk.TreeView):

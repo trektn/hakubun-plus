@@ -1600,10 +1600,27 @@ class MainWindow(QMainWindow):
 
         self.addwindow = AddDialog(
             None, self.worker, current_status, default=query or None)
+        self.addwindow.goToRequested.connect(self.s_go_to_show)
         self.addwindow.setModal(True)
         self.addwindow.show()
         if query:
             self.addwindow.s_search()
+
+    def s_go_to_show(self, showid):
+        show = self.worker.engine.get_show_info(showid)
+        for i in range(self.notebook.count() - 1):  # exclude the All tab
+            if self.notebook.tabData(i) == show['my_status']:
+                self.notebook.setCurrentIndex(i)
+                break
+
+        source_model = self.view.model().sourceModel()
+        if showid not in source_model.id_map:
+            return
+        source_index = source_model.index(source_model.id_map[showid], 0)
+        proxy_index = self.view.model().mapFromSource(source_index)
+        if proxy_index.isValid():
+            self.view.setCurrentIndex(proxy_index)
+            self.view.scrollTo(proxy_index)
 
     def s_airing_schedule(self):
         self.airingwindow = AiringScheduleDialog(None, self.worker)
