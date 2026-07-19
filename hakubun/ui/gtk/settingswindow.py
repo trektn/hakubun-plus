@@ -187,9 +187,7 @@ class SettingsWindow(Gtk.Window):
         self.switch_tracker.set_active(
             self.engine.get_config('tracker_enabled'))
 
-        if self.engine.get_config('tracker_type') == 'local':
-            self.radio_tracker_local.set_active(True)
-        elif self.engine.get_config('tracker_type') == 'mpris':
+        if self.engine.get_config('tracker_type') == 'mpris':
             self.radio_tracker_mpris.set_active(True)
         elif self.engine.get_config('tracker_type') == 'plex':
             self.radio_tracker_plex.set_active(True)
@@ -197,6 +195,12 @@ class SettingsWindow(Gtk.Window):
             self.radio_tracker_jellyfin.set_active(True)
         elif self.engine.get_config('tracker_type') == 'kodi':
             self.radio_tracker_kodi.set_active(True)
+        else:
+            # 'auto' (the default), plus 'local'/'inotify_auto'/'polling'/
+            # 'win32' -- GTK doesn't expose those as separate radios, so
+            # anything not explicitly one of the streaming/MPRIS trackers
+            # above is represented here.
+            self.radio_tracker_local.set_active(True)
 
         self.entry_player_process.set_text(
             self.engine.get_config('tracker_process'))
@@ -534,7 +538,7 @@ class SettingsWindow(Gtk.Window):
 
         # Tracker type
         if self.radio_tracker_local.get_active():
-            self.engine.set_config('tracker_type', 'local')
+            self.engine.set_config('tracker_type', 'auto')
         elif self.radio_tracker_mpris.get_active():
             self.engine.set_config('tracker_type', 'mpris')
         elif self.radio_tracker_plex.get_active():
