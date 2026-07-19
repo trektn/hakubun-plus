@@ -396,11 +396,12 @@
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="checkbox_library_entire_list">
-                                <property name="label" translatable="yes">Search entire list</property>
+                                <property name="label" translatable="yes">Scan through whole list when matching local files</property>
                                 <property name="visible">True</property>
                                 <property name="can_focus">True</property>
                                 <property name="receives_default">False</property>
                                 <property name="draw_indicator">True</property>
+                                <property name="tooltip_text" translatable="yes">When library scanning matches your media directories against the list, only Watching/Plan to Watch shows are considered by default. Enable this to also match against Completed, Dropped, and other statuses.</property>
                               </object>
                               <packing>
                                 <property name="expand">False</property>
@@ -1483,6 +1484,7 @@
                         <property name="can_focus">True</property>
                         <property name="receives_default">False</property>
                         <property name="draw_indicator">True</property>
+                        <property name="tooltip_text" translatable="yes">Moves a show to its start status (e.g. Watching) when you set episode 1, and to its finish status (e.g. Completed) when you set its last episode.</property>
                       </object>
                       <packing>
                         <property name="expand">False</property>
@@ -1498,6 +1500,7 @@
                         <property name="receives_default">False</property>
                         <property name="margin_start">27</property>
                         <property name="draw_indicator">True</property>
+                        <property name="tooltip_text" translatable="yes">Only applies to the finish-status change above: hold off moving the show to its finish status until it has a score, instead of doing it as soon as the last episode is set.</property>
                       </object>
                       <packing>
                         <property name="expand">False</property>
@@ -2185,6 +2188,7 @@
                     <property name="receives_default">False</property>
                     <property name="margin_start">12</property>
                     <property name="draw_indicator">True</property>
+                    <property name="tooltip_text" translatable="yes">Sends any queued changes to the API right after you close this settings window, instead of waiting for the next scheduled or manual sync. This only pushes -- it doesn't also pull a fresh copy of the list from the API.</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>

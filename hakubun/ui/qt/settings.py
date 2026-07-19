@@ -261,6 +261,11 @@ class SettingsDialog(QDialog):
         self.searchdirs_buttons.addWidget(QSplitter())
         self.library_autoscan = QCheckBox()
         self.scan_whole_list = QCheckBox()
+        self.scan_whole_list.setToolTip(
+            "When library scanning matches your media directories against "
+            "the list, only Watching/Plan to Watch shows are considered by "
+            "default. Enable this to also match against Completed, "
+            "Dropped, and other statuses.")
         self.library_full_path = QCheckBox()
 
         g_playnext_layout = QGridLayout()
@@ -353,9 +358,17 @@ class SettingsDialog(QDialog):
         g_extra = QGroupBox('Additional options')
         g_extra.setFlat(True)
         self.auto_status_change = QCheckBox('Change status automatically')
+        self.auto_status_change.setToolTip(
+            "Moves a show to its start status (e.g. Watching) when you set "
+            "episode 1, and to its finish status (e.g. Completed) when you "
+            "set its last episode.")
         self.auto_status_change.toggled.connect(self.s_auto_status_change)
         self.auto_status_change_if_scored = QCheckBox(
             'Change status automatically only if scored')
+        self.auto_status_change_if_scored.setToolTip(
+            "Only applies to the finish-status change above: hold off "
+            "moving the show to its finish status until it has a score, "
+            "instead of doing it as soon as the last episode is set.")
         self.auto_date_change = QCheckBox(
             'Change start and finish dates automatically')
         g_extra_layout = QVBoxLayout()
@@ -395,6 +408,11 @@ class SettingsDialog(QDialog):
         g_apply.setFlat(True)
         self.sync_on_settings_apply = QCheckBox(
             'Push a sync when applying settings')
+        self.sync_on_settings_apply.setToolTip(
+            "Sends any queued changes to the API right after you click "
+            "Apply/OK here, instead of waiting for the next scheduled or "
+            "manual sync. This only pushes -- it doesn't also pull a fresh "
+            "copy of the list from the API.")
         g_apply_layout = QVBoxLayout()
         g_apply_layout.addWidget(self.sync_on_settings_apply)
         g_apply.setLayout(g_apply_layout)
@@ -459,6 +477,11 @@ class SettingsDialog(QDialog):
         self.remember_columns = QCheckBox('Remember column layouts and widths')
         self.columns_per_api = QCheckBox(
             'Use different visible columns per API')
+        self.columns_per_api.setToolTip(
+            "Remember visible columns (and, if \"Remember column layouts "
+            "and widths\" above is also on, their widths/order) "
+            "separately for each API/account, instead of sharing one "
+            "column layout across all of them.")
         g_window_layout = QVBoxLayout()
         g_window_layout.addWidget(self.remember_geometry)
         g_window_layout.addWidget(self.remember_columns)
