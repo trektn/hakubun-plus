@@ -68,9 +68,9 @@ class SettingsWindow(Gtk.Window):
     spin_plex_port = Gtk.Template.Child()
     entry_plex_username = Gtk.Template.Child()
     entry_plex_password = Gtk.Template.Child()
-    checkbox_plex_obey_wait = Gtk.Template.Child()
     checkbox_plex_ssl = Gtk.Template.Child()
     spin_tracker_update_wait = Gtk.Template.Child()
+    checkbox_streaming_obey_wait = Gtk.Template.Child()
 
     radio_tracker_jellyfin = Gtk.Template.Child()
     entry_jellyfin_host = Gtk.Template.Child()
@@ -150,6 +150,11 @@ class SettingsWindow(Gtk.Window):
         if os.sys.platform == 'linux':
             self.radio_tracker_mpris.set_visible(True)
 
+        self._plex_obey_wait = False
+        self._kodi_obey_wait = False
+        self.checkbox_streaming_obey_wait.connect(
+            "toggled", self._on_streaming_obey_wait_toggled)
+
         self.radiobutton_download_days.connect(
             "toggled", self._button_toggled, self.spinbutton_download_days)
         self.radiobutton_upload_minutes.connect(
@@ -203,8 +208,11 @@ class SettingsWindow(Gtk.Window):
         self.entry_plex_username.set_text(self.engine.get_config('plex_user'))
         self.entry_plex_password.set_text(
             self.engine.get_config('plex_passwd'))
-        self.checkbox_plex_obey_wait.set_active(
-            self.engine.get_config('plex_obey_update_wait_s'))
+        self._plex_obey_wait = self.engine.get_config('plex_obey_update_wait_s')
+        # Kodi isn't otherwise wired up in the GTK settings window yet, but
+        # its stored value still needs to survive a round trip through
+        # save_config() so opening/saving this dialog doesn't reset it.
+        self._kodi_obey_wait = self.engine.get_config('kodi_obey_update_wait_s')
 
         self.entry_jellyfin_host.set_text(
             self.engine.get_config('jellyfin_host'))
@@ -353,6 +361,8 @@ class SettingsWindow(Gtk.Window):
             self._enable_plex(True)
             self._enable_jellyfin(True)
 
+        self._update_streaming_obey_wait()
+
     def _enable_local(self, enable):
         self.entry_player_process.set_sensitive(enable)
         self.btn_file_chooser_executable.set_sensitive(enable)
@@ -365,7 +375,6 @@ class SettingsWindow(Gtk.Window):
         self.spin_plex_port.set_sensitive(enable)
         self.entry_plex_username.set_sensitive(enable)
         self.entry_plex_password.set_sensitive(enable)
-        self.checkbox_plex_obey_wait.set_sensitive(enable)
         self.checkbox_plex_ssl.set_sensitive(enable)
 
     def _enable_jellyfin(self, enable):
@@ -373,6 +382,25 @@ class SettingsWindow(Gtk.Window):
         self.spin_jellyfin_port.set_sensitive(enable)
         self.entry_jellyfin_username.set_sensitive(enable)
         self.entry_jellyfin_api_key.set_sensitive(enable)
+
+    def _update_streaming_obey_wait(self):
+        # Only Plex and Kodi have this distinction (obey the fixed wait
+        # time vs. estimate from playback position); Kodi isn't wired up
+        # as a selectable radio button in this window yet, hence getattr.
+        if self.radio_tracker_plex.get_active():
+            self.checkbox_streaming_obey_wait.set_sensitive(True)
+            self.checkbox_streaming_obey_wait.set_active(self._plex_obey_wait)
+        elif getattr(self, 'radio_tracker_kodi', None) and self.radio_tracker_kodi.get_active():
+            self.checkbox_streaming_obey_wait.set_sensitive(True)
+            self.checkbox_streaming_obey_wait.set_active(self._kodi_obey_wait)
+        else:
+            self.checkbox_streaming_obey_wait.set_sensitive(False)
+
+    def _on_streaming_obey_wait_toggled(self, checkbox):
+        if self.radio_tracker_plex.get_active():
+            self._plex_obey_wait = checkbox.get_active()
+        elif getattr(self, 'radio_tracker_kodi', None) and self.radio_tracker_kodi.get_active():
+            self._kodi_obey_wait = checkbox.get_active()
 
     def _load_directories(self, paths):
         if isinstance(paths, str):
@@ -419,8 +447,8 @@ class SettingsWindow(Gtk.Window):
             int(self.spin_plex_port.get_value())))
         self.engine.set_config('plex_ssl',
                                self.checkbox_plex_ssl.get_active())
-        self.engine.set_config('plex_obey_update_wait_s',
-                               self.checkbox_plex_obey_wait.get_active())
+        self.engine.set_config('plex_obey_update_wait_s', self._plex_obey_wait)
+        self.engine.set_config('kodi_obey_update_wait_s', self._kodi_obey_wait)
         self.engine.set_config(
             'plex_user', self.entry_plex_username.get_text())
         self.engine.set_config(

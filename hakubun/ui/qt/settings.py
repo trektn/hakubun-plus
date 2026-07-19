@@ -113,6 +113,17 @@ class SettingsDialog(QDialog):
         self.tracker_update_prompt = QCheckBox()
         self.tracker_not_found_prompt = QCheckBox()
 
+        self.streaming_obey_wait = QCheckBox()
+        self.streaming_obey_wait.setToolTip(
+            "Plex and Kodi normally estimate when an episode is \"watched\" "
+            "from playback position instead of a fixed timer. Enable this "
+            "to make the currently selected one (Plex or Kodi) use the "
+            "fixed \"Wait before updating\" time above instead. Has no "
+            "effect for other tracker types.")
+        self.streaming_obey_wait.toggled.connect(self.s_streaming_obey_wait)
+        self._plex_obey_wait = False
+        self._kodi_obey_wait = False
+
         g_media_layout.addRow('Enable tracker', self.tracker_enabled)
         g_media_layout.addRow('Tracker type', self.tracker_type)
         g_media_layout.addRow(
@@ -120,6 +131,9 @@ class SettingsDialog(QDialog):
         g_media_layout.addRow('Process name (regex)', self.tracker_process)
         g_media_layout.addRow(
             'Wait before updating (seconds)', self.tracker_update_wait)
+        g_media_layout.addRow(
+            'Use this wait time for Plex/Kodi trackers',
+            self.streaming_obey_wait)
         g_media_layout.addRow(
             'Update when (MPRIS)', self.mpris_update_mode)
         g_media_layout.addRow(
@@ -132,41 +146,6 @@ class SettingsDialog(QDialog):
                               self.tracker_not_found_prompt)
 
         g_media.setLayout(g_media_layout)
-
-        # Group: Plex settings
-        g_plex = QGroupBox('Plex Media Server')
-        g_plex.setFlat(True)
-        self.plex_host = QLineEdit()
-        self.plex_port = QLineEdit()
-        self.plex_user = QLineEdit()
-        self.plex_passw = QLineEdit()
-        self.plex_passw.setEchoMode(QLineEdit.EchoMode.Password)
-        self.plex_obey_wait = QCheckBox()
-        self.plex_ssl = QCheckBox()
-
-        g_plex_layout = QGridLayout()
-        g_plex_layout.addWidget(
-            QLabel('Host and Port'),                   0, 0, 1, 1)
-        g_plex_layout.addWidget(self.plex_host,
-                                0, 1, 1, 1)
-        g_plex_layout.addWidget(self.plex_port,
-                                0, 2, 1, 2)
-        g_plex_layout.addWidget(
-            QLabel('Use SSL'), 1, 0, 1, 1)
-        g_plex_layout.addWidget(self.plex_ssl,
-                                1, 2, 1, 1)
-        g_plex_layout.addWidget(
-            QLabel('Use "wait before updating" time'), 2, 0, 1, 1)
-        g_plex_layout.addWidget(self.plex_obey_wait,
-                                2, 2, 1, 1)
-        g_plex_layout.addWidget(
-            QLabel('myPlex login (claimed server)'),   3, 0, 1, 1)
-        g_plex_layout.addWidget(self.plex_user,
-                                3, 1, 1, 1)
-        g_plex_layout.addWidget(self.plex_passw,
-                                3, 2, 1, 2)
-
-        g_plex.setLayout(g_plex_layout)
 
         # Group: Jellyfin settings
         g_jellyfin = QGroupBox('Jellyfin')
@@ -200,7 +179,6 @@ class SettingsDialog(QDialog):
         self.kodi_user = QLineEdit()
         self.kodi_passw = QLineEdit()
         self.kodi_passw.setEchoMode(QLineEdit.EchoMode.Password)
-        self.kodi_obey_wait = QCheckBox()
 
         g_kodi_layout = QGridLayout()
         g_kodi_layout.addWidget(
@@ -209,23 +187,56 @@ class SettingsDialog(QDialog):
                                 0, 1, 1, 1)
         g_kodi_layout.addWidget(self.kodi_port,
                                 0, 2, 1, 2)
-        g_kodi_layout.addWidget(
-            QLabel('Use "wait before updating" time'), 1, 0, 1, 1)
-        g_kodi_layout.addWidget(self.kodi_obey_wait,
-                                1, 2, 1, 1)
-        g_kodi_layout.addWidget(QLabel('Kodi login'),   2, 0, 1, 1)
+        g_kodi_layout.addWidget(QLabel('Kodi login'),   1, 0, 1, 1)
         g_kodi_layout.addWidget(self.kodi_user,
-                                2, 1, 1, 1)
+                                1, 1, 1, 1)
         g_kodi_layout.addWidget(self.kodi_passw,
-                                2, 2, 1, 2)
+                                1, 2, 1, 2)
 
         g_kodi.setLayout(g_kodi_layout)
 
+        # Group: Plex settings
+        g_plex = QGroupBox('Plex Media Server')
+        g_plex.setFlat(True)
+        self.plex_host = QLineEdit()
+        self.plex_port = QLineEdit()
+        self.plex_user = QLineEdit()
+        self.plex_passw = QLineEdit()
+        self.plex_passw.setEchoMode(QLineEdit.EchoMode.Password)
+        self.plex_ssl = QCheckBox()
+
+        g_plex_layout = QGridLayout()
+        g_plex_layout.addWidget(
+            QLabel('Host and Port'),                   0, 0, 1, 1)
+        g_plex_layout.addWidget(self.plex_host,
+                                0, 1, 1, 1)
+        g_plex_layout.addWidget(self.plex_port,
+                                0, 2, 1, 2)
+        g_plex_layout.addWidget(
+            QLabel('Use SSL'), 1, 0, 1, 1)
+        g_plex_layout.addWidget(self.plex_ssl,
+                                1, 2, 1, 1)
+        g_plex_layout.addWidget(
+            QLabel('myPlex login (claimed server)'),   2, 0, 1, 1)
+        g_plex_layout.addWidget(self.plex_user,
+                                2, 1, 1, 1)
+        g_plex_layout.addWidget(self.plex_passw,
+                                2, 2, 1, 2)
+
+        g_plex.setLayout(g_plex_layout)
+
+        # Streaming Credentials header -- Jellyfin/Kodi/Plex share a tracker
+        # type selector above and only one is ever active at a time, so
+        # their login fields are grouped together at the bottom instead of
+        # being interleaved with the general tracker options.
+        lbl_streaming_credentials = QLabel('<b style="font-size: 12pt;">Streaming Credentials</b>')
+
         # Media form
         page_media_layout.addWidget(g_media)
-        page_media_layout.addWidget(g_plex)
+        page_media_layout.addWidget(lbl_streaming_credentials)
         page_media_layout.addWidget(g_jellyfin)
         page_media_layout.addWidget(g_kodi)
+        page_media_layout.addWidget(g_plex)
         page_media.setLayout(page_media_layout)
 
         # Library tab
@@ -667,8 +678,7 @@ class SettingsDialog(QDialog):
         self.plex_port.setText(engine.get_config('plex_port'))
         self.plex_ssl.setChecked(
             engine.get_config('plex_ssl'))
-        self.plex_obey_wait.setChecked(
-            engine.get_config('plex_obey_update_wait_s'))
+        self._plex_obey_wait = engine.get_config('plex_obey_update_wait_s')
         self.plex_user.setText(engine.get_config('plex_user'))
         self.plex_passw.setText(engine.get_config('plex_passwd'))
 
@@ -679,8 +689,7 @@ class SettingsDialog(QDialog):
 
         self.kodi_host.setText(engine.get_config('kodi_host'))
         self.kodi_port.setText(engine.get_config('kodi_port'))
-        self.kodi_obey_wait.setChecked(
-            engine.get_config('kodi_obey_update_wait_s'))
+        self._kodi_obey_wait = engine.get_config('kodi_obey_update_wait_s')
         self.kodi_user.setText(engine.get_config('kodi_user'))
         self.kodi_passw.setText(engine.get_config('kodi_passwd'))
 
@@ -794,8 +803,7 @@ class SettingsDialog(QDialog):
 
         engine.set_config('plex_host',         self.plex_host.text())
         engine.set_config('plex_port',         self.plex_port.text())
-        engine.set_config('plex_obey_update_wait_s',
-                          self.plex_obey_wait.isChecked())
+        engine.set_config('plex_obey_update_wait_s', self._plex_obey_wait)
         engine.set_config('plex_ssl',          self.plex_ssl.isChecked())
         engine.set_config('plex_user',         self.plex_user.text())
         engine.set_config('plex_passwd',       self.plex_passw.text())
@@ -807,8 +815,7 @@ class SettingsDialog(QDialog):
 
         engine.set_config('kodi_host',         self.kodi_host.text())
         engine.set_config('kodi_port',         self.kodi_port.text())
-        engine.set_config('kodi_obey_update_wait_s',
-                          self.kodi_obey_wait.isChecked())
+        engine.set_config('kodi_obey_update_wait_s', self._kodi_obey_wait)
         engine.set_config('kodi_user',         self.kodi_user.text())
         engine.set_config('kodi_passwd',       self.kodi_passw.text())
 
@@ -911,14 +918,12 @@ class SettingsDialog(QDialog):
         self.kodi_port.setEnabled(state)
         self.kodi_user.setEnabled(state)
         self.kodi_passw.setEnabled(state)
-        self.kodi_obey_wait.setEnabled(state)
 
     def switch_plex_state(self, state):
         self.plex_host.setEnabled(state)
         self.plex_port.setEnabled(state)
         self.plex_user.setEnabled(state)
         self.plex_passw.setEnabled(state)
-        self.plex_obey_wait.setEnabled(state)
         self.plex_ssl.setEnabled(state)
 
     def switch_jellyfin_state(self, state):
@@ -932,17 +937,19 @@ class SettingsDialog(QDialog):
             self.tracker_interval.setEnabled(True)
             self.tracker_update_wait.setEnabled(True)
             self.tracker_type.setEnabled(True)
-            if self.tracker_type.itemData(self.tracker_type.currentIndex()) == 'plex':
+            current_type = self.tracker_type.itemData(
+                self.tracker_type.currentIndex())
+            if current_type == 'plex':
                 self.switch_jellyfin_state(False)
                 self.switch_plex_state(True)
                 self.switch_kodi_state(False)
                 self.tracker_process.setEnabled(False)
-            elif self.tracker_type.itemData(self.tracker_type.currentIndex()) == 'jellyfin':
+            elif current_type == 'jellyfin':
                 self.switch_jellyfin_state(True)
                 self.switch_kodi_state(False)
                 self.switch_plex_state(False)
                 self.tracker_process.setEnabled(False)
-            elif self.tracker_type.itemData(self.tracker_type.currentIndex()) == 'kodi':
+            elif current_type == 'kodi':
                 self.switch_jellyfin_state(False)
                 self.switch_kodi_state(True)
                 self.switch_plex_state(False)
@@ -952,6 +959,7 @@ class SettingsDialog(QDialog):
                 self.switch_jellyfin_state(False)
                 self.switch_plex_state(False)
                 self.switch_kodi_state(False)
+            self._update_streaming_obey_wait(current_type)
         else:
             self.tracker_type.setEnabled(False)
             self.switch_jellyfin_state(False)
@@ -961,6 +969,25 @@ class SettingsDialog(QDialog):
             self.tracker_process.setEnabled(False)
             self.tracker_interval.setEnabled(False)
             self.tracker_update_wait.setEnabled(False)
+            self._update_streaming_obey_wait(None)
+
+    def _update_streaming_obey_wait(self, current_type):
+        if current_type == 'plex':
+            self.streaming_obey_wait.setEnabled(True)
+            self.streaming_obey_wait.setChecked(self._plex_obey_wait)
+        elif current_type == 'kodi':
+            self.streaming_obey_wait.setEnabled(True)
+            self.streaming_obey_wait.setChecked(self._kodi_obey_wait)
+        else:
+            self.streaming_obey_wait.setEnabled(False)
+
+    def s_streaming_obey_wait(self, checked):
+        current_type = self.tracker_type.itemData(
+            self.tracker_type.currentIndex())
+        if current_type == 'plex':
+            self._plex_obey_wait = checked
+        elif current_type == 'kodi':
+            self._kodi_obey_wait = checked
 
     def s_autoretrieve_days(self, checked):
         self.autoretrieve_days_n.setEnabled(checked)
