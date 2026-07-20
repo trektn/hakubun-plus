@@ -205,6 +205,18 @@ for how to run your desired interface.
 If you encounter any problems or have anything to suggest, please don't
 hesitate to submit an issue in the GitHub [issue tracker](https://github.com/trektn/hakubun-plus/issues).
 
+
+Relationship to upstream
+-------------------------
+
+This is an independent fork of [Trackma](https://github.com/z411/trackma) and is not affiliated
+with or endorsed by the original project.
+
+This fork was developed using AI assistance. Upstream Trackma does not accept AI-assisted
+contributions on their own. Please respect upstream's contribution policy and do not submit
+patches from this fork upstream unless they have been independently reviewed and comply with
+that policy.
+
 License
 -------
 
