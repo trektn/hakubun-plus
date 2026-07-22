@@ -198,6 +198,7 @@ class DetailsWidget(QWidget):
         self._clear_facts()
         self.facts_layout.addRow(QLabel('Loading details...'))
         self.show_description.setText('')
+        self._loaded_show_id = show.get('id')
         self.worker_call('get_show_details', self.r_details_loaded, show)
         api_info = self.worker.engine.api_info
 
@@ -233,6 +234,18 @@ class DetailsWidget(QWidget):
 
         details = result['result']
         prose_blocks = []
+
+        # The platform's own id first -- selectable so it can be copied
+        # straight into the multisync Inspector or a browser URL.
+        if getattr(self, '_loaded_show_id', None) is not None:
+            api_info = self.worker.engine.api_info
+            platform = api_info.get('name') \
+                or (api_info.get('shortname') or 'Platform').capitalize()
+            id_label = QLabel(str(self._loaded_show_id))
+            id_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            id_label.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.facts_layout.addRow('<b>%s ID:</b>' % platform, id_label)
 
         for key, value in details['extra']:
             if not key or not value:

@@ -990,6 +990,27 @@ def date_to_season(dt) -> str:
     return f'{season!s} {dt.year}'
 
 
+_RELEASE_STATUS_LABELS = {
+    Status.ONGOING: 'Airing',
+    Status.FINISHED: 'Finished',
+    Status.NOTYET: 'Upcoming',
+    Status.CANCELLED: 'Cancelled',
+}
+
+
+def release_status_label(status) -> str:
+    """Human label for a show's airing status ('Airing', 'Finished',
+    'Upcoming', ...). Shared by the list views' Release Status column;
+    same paint-path rules as get_season_label below: cheap, and never
+    mutates anything."""
+    label = _RELEASE_STATUS_LABELS.get(status)
+    if label:
+        return label
+    if status in (None, Status.UNKNOWN):
+        return '?'
+    return str(status)
+
+
 def get_season_label(show) -> str:
     """
     Returns a 'Season Year' label for a show (e.g. 'Winter 2009').
