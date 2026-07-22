@@ -85,6 +85,26 @@ def canonical_date(value):
     return text or None
 
 
+def provider_date(value):
+    """Canonical 'YYYY-MM-DD' -> datetime.date | None -- the inverse
+    of canonical_date, for the PUSH direction. The libs were built for
+    trackma's native show dicts, where date fields are datetime.date
+    objects: libanilist's _date2dict reads .year/.month/.day off the
+    value directly (and only guards TypeError/ValueError, so a str
+    escapes as AttributeError -- \"'str' object has no attribute
+    'year'\"). Handing them real date objects is correct for every
+    lib: AniList gets its attributes, MAL's urlencode renders a date
+    object as ISO anyway. Unparseable input degrades to None (= clear
+    the date) rather than crashing the whole push."""
+    if value is None or isinstance(value, datetime.date):
+        # note: datetime.datetime is a date subclass; both pass through
+        return value
+    try:
+        return datetime.date.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+
+
 def normalize_show(provider, show, mediainfo, external_ids=None):
     """Build a NormalizedEntry from a trackma show dict.
 

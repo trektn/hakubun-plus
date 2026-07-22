@@ -72,3 +72,17 @@ def test_normalize_title_keeps_non_latin_scripts():
     assert normalize.normalize_title('「葬送のフリーレン」') == '葬送のフリーレン'
     # NFKC unifies full-width forms.
     assert normalize.normalize_title('ＦＲＩＥＲＥＮ') == 'frieren'
+
+
+def test_provider_date_inverse_of_canonical():
+    import datetime
+    assert normalize.provider_date('2026-07-14') == datetime.date(2026, 7, 14)
+    assert normalize.provider_date(None) is None
+    # date/datetime objects pass through untouched.
+    d = datetime.date(2024, 1, 2)
+    assert normalize.provider_date(d) is d
+    # Garbage degrades to None (clear the date), never a crash.
+    assert normalize.provider_date('not a date') is None
+    # Full roundtrip both ways.
+    assert normalize.canonical_date(
+        normalize.provider_date('2026-07-14')) == '2026-07-14'

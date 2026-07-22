@@ -459,3 +459,23 @@ def test_push_includes_title_for_the_libs_own_logging(store):
     assert result['errors'] == {}
     assert libs['mal'].updates[-1]['title'] == 'Cowboy Bebop'
     assert libs['mal'].shows['1']['my_progress'] == 8
+
+
+def test_date_pushes_are_real_date_objects(store):
+    """Field report: \"apply failed 'str' object has no attribute
+    'year'\" -- canonical dates are ISO strings, but the libs expect
+    datetime.date (libanilist reads .year/.month/.day directly).
+    Pushing a date must convert; the whole apply crashed otherwise."""
+    import datetime
+    eng, libs = _setup(store, show('mal', 1, 'Bebop', progress=3))
+    uid = _uid(store)
+    eng.edit_local(uid, 'start_date', '2026-07-14')
+    result = eng.apply(eng.plan())
+    assert result['errors'] == {}
+    pushed = libs['mal'].updates[-1]['my_start_date']
+    assert isinstance(pushed, datetime.date)
+    assert pushed == datetime.date(2026, 7, 14)
+    # Roundtrip converges: the provider now reports the date object,
+    # which normalizes back to the same canonical string -- quiet plan.
+    assert eng.fetch() == {}
+    assert [c for c in eng.plan().changes if c.field == 'start_date'] == []

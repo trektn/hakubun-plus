@@ -67,6 +67,15 @@ class FakeLib:
         # with a bare KeyError('title'); replicate that so a caller
         # that forgets to supply one is actually caught by the suite.
         _ = item['title']
+        # And libanilist's _date2dict reads .year/.month/.day off date
+        # values (guarding TypeError/ValueError but NOT AttributeError,
+        # so a canonical ISO *string* escapes as "'str' object has no
+        # attribute 'year'"). Replicate that quirk too: this fake being
+        # more lenient than the real libs is exactly how the 'title'
+        # bug shipped past 91 green tests.
+        for key in ('my_start_date', 'my_finish_date'):
+            if item.get(key) is not None:
+                _ = item[key].year
         self.updates.append(dict(item))
         self.shows.setdefault(str(item['id']), {'id': item['id']})
         self.shows[str(item['id'])].update(item)

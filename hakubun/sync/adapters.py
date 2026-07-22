@@ -162,7 +162,9 @@ class ProviderAdapter:
                 sent['status'] = value
             elif field in ('start_date', 'finish_date') and \
                     self.mediainfo.get('can_date', True):
-                item['my_' + field] = value
+                # Libs expect datetime.date here, not the canonical
+                # ISO string (see normalize.provider_date).
+                item['my_' + field] = normalize.provider_date(value)
                 sent[field] = value
             elif field == 'tags' and self.mediainfo.get('can_tag', False):
                 item['my_tags'] = ', '.join(value or [])
