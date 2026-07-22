@@ -21,6 +21,8 @@ field-ownership matrix ("Where should hakubun sync to?" -- lives here,
 not in Settings), and the identity-conflict workflow.
 """
 
+import traceback
+
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -73,6 +75,7 @@ class SyncWindow(QDialog):
         self.resize(760, 560)
         self._task = None
         self._plan = None
+        self._closed = False
 
         if engine is not None:
             # Injection seam for tests: a prebuilt SyncEngine (fake
@@ -1219,13 +1222,27 @@ class SyncWindow(QDialog):
             task.progressed.connect(self._on_apply_progress)
 
         def done(result, error):
+            # `done` is a QUEUED delivery (the signal is emitted from
+            # the worker thread). If the window closed in the meantime,
+            # its store is already closed -- running the callback would
+            # touch a closed database inside a Qt slot, which aborts the
+            # whole process. Bail.
+            if self._closed:
+                return
             # The signal is emitted from inside run(), so the thread may
             # not have fully stopped yet -- wait for it, or a chained
             # _run() from the callback (e.g. the auto-replan after
             # apply) would see isRunning() and silently drop.
             task.wait()
             self.fetch_button.setEnabled(True)
-            callback(result, error)
+            try:
+                callback(result, error)
+            except Exception as e:
+                # A callback bug (or an unforeseen store/state issue)
+                # must not abort the app via PyQt's unhandled-slot
+                # excepthook.
+                traceback.print_exc()
+                self._status('Internal error: %s' % e)
         task.done.connect(done)
         self._task = task
         task.start()
@@ -1234,7 +1251,17 @@ class SyncWindow(QDialog):
         self.status_label.setText(text)
 
     def closeEvent(self, event):
-        if self._task is not None and self._task.isRunning():
-            self._task.wait()
-        self.store.close()
+        if not self._closed:
+            self._closed = True
+            if self._task is not None:
+                # Drop any queued done/progress deliveries before
+                # closing the store, so nothing runs against it after.
+                for signal in (self._task.done, self._task.progressed):
+                    try:
+                        signal.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
+                if self._task.isRunning():
+                    self._task.wait()
+            self.store.close()
         super().closeEvent(event)

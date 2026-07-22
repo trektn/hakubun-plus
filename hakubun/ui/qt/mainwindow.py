@@ -1667,6 +1667,11 @@ class MainWindow(QMainWindow):
         media_type = self.worker.engine.data_handler.userconfig.get(
             'mediatype') or 'anime'
         existing = getattr(self, 'syncwindow', None)
+        if existing is not None and getattr(existing, '_closed', False):
+            # The user closed it (store already closed with it); never
+            # reuse a dead window -- that would operate on a closed
+            # database. Rebuild fresh.
+            self.syncwindow = existing = None
         if existing is not None and existing.media_type != media_type:
             existing.close()
             self.syncwindow = existing = None
