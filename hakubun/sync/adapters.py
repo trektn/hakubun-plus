@@ -25,7 +25,6 @@ class ProviderAdapter:
     def __init__(self, name, lib, on_userconfig=None):
         self.name = name
         self.lib = lib
-        self.mediainfo = dict(lib.media_info())
         self._infolist = []
         # lib.signals is a *class* attribute: a freshly constructed lib
         # shares whatever callbacks the running app's Data instance
@@ -41,6 +40,22 @@ class ProviderAdapter:
 
     def _capture_info(self, infolist):
         self._infolist.extend(infolist or [])
+
+    @property
+    def mediainfo(self):
+        """Always read live, never cached. AniList accounts pick their
+        own score format -- 0-3 smileys, 1-5 stars, 1-10, 1-10 with .1
+        decimals, or 1-100 -- and libanilist only detects which one a
+        given account actually uses *inside* fetch_list(), the first
+        time it talks to the server (and the format can change on the
+        website at any time after that). A snapshot taken once at
+        adapter construction, before any fetch ever ran, would freeze
+        in whatever was true then -- usually just the class's
+        hardcoded 100/1 default -- and never notice the correction.
+        media_info() is a cheap dict lookup, so paying for a fresh read
+        every time costs nothing and rules the whole staleness class
+        out permanently."""
+        return dict(self.lib.media_info())
 
     # -- inbound -------------------------------------------------------
 

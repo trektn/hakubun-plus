@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QWidget)
 
 from hakubun import messenger, utils
+from hakubun.sync import normalize
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.models import (FieldConflict, FieldPolicy,
@@ -233,15 +234,34 @@ class SyncWindow(QDialog):
             return value.replace('_', ' ').title()
         return str(value)
 
+    def _fmt_target_value(self, field, value, target):
+        """What the destination will actually end up holding. A push's
+        canonical value is unprojected -- MAL can never actually hold
+        6.5, so showing that as 'what gets pushed' is a lie about what
+        will happen, even though the field is a genuine, correctly-
+        reasoned change. Local (pulls, kept values) stays canonical,
+        since that's exactly what local state holds."""
+        if target != 'local' and field == 'score' \
+                and target in self.engine.adapters:
+            info = self.engine.adapters[target].mediainfo
+            value = normalize.provider_score(
+                value, info.get('score_max', 10), info.get('score_step', 1))
+        return self._fmt_value(field, value)
+
     def _change_item(self, change):
         label = _FIELD_LABELS.get(change.field, change.field)
-        values = '%s → %s' % (self._fmt_value(change.field, change.old),
-                              self._fmt_value(change.field, change.new))
         if change.target == 'local':
+            values = '%s → %s' % (self._fmt_value(change.field, change.old),
+                                  self._fmt_value(change.field, change.new))
             text = '⬇ Pull from %s — %s: %s' % (
                 change.source.capitalize(), label, values)
             color = self._PULL_COLOR
         else:
+            values = '%s → %s' % (
+                self._fmt_target_value(change.field, change.old,
+                                       change.target),
+                self._fmt_target_value(change.field, change.new,
+                                       change.target))
             text = '⬆ Push to %s — %s: %s' % (
                 change.target.capitalize(), label, values)
             color = self._PUSH_COLOR
