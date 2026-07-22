@@ -25,8 +25,8 @@ from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QRadioButton,
-                             QTabWidget, QTreeWidget, QTreeWidgetItem,
-                             QVBoxLayout, QWidget)
+                             QScrollArea, QTabWidget, QTreeWidget,
+                             QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from hakubun import messenger, utils
 from hakubun.sync.adapters import adapter_from_account
@@ -145,31 +145,62 @@ class SyncWindow(QDialog):
         bar.addWidget(self.reset_button)
         layout.addLayout(bar)
 
+        # What this mode will actually do, naming the signed-in account
+        # (mirror without that context is a footgun).
+        self.mode_context = QLabel()
+        self.mode_context.setWordWrap(True)
+        self.mode_combo.currentIndexChanged.connect(
+            self._update_mode_context)
+        self._update_mode_context()
+        layout.addWidget(self.mode_context)
+
         legend = QLabel(
             '<span style="color:#42a5f5">⬆ push to a site</span> · '
-            '<span style="color:#4caf50">⬇ pull into Hakubun</span> · '
-            '<span style="color:#ff9800">⚠ needs your resolution '
-            '(double-click)</span> — uncheck anything to skip it')
+            '<span style="color:#4caf50">⬇ pull into Hakubun</span> — '
+            'uncheck anything to skip it')
         layout.addWidget(legend)
         self.preview_tree = QTreeWidget()
         self.preview_tree.setHeaderHidden(True)
-        self.preview_tree.itemDoubleClicked.connect(self.s_resolve)
-        layout.addWidget(self.preview_tree, 5)
-        resolve_bar = QHBoxLayout()
+        layout.addWidget(self.preview_tree, 3)
+
+        # Decisions live in their own box: the plan above is the bulk
+        # transaction; this explains WHY each item needs a human and
+        # takes the answer inline.
+        self.decisions_box = QGroupBox('Needs your decision')
+        decisions_outer = QVBoxLayout(self.decisions_box)
+        self.decisions_scroll = QScrollArea()
+        self.decisions_scroll.setWidgetResizable(True)
+        holder = QWidget()
+        self.decisions_layout = QVBoxLayout(holder)
+        self.decisions_layout.addStretch()
+        self.decisions_scroll.setWidget(holder)
+        decisions_outer.addWidget(self.decisions_scroll)
+        self.decisions_box.setVisible(False)
+        layout.addWidget(self.decisions_box, 2)
+
         self.preview_summary = QLabel()
-        resolve_bar.addWidget(self.preview_summary)
-        resolve_bar.addStretch()
-        self.resolve_button = QPushButton('Resolve...')
-        self.resolve_button.setEnabled(False)
-        self.resolve_button.clicked.connect(self.s_resolve)
-        self.preview_tree.currentItemChanged.connect(
-            lambda item, _prev: self.resolve_button.setEnabled(
-                item is not None and isinstance(
-                    item.data(0, QtCore.Qt.ItemDataRole.UserRole),
-                    FieldConflict)))
-        resolve_bar.addWidget(self.resolve_button)
-        layout.addLayout(resolve_bar)
+        layout.addWidget(self.preview_summary)
         return page
+
+    def _update_mode_context(self):
+        mode = self.mode_combo.currentData()
+        primary = self.engine.primary
+        signed = (' You are signed into <b>%s</b>; changes made in the '
+                  'app count as local.' % primary.capitalize()
+                  if primary else '')
+        if mode is SyncMode.MIRROR:
+            text = ('<b>Mirror:</b> pushes local state%s over every '
+                    'provider — remote-only changes will be '
+                    'overwritten.' % (
+                        ' (as fed by <b>%s</b>, your signed-in account)'
+                        % primary.capitalize() if primary else ''))
+        elif mode is SyncMode.PULL:
+            text = ('<b>Pull:</b> providers update local state; '
+                    'nothing is pushed.%s' % signed)
+        else:
+            text = ('<b>Merge:</b> reconciles every provider into '
+                    'local state, then pushes the result.%s' % signed)
+        self.mode_context.setText(text)
 
     # -- preview rendering --------------------------------------------
 
@@ -210,19 +241,75 @@ class SyncWindow(QDialog):
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
         return item
 
-    def _conflict_item(self, conflict):
+    def _conflict_why(self, conflict):
+        """Explain why this needs a human, not just what differs."""
         label = _FIELD_LABELS.get(conflict.field, conflict.field)
-        sides = '  vs  '.join(
-            '%s: %s' % (source.capitalize(),
-                        self._fmt_value(conflict.field, value))
-            for source, value in sorted(conflict.values.items()))
-        text = '⚠ %s differs — %s' % (label, sides)
+        others = sorted(s for s in conflict.values if s != 'local')
+        sides = ' and '.join(
+            ['your side (%s)' % self._fmt_value(conflict.field,
+                                                conflict.values['local'])]
+            + ['%s (%s)' % (s.capitalize(),
+                            self._fmt_value(conflict.field,
+                                            conflict.values[s]))
+               for s in others])
+        why = ('%s changed in more than one place since the last sync '
+               '— %s — so syncing either way would overwrite someone. '
+               % (label, sides))
+        kind = conflict.policy.kind
+        if kind is PolicyKind.ASK:
+            why += ("The '%s' policy is set to Ask, which leaves every "
+                    'such tie to you.' % label)
+        elif kind is PolicyKind.MERGE:
+            why += ('Both sides changed at effectively the same time, '
+                    "so 'newest wins' cannot break the tie.")
+        else:
+            why += ("The providers disagree with each other and the "
+                    "'%s' policy does not name a winner among them."
+                    % conflict.policy)
         if conflict.note:
-            text += '   (%s)' % conflict.note
-        item = QTreeWidgetItem([text])
-        item.setForeground(0, self._CONFLICT_COLOR)
-        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, conflict)
-        return item
+            why += ' Note: %s.' % conflict.note
+        return why
+
+    def _decision_card(self, conflict):
+        box = QGroupBox('%s — %s' % (
+            conflict.title,
+            _FIELD_LABELS.get(conflict.field, conflict.field)))
+        card = QVBoxLayout(box)
+        why = QLabel(self._conflict_why(conflict))
+        why.setWordWrap(True)
+        card.addWidget(why)
+        row = QHBoxLayout()
+        for source, value in sorted(conflict.values.items()):
+            shown = self._fmt_value(conflict.field, value)
+            text = ('Keep yours: %s' % shown if source == 'local'
+                    else 'Use %s: %s' % (source.capitalize(), shown))
+            button = QPushButton(text)
+            button.clicked.connect(
+                lambda _checked=False, c=conflict, s=source:
+                self._resolve_inline(c, s))
+            row.addWidget(button)
+        row.addStretch()
+        card.addLayout(row)
+        return box
+
+    def _clear_decisions(self):
+        while self.decisions_layout.count() > 1:
+            item = self.decisions_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def _resolve_inline(self, conflict, source):
+        self.engine.resolve_conflict(conflict, source)
+        self._status('Resolved %s for %s — replanning...' % (
+            _FIELD_LABELS.get(conflict.field, conflict.field),
+            conflict.title))
+        self._replan()
+
+    def _replan(self):
+        # Plan only -- resolution changed local state, no need to hit
+        # the network again.
+        self._run(self.engine.plan, self.r_planned, 'Planning...',
+                  self.mode_combo.currentData())
 
     def _iter_change_items(self):
         for i in range(self.preview_tree.topLevelItemCount()):
@@ -250,38 +337,36 @@ class SyncWindow(QDialog):
             return
         self._plan = plan
         self.preview_tree.clear()
-        # One box per show: its pulls/pushes and its conflicts together,
-        # instead of two flat spreadsheets.
+        # The transaction plan: one box per show, its pulls/pushes as
+        # directional rows. Decisions get their own panel below.
         groups = {}
         for change in plan.changes:
             groups.setdefault(change.uuid,
-                              [change.title, [], []])[1].append(change)
-        for conflict in plan.conflicts:
-            groups.setdefault(conflict.uuid,
-                              [conflict.title, [], []])[2].append(conflict)
+                              [change.title, []])[1].append(change)
         bold = QtGui.QFont()
         bold.setBold(True)
-        for uid, (show_title, changes, conflicts) in sorted(
+        for uid, (show_title, changes) in sorted(
                 groups.items(), key=lambda kv: kv[1][0].casefold()):
-            summary = []
-            if changes:
-                summary.append('%d change(s)' % len(changes))
-            if conflicts:
-                summary.append('%d conflict(s)' % len(conflicts))
-            group = QTreeWidgetItem(['%s    —  %s'
-                                     % (show_title, ', '.join(summary))])
+            group = QTreeWidgetItem(['%s    —  %d change(s)'
+                                     % (show_title, len(changes))])
             group.setFont(0, bold)
-            if changes:
-                group.setFlags(group.flags()
-                               | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                               | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
-                group.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            group.setFlags(group.flags()
+                           | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                           | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+            group.setCheckState(0, QtCore.Qt.CheckState.Checked)
             for change in changes:
                 group.addChild(self._change_item(change))
-            for conflict in conflicts:
-                group.addChild(self._conflict_item(conflict))
             self.preview_tree.addTopLevelItem(group)
         self.preview_tree.expandAll()
+        self._clear_decisions()
+        for conflict in sorted(plan.conflicts,
+                               key=lambda c: c.title.casefold()):
+            self.decisions_layout.insertWidget(
+                self.decisions_layout.count() - 1,
+                self._decision_card(conflict))
+        self.decisions_box.setVisible(bool(plan.conflicts))
+        self.decisions_box.setTitle(
+            'Needs your decision (%d)' % len(plan.conflicts))
         self.apply_button.setEnabled(bool(plan.changes))
         if plan.clean:
             self.preview_summary.setText('Everything is in sync.')
@@ -336,38 +421,13 @@ class SyncWindow(QDialog):
         self.store.reset()
         self._plan = None
         self.preview_tree.clear()
+        self._clear_decisions()
+        self.decisions_box.setVisible(False)
         self.preview_summary.clear()
         self.apply_button.setEnabled(False)
         self._refresh_identity()
         self._status('Sync database reset -- run Fetch & Plan to '
                      're-derive it.')
-
-    def s_resolve(self, item=None, _column=0):
-        if item is None:
-            item = self.preview_tree.currentItem()
-        if item is None:
-            return
-        conflict = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-        if not isinstance(conflict, FieldConflict):
-            return
-        options = list(conflict.values.items())
-        labels = ['%s: %s' % (source, value) for source, value in options]
-        box = QMessageBox(self)
-        box.setWindowTitle('Resolve conflict')
-        box.setText('%s -- %s\nKeep which value?'
-                    % (conflict.title, conflict.field))
-        buttons = [box.addButton(label, QMessageBox.ButtonRole.AcceptRole)
-                   for label in labels]
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        for (source, _), button in zip(options, buttons):
-            if button is clicked:
-                self.engine.resolve_conflict(conflict, source)
-                self._status('Resolved %s (%s wins); replan to sync it.'
-                             % (conflict.field, source))
-                self.s_fetch()
-                return
 
     # -- Ownership -----------------------------------------------------
 
