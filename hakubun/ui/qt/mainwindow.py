@@ -357,6 +357,10 @@ class MainWindow(QMainWindow):
             menu_list.addAction(self.action_send)
             menu_list.addAction(self.action_retrieve)
             menu_list.addSeparator()
+            # Menu-only on purpose: the toolbar stays reserved for the
+            # everyday actions. (Taiga mode surfaces this under Tools.)
+            menu_list.addAction(self.action_multisync)
+            menu_list.addSeparator()
             menu_list.addAction(action_scan_library)
             menu_list.addAction(action_rescan_library)
             self.menu_mediatype = menubar.addMenu('&Mediatype')
