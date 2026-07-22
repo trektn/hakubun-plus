@@ -996,20 +996,17 @@ def get_season_label(show) -> str:
     AniList's season/seasonYear, surfaced as a 'Season' entry in
     show['extra']) since that's authoritative, falling back to deriving
     one from start_date for backends that don't (MAL, Kitsu).
+
+    Called from the Qt models/delegates data()/paint() path, so it must
+    stay cheap -- and it must NOT write to the show dict: these dicts
+    are shared with engine threads that pickle them (save_cache), and
+    inserting a key mid-pickle raises "dictionary changed size during
+    iteration". (An earlier version memoized the label onto the show;
+    that intermittently aborted cache saves during background MAL score
+    fetches.) The computation below is a short tuple scan plus an
+    f-string -- cheap enough to redo per call.
     """
-    # Memoized on the show dict: the Qt models/delegates call this from
-    # data()/paint() on every repaint, and the label never changes for a
-    # given show. (The stamp may end up pickled into the list cache along
-    # with the show; that's harmless, it's just re-derived data.)
-    label = show.get('_season_label')
-    if label is None:
-        label = date_to_season(show.get('start_date'))
-        for key, value in show.get('extra') or []:
-            if key == 'Season' and value:
-                label = value
-                break
-        try:
-            show['_season_label'] = label
-        except TypeError:
-            pass
-    return label
+    for key, value in show.get('extra') or []:
+        if key == 'Season' and value:
+            return value
+    return date_to_season(show.get('start_date'))
