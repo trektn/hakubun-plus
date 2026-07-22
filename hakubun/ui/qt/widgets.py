@@ -174,9 +174,9 @@ class DetailsWidget(QWidget):
         self.setLayout(main_layout)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     def _clear_facts(self):
         while self.facts_layout.rowCount() > 0:

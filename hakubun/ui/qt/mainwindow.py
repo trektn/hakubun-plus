@@ -771,9 +771,9 @@ class MainWindow(QMainWindow):
         self.worker_call('unload', self.r_engine_unloaded)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     # GUI Functions
     def _get_api_config(self, api):

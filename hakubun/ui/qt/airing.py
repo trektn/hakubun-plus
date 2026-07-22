@@ -163,8 +163,9 @@ class AiringScheduleDialog(QDialog):
         self.worker_call('get_airing_schedule', self.r_schedule_loaded)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
+        # set_function owns starting/queueing; don't call worker.start()
+        # here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     def r_schedule_loaded(self, result):
         if not result['success']:

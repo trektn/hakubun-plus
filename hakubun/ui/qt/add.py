@@ -157,9 +157,9 @@ class AddDialog(QDialog):
             self.search_txt.setFocus()
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     def _enable_widgets(self, enable):
         self.search_btn.setEnabled(enable)
