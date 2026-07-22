@@ -169,6 +169,10 @@ class MainWindow(QMainWindow):
         self.action_airing_schedule.setStatusTip(
             'See when the airing shows in your list air next.')
         self.action_airing_schedule.triggered.connect(self.s_airing_schedule)
+        self.action_multisync = QAction('&Multi-provider Sync...', self)
+        self.action_multisync.setStatusTip(
+            'Reconcile your lists across every configured provider.')
+        self.action_multisync.triggered.connect(self.s_multisync)
         self.action_delete = QAction(getIcon('edit-delete'), '&Delete', self)
         self.action_delete.setStatusTip('Remove this show from your list.')
         self.action_delete.setShortcut(QtCore.Qt.Key.Key_Delete)
@@ -261,6 +265,7 @@ class MainWindow(QMainWindow):
             menu_tools.addAction(self.action_altname)
             menu_tools.addAction(self.action_add)
             menu_tools.addAction(self.action_airing_schedule)
+            menu_tools.addAction(self.action_multisync)
 
             menu_help = menubar.addMenu('&Help')
             menu_help.addAction(action_about)
@@ -1626,6 +1631,11 @@ class MainWindow(QMainWindow):
         self.airingwindow = AiringScheduleDialog(None, self.worker)
         self.airingwindow.setModal(True)
         self.airingwindow.show()
+
+    def s_multisync(self):
+        from hakubun.ui.qt.syncwindow import SyncWindow
+        self.syncwindow = SyncWindow(None, self.accountman)
+        self.syncwindow.show()
 
     def s_mediatype(self, action):
         index = action.data()
