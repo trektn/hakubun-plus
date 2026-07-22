@@ -25,7 +25,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QRadioButton,
-                             QScrollArea, QTabWidget, QTreeWidget,
+                             QScrollArea, QSplitter, QTabWidget, QTreeWidget,
                              QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from hakubun import messenger, utils
@@ -159,13 +159,17 @@ class SyncWindow(QDialog):
             '<span style="color:#4caf50">⬇ pull into Hakubun</span> — '
             'uncheck anything to skip it')
         layout.addWidget(legend)
+
+        # Left: the bulk transaction plan. Right: what needs a human --
+        # a separate pane (not a panel squeezed underneath) so a long
+        # plan and a handful of decisions don't fight for the same
+        # vertical space. Splitter so either side can be resized.
+        splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
+
         self.preview_tree = QTreeWidget()
         self.preview_tree.setHeaderHidden(True)
-        layout.addWidget(self.preview_tree, 3)
+        splitter.addWidget(self.preview_tree)
 
-        # Decisions live in their own box: the plan above is the bulk
-        # transaction; this explains WHY each item needs a human and
-        # takes the answer inline.
         self.decisions_box = QGroupBox('Needs your decision')
         decisions_outer = QVBoxLayout(self.decisions_box)
         self.decisions_scroll = QScrollArea()
@@ -175,8 +179,13 @@ class SyncWindow(QDialog):
         self.decisions_layout.addStretch()
         self.decisions_scroll.setWidget(holder)
         decisions_outer.addWidget(self.decisions_scroll)
-        self.decisions_box.setVisible(False)
-        layout.addWidget(self.decisions_box, 2)
+        splitter.addWidget(self.decisions_box)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([620, 380])
+        layout.addWidget(splitter, 1)
+        self._set_decisions([])   # placeholder until the first plan
 
         self.preview_summary = QLabel()
         layout.addWidget(self.preview_summary)
@@ -298,6 +307,27 @@ class SyncWindow(QDialog):
             if item.widget() is not None:
                 item.widget().deleteLater()
 
+    def _set_decisions(self, conflicts):
+        """Fill the right-hand panel; always visible (a placeholder
+        when empty) so the split layout doesn't jump around."""
+        self._clear_decisions()
+        if conflicts:
+            for conflict in sorted(conflicts,
+                                   key=lambda c: c.title.casefold()):
+                self.decisions_layout.insertWidget(
+                    self.decisions_layout.count() - 1,
+                    self._decision_card(conflict))
+        else:
+            placeholder = QLabel(
+                'Nothing needs your attention right now. Conflicts '
+                '(a field changed in more than one place since the '
+                'last sync) will show up here after Fetch & Plan.')
+            placeholder.setWordWrap(True)
+            self.decisions_layout.insertWidget(
+                self.decisions_layout.count() - 1, placeholder)
+        self.decisions_box.setTitle(
+            'Needs your decision (%d)' % len(conflicts))
+
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
         self._status('Resolved %s for %s — replanning...' % (
@@ -358,15 +388,7 @@ class SyncWindow(QDialog):
                 group.addChild(self._change_item(change))
             self.preview_tree.addTopLevelItem(group)
         self.preview_tree.expandAll()
-        self._clear_decisions()
-        for conflict in sorted(plan.conflicts,
-                               key=lambda c: c.title.casefold()):
-            self.decisions_layout.insertWidget(
-                self.decisions_layout.count() - 1,
-                self._decision_card(conflict))
-        self.decisions_box.setVisible(bool(plan.conflicts))
-        self.decisions_box.setTitle(
-            'Needs your decision (%d)' % len(plan.conflicts))
+        self._set_decisions(plan.conflicts)
         self.apply_button.setEnabled(bool(plan.changes))
         if plan.clean:
             self.preview_summary.setText('Everything is in sync.')
@@ -421,8 +443,7 @@ class SyncWindow(QDialog):
         self.store.reset()
         self._plan = None
         self.preview_tree.clear()
-        self._clear_decisions()
-        self.decisions_box.setVisible(False)
+        self._set_decisions([])
         self.preview_summary.clear()
         self.apply_button.setEnabled(False)
         self._refresh_identity()
@@ -456,16 +477,30 @@ class SyncWindow(QDialog):
                    + [('merge', 'Merge'), ('individual', 'Individual'),
                       ('ask', 'Ask')])
         grid = QGridLayout()
+        # Generous spacing: the previous tight grid packed radios close
+        # enough together to be hard to click without misclicking a
+        # neighboring row/column, and headers weren't centered over
+        # their column's radios (headers default to left-aligned text,
+        # radios were centered -- the two never lined up).
+        grid.setHorizontalSpacing(28)
+        grid.setVerticalSpacing(18)
         for col, (_, label) in enumerate(columns, start=1):
-            grid.addWidget(QLabel('<b>%s</b>' % label), 0, col)
+            header = QLabel('<b>%s</b>' % label)
+            header.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
+            grid.addWidget(header, 0, col)
+            grid.setColumnMinimumWidth(col, 96)
         self._ownership_groups = {}
         ownership = self.store.ownership()
         for row, field in enumerate(USER_FIELDS, start=1):
-            grid.addWidget(QLabel(_FIELD_LABELS.get(field, field)), row, 0)
+            field_label = QLabel(_FIELD_LABELS.get(field, field))
+            field_label.setMinimumHeight(30)
+            grid.addWidget(field_label, row, 0,
+                          QtCore.Qt.AlignmentFlag.AlignVCenter)
             group = QButtonGroup(page)
             current = ownership[field].serialize()
             for col, (policy_text, _) in enumerate(columns, start=1):
                 radio = QRadioButton()
+                radio.setMinimumSize(28, 28)
                 radio.setProperty('policy', policy_text)
                 radio.setProperty('field', field)
                 if policy_text == current:
@@ -473,7 +508,7 @@ class SyncWindow(QDialog):
                 radio.toggled.connect(self._ownership_changed)
                 group.addButton(radio)
                 grid.addWidget(radio, row, col,
-                               QtCore.Qt.AlignmentFlag.AlignHCenter)
+                               QtCore.Qt.AlignmentFlag.AlignCenter)
             self._ownership_groups[field] = group
         box = QGroupBox()
         box.setLayout(grid)
