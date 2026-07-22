@@ -131,14 +131,47 @@ class ProviderAdapter:
 
 
 def adapter_from_account(account, messenger, userconfig=None):
-    """Construct an adapter for an accounts.py account dict, using the
-    same lib-construction idiom as data.py (_load_api)."""
-    libname = 'lib' + account['api']
+    """Construct an adapter for an accounts.py account dict, mirroring
+    data.py's lib construction.
+
+    The account's persisted userconfig (user.json) is essential: it
+    holds the stored OAuth access/refresh tokens and the mediatype. A
+    throwaway userconfig makes OAuth backends re-redeem the original,
+    already-consumed authorization code (MAL answers HTTP 400
+    invalid_grant). Token refreshes the lib performs are written back.
+    """
+    libbase = account['api']
+    libname = 'lib' + libbase
+    if libbase == 'kitsu':
+        # Same backend selection as data.py: the 'kitsu_api' setting
+        # picks legacy REST or GraphQL for the same kitsu account.
+        config = utils.parse_config(utils.to_config_path('config.json'),
+                                    utils.config_defaults)
+        if config.get('kitsu_api') == 'graphql':
+            libname = 'libkitsu_graphql'
     modulename = 'hakubun.lib.%s' % libname
     __import__(modulename)
     import sys as _sys
     libclass = getattr(_sys.modules[modulename], libname)
-    lib = libclass(messenger, account,
-                   userconfig if userconfig is not None
-                   else {'mediatype': None})
+
+    userfolder = '%s.%s' % (account['username'], account['api'])
+    userconfig_file = utils.to_data_path(userfolder, 'user.json')
+    if userconfig is None:
+        userconfig = utils.parse_config(userconfig_file,
+                                        utils.userconfig_defaults)
+
+    lib = libclass(messenger, account, userconfig)
+
+    # lib.signals is a *class* attribute: a freshly constructed lib
+    # shares whatever callbacks the running app's Data instance
+    # connected, so emitting from this instance would invoke the app's
+    # cache handlers against the wrong lib (surfacing as "Call to
+    # undefined signal" when they blow up) and could corrupt its info
+    # cache. Shadow it with an instance dict: info-cache pings are
+    # dropped, token refreshes persist to this account's user.json.
+    lib.signals = {
+        'show_info_changed': None,
+        'userconfig_changed': lambda: utils.save_config(userconfig,
+                                                        userconfig_file),
+    }
     return ProviderAdapter(account['api'], lib)
