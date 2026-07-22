@@ -16,6 +16,34 @@ class AdapterError(Exception):
     """Provider communication failed (network, auth, API)."""
 
 
+# Web URL templates, %-formatted with (mediatype, provider_id). MAL and
+# AniList route canonically by numeric id -- matches the exact patterns
+# hakubun/lib/libmal.py and libanilist.py already build for their own
+# 'url' fields. Kitsu's *canonical* URL uses a title slug (which the
+# lib classes fetch as part of full show details, not something a bare
+# identity mapping carries), but its frontend also resolves the bare
+# numeric id directly, so that's used here as a pragmatic fallback
+# rather than requiring a slug just to open a page in a browser.
+_WEB_URL_TEMPLATES = {
+    'mal': 'https://myanimelist.net/%s/%s',
+    'anilist': 'https://anilist.co/%s/%s',
+    'kitsu': 'https://kitsu.app/%s/%s',
+}
+
+
+def web_url(provider, media_type, provider_id):
+    """Best-effort link to the provider's own page for one entry, or
+    None when the provider isn't recognized. `media_type` defaults to
+    'anime' for anything other than literally 'manga' -- callers that
+    only have a provider_id and no confirmed type yet (e.g. opening an
+    unresolved Identity row) still get a usable link."""
+    template = _WEB_URL_TEMPLATES.get(provider)
+    if not template or not provider_id:
+        return None
+    mt = 'manga' if media_type == 'manga' else 'anime'
+    return template % (mt, provider_id)
+
+
 class ProviderAdapter:
     """Wraps a constructed lib instance (duck-typed)."""
 

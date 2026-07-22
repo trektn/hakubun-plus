@@ -38,9 +38,16 @@ class IdentityResolver:
         community anime-relations atlas ('atlas') fills in anything the
         provider itself doesn't publish. The source is kept (not just
         the id) so a mapping created from this can record exactly how
-        it was linked, for the Inspector."""
+        it was linked, for the Inspector.
+
+        The atlas is anime-only (it is erengy/anime-relations -- every
+        rule is a MAL|Kitsu|AniList *anime* id triple) and must never
+        be consulted for a manga entry: the same numeric id space means
+        a manga id would silently collide with an unrelated anime's
+        rule and produce a nonsense cross-reference.
+        """
         ids = {p: (pid, 'published') for p, pid in entry.external_ids.items()}
-        if self._atlas is not None:
+        if self._atlas is not None and entry.media_type == 'anime':
             for provider, pid in self._atlas.lookup(
                     entry.provider, entry.provider_id).items():
                 ids.setdefault(provider, (pid, 'atlas'))
@@ -54,10 +61,37 @@ class IdentityResolver:
         the user (identity conflict recorded/kept open)."""
         store = self._store
 
-        # 1. Already mapped.
+        # 1. Already mapped -- but never trust a mapping whose entity
+        #    is the wrong media type. A normal fetch can never produce
+        #    one (see _exact_link's own type guard), but
+        #    _record_external_ids plants mappings PREEMPTIVELY for
+        #    providers that haven't been fetched yet, purely from
+        #    another provider's claimed cross-id (e.g. AniList's
+        #    mal_id) -- if that claim is wrong (bad source data, or it
+        #    actually names a different media type on MAL's own side),
+        #    the mapping sits there and would be trusted by every
+        #    future fetch of that id forever, since this is the FIRST
+        #    thing checked. Quarantine it and re-resolve fresh instead.
         mapping = store.mapping_for(entry.provider, entry.provider_id)
         if mapping:
-            return mapping['uuid']
+            ent = store.get_entity(mapping['uuid']) or {}
+            if ent.get('media_type') == entry.media_type:
+                return mapping['uuid']
+            store.remove_mapping(entry.provider, entry.provider_id)
+            store.identity_upsert(
+                entry.provider, entry.provider_id, entry.title,
+                [self._candidate_of(mapping['uuid'], via=(
+                    '⚠ TYPE MISMATCH -- this id was already mapped to a '
+                    '%s entity, but this %s entry is %s. The mapping '
+                    'has been removed and this entry is being '
+                    're-resolved from scratch. This means some source '
+                    'data was wrong (a published id or an '
+                    'anime-relations rule) -- worth checking.'
+                    % ((ent.get('media_type') or '?').capitalize(),
+                       entry.provider, entry.media_type)))],
+                entry=self._entry_payload(entry))
+            # Fall through to steps 2-5 below: resolve this entry as
+            # if it had never been mapped at all.
 
         # 2. Respect previous user decisions.
         previous = store.identity_get(entry.provider, entry.provider_id)
@@ -112,22 +146,50 @@ class IdentityResolver:
         """Link via ids the provider itself publishes (or the
         anime-relations atlas). A claimed id already mapped to a
         *different* entity than another claim is an ambiguity ->
-        identity conflict, never an auto-merge."""
+        identity conflict, never an auto-merge.
+
+        A type mismatch (the matched entity is anime while this entry
+        is manga, or vice versa) is blocked outright, even when it's
+        the only candidate: media type can never change once an
+        entity exists (docs/multisync.md), so a cross-type match here
+        is not an ordinary ambiguity to weigh -- it is proof some id
+        was wrong (a corrupt/stale published id, or an atlas rule that
+        doesn't apply). It is surfaced, loudly, rather than silently
+        dropped, since that's exactly the kind of bad data a user
+        needs to notice."""
         store = self._store
         targets = {}   # uuid -> via label naming the exact id that matched
+        mismatched = []
         for other_provider, (other_id, source) in \
                 self._external_ids(entry).items():
             m = store.mapping_for(other_provider, other_id)
-            if m:
-                label = '%s %s id %s' % (
-                    'published' if source == 'published' else
-                    'anime-relations', other_provider, other_id)
-                targets.setdefault(m['uuid'], label)
-        if len(targets) > 1:
+            if not m:
+                continue
+            ent = store.get_entity(m['uuid']) or {}
+            source_desc = ('published' if source == 'published' else
+                           'anime-relations')
+            if ent.get('media_type') != entry.media_type:
+                mismatched.append((m['uuid'], source_desc, other_provider,
+                                   other_id, ent.get('media_type')))
+                continue
+            label = '%s %s id %s' % (source_desc, other_provider, other_id)
+            targets.setdefault(m['uuid'], label)
+        if mismatched or len(targets) > 1:
             candidates = [self._candidate_of(u, via='external-id-clash')
-                          for u in sorted(targets)]
+                         for u in sorted(targets)]
+            candidates += [
+                self._candidate_of(
+                    uid, via=('⚠ TYPE MISMATCH -- %s %s id %s points '
+                             'to a %s entity, but this %s entry is %s. '
+                             'This should never happen; the id is '
+                             'probably wrong. Do not confirm this -- '
+                             'search manually or keep provider-only.'
+                             % (src, prov, pid, (mt or '?').capitalize(),
+                                entry.provider, entry.media_type)))
+                for uid, src, prov, pid, mt in mismatched]
             store.identity_upsert(entry.provider, entry.provider_id,
-                                  entry.title, candidates)
+                                  entry.title, candidates,
+                                  entry=self._entry_payload(entry))
             return 'ambiguous'
         if targets:
             uid, via_label = next(iter(targets.items()))
@@ -138,7 +200,8 @@ class IdentityResolver:
                 candidates = [self._candidate_of(u := uid,
                                                  via='provider-duplicate')]
                 store.identity_upsert(entry.provider, entry.provider_id,
-                                      entry.title, candidates)
+                                      entry.title, candidates,
+                                      entry=self._entry_payload(entry))
                 return 'ambiguous'
             store.add_mapping(uid, entry.provider, entry.provider_id,
                               confirmed=True, via=via_label)

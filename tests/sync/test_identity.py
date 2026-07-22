@@ -250,3 +250,92 @@ def test_store_reset_wipes_everything(store):
     # And it's immediately usable again.
     assert eng.fetch() == {}
     assert len(store.entities()) == 1
+
+
+def test_type_mismatch_is_blocked_and_flagged_loudly(store):
+    """Media type can never change on an entity. A published (or
+    atlas) id that points to an entity of the WRONG type is proof the
+    id itself is wrong -- never auto-link, and say so loudly enough
+    that a user could never mistake it for an ordinary duplicate."""
+    from hakubun.sync.models import NormalizedEntry
+    # A manga entity already exists, mapped to mal:1.
+    manga_lib = FakeLib('mal', [show('mal', 1, 'Bebop Manga')])
+    eng = make_engine(store, {'mal': manga_lib})
+    eng.fetch()
+    store.update_entity_meta(store.entities()[0]['uuid'], media_type='manga')
+
+    # An ANIME entry (bad data) claims the SAME mal id.
+    bad_entry = NormalizedEntry(provider='anilist', provider_id='9',
+                                title='Bebop', media_type='anime',
+                                external_ids={'mal': '1'})
+    uid = eng.identity.resolve_entry(bad_entry)
+    assert uid is None                          # never auto-linked
+    assert len(store.entities()) == 1            # no phantom entity either
+    rows = store.identity_open()
+    assert len(rows) == 1
+    candidates = rows[0]['candidates']
+    assert len(candidates) == 1
+    assert 'TYPE MISMATCH' in candidates[0]['via']
+    assert 'Manga' in candidates[0]['via'] and 'anime' in candidates[0]['via']
+    # The Inspector/Identity UI need the entry's own type to render a
+    # Type column and build an Open-page link -- must be present here.
+    assert rows[0]['entry']['media_type'] == 'anime'
+
+
+def test_atlas_never_consulted_for_manga_entries(store, tmp_path):
+    """anime-relations is anime-only data; using it for a manga entry
+    would collide with an unrelated anime sharing the same numeric id."""
+    from hakubun.sync.identity import IdentityResolver
+    from hakubun.sync.models import NormalizedEntry
+    from hakubun.sync.relations import RelationsAtlas
+
+    path = tmp_path / 'anime-relations'
+    path.write_text('- 1|4814|9260:1 -> 1|4814|9260:2\n')
+    atlas = RelationsAtlas.from_file(str(path))
+    resolver = IdentityResolver(store, atlas=atlas)
+
+    # Sanity: the SAME id triple links fine for anime.
+    anime_ids = resolver._external_ids(
+        NormalizedEntry(provider='mal', provider_id='1', title='X',
+                        media_type='anime'))
+    assert 'kitsu' in anime_ids and anime_ids['kitsu'][1] == 'atlas'
+
+    # But NOT for manga, even with the identical provider+id.
+    manga_ids = resolver._external_ids(
+        NormalizedEntry(provider='mal', provider_id='1', title='X',
+                        media_type='manga'))
+    assert manga_ids == {}
+
+
+def test_preemptive_mapping_type_mismatch_is_quarantined_not_trusted(store):
+    """_record_external_ids plants a mapping for a provider that
+    hasn't been fetched yet, purely from another provider's claimed
+    cross-id. If that claim is wrong -- the id actually belongs to a
+    different media type on the other provider's own side -- the
+    planted mapping must never be silently trusted once the real fetch
+    happens (step 1 of resolve_entry is the FIRST thing every future
+    resolve checks, so an untyped-checked fast path would poison every
+    later fetch of that id forever)."""
+    from hakubun.sync.models import NormalizedEntry
+    anilist_entry = NormalizedEntry(provider='anilist', provider_id='9',
+                                    title='Bebop', media_type='anime',
+                                    external_ids={'mal': '1'})
+    eng = make_engine(store, {})
+    anime_uid = eng.identity.resolve_entry(anilist_entry)
+    assert anime_uid is not None
+    assert store.mapping_for('mal', '1')['uuid'] == anime_uid  # planted
+
+    # MAL is now actually fetched for id 1 -- turns out to genuinely be
+    # a MANGA on MAL's side (the AniList claim was wrong).
+    mal_entry = NormalizedEntry(provider='mal', provider_id='1',
+                                title='Something Else Entirely',
+                                media_type='manga')
+    resolved_uid = eng.identity.resolve_entry(mal_entry)
+
+    assert resolved_uid != anime_uid                 # never poisoned
+    new_mapping = store.mapping_for('mal', '1')
+    assert new_mapping is not None
+    assert new_mapping['uuid'] != anime_uid
+    assert store.get_entity(new_mapping['uuid'])['media_type'] == 'manga'
+    assert store.get_entity(anime_uid)['media_type'] == 'anime'  # untouched
+    assert len(store.entities()) == 2

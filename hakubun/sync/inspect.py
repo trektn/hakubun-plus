@@ -58,15 +58,18 @@ def inspect_entry(store, provider, provider_id, atlas=None):
     mapping = store.mapping_for(provider, provider_id)
     if mapping is None:
         issue = store.identity_get(provider, provider_id)
+        media_type = None
         if issue is not None:
             note = ('Not linked yet -- waiting on a decision in the '
                     "Identity tab (status: %s)." % issue['status'])
+            media_type = (issue.get('entry') or {}).get('media_type')
         else:
             note = ('No record of %s id %s. Run Fetch & Plan first, or '
                     'this id is not in your list.' % (provider,
                                                        provider_id))
         return InspectionResult(provider=provider, provider_id=provider_id,
                                 found=False, note=note,
+                                media_type=media_type,
                                 atlas_hint=atlas_hint, identity_issue=issue)
 
     uid = mapping['uuid']

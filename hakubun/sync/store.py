@@ -243,6 +243,14 @@ class SyncStore:
             (uid, provider, str(provider_id), int(confirmed), via,
              time.time()))
 
+    def remove_mapping(self, provider, provider_id):
+        """Quarantine a bad mapping (e.g. one that turned out to point
+        at the wrong media type -- see identity.py's step-1 guard).
+        Without this, a poisoned mapping would be trusted forever: it
+        is the FIRST thing every future resolve_entry() checks."""
+        self._exec('DELETE FROM mappings WHERE provider=? AND'
+                   ' provider_id=?', (provider, str(provider_id)))
+
     def mapping_for(self, provider, provider_id):
         row = self._exec(
             'SELECT * FROM mappings WHERE provider=? AND provider_id=?',
