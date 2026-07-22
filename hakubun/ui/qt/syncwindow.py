@@ -33,7 +33,7 @@ from hakubun import messenger, utils
 from hakubun.sync import adapters, normalize
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import (FieldConflict, FieldPolicy,
+from hakubun.sync.models import (FieldChange, FieldConflict, FieldPolicy,
                                  NormalizedEntry, PolicyKind, SyncMode,
                                  USER_FIELDS)
 from hakubun.sync.store import SyncStore
@@ -169,9 +169,18 @@ class SyncWindow(QDialog):
         # vertical space. Splitter so either side can be resized.
         splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
 
-        self.preview_tree = QTreeWidget()
-        self.preview_tree.setHeaderHidden(True)
-        splitter.addWidget(self.preview_tree)
+        # One tree per category (All, plus one per field that actually
+        # has a change this plan -- Score/Watched Episodes/etc appear
+        # only when relevant, see r_planned) so a long mixed plan can
+        # be narrowed down instead of scrolled through as one list.
+        self.preview_tabs = QTabWidget()
+        self._change_items = {}   # id(FieldChange) -> [item in each tab
+                                  # showing it] -- keeps checkbox state
+                                  # in sync across tabs (see
+                                  # _on_change_item_toggled): the SAME
+                                  # change appears in 'All' and in
+                                  # exactly one category tab.
+        splitter.addWidget(self.preview_tabs)
 
         self.decisions_box = QGroupBox('Needs your decision')
         decisions_outer = QVBoxLayout(self.decisions_box)
@@ -287,6 +296,54 @@ class SyncWindow(QDialog):
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
         return item
 
+    def _populate_preview_tree(self, tree, changes):
+        """Fill one category tab's tree: one box per show, its changes
+        as directional child rows -- same shape 'All' and every
+        per-field tab share, just over a different subset of changes.
+        Registers each item into self._change_items so a checkbox
+        toggle can be mirrored onto this same change's item in every
+        other tab that also shows it."""
+        tree.clear()
+        groups = {}
+        for change in changes:
+            groups.setdefault(change.uuid,
+                              [change.title, []])[1].append(change)
+        bold = QtGui.QFont()
+        bold.setBold(True)
+        for uid, (show_title, group_changes) in sorted(
+                groups.items(), key=lambda kv: kv[1][0].casefold()):
+            group = QTreeWidgetItem(['%s    —  %d change(s)'
+                                     % (show_title, len(group_changes))])
+            group.setFont(0, bold)
+            group.setFlags(group.flags()
+                           | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                           | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+            group.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            for change in group_changes:
+                item = self._change_item(change)
+                group.addChild(item)
+                self._change_items.setdefault(id(change), []).append(item)
+            tree.addTopLevelItem(group)
+        tree.expandAll()
+
+    def _make_preview_tree(self):
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.itemChanged.connect(self._on_change_item_toggled)
+        return tree
+
+    def _on_change_item_toggled(self, item, column):
+        if column != 0:
+            return
+        change = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(change, FieldChange):
+            return   # a show-group header; Qt's own tristate handles it
+        change.selected = (item.checkState(0)
+                          == QtCore.Qt.CheckState.Checked)
+        for twin in self._change_items.get(id(change), []):
+            if twin is not item and twin.checkState(0) != item.checkState(0):
+                twin.setCheckState(0, item.checkState(0))
+
     def _local_label(self):
         """'local' is really just whatever the signed-in account fed
         it (see the primary fold in SyncEngine._plan_entity -- local's
@@ -394,13 +451,16 @@ class SyncWindow(QDialog):
                   self.mode_combo.currentData())
 
     def _iter_change_items(self):
-        for i in range(self.preview_tree.topLevelItemCount()):
-            group = self.preview_tree.topLevelItem(i)
+        # 'All' (always tab 0) holds every change exactly once; reading
+        # from it (rather than every tab) avoids processing the same
+        # change twice when it also appears in a category tab.
+        tree = self._all_changes_tree
+        for i in range(tree.topLevelItemCount()):
+            group = tree.topLevelItem(i)
             for j in range(group.childCount()):
                 child = group.child(j)
                 data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
-                if data is not None and not isinstance(data,
-                                                       FieldConflict):
+                if isinstance(data, FieldChange):
                     yield child, data
 
     def s_fetch(self):
@@ -418,28 +478,45 @@ class SyncWindow(QDialog):
             self._status('Sync failed: %s' % error)
             return
         self._plan = plan
-        self.preview_tree.clear()
-        # The transaction plan: one box per show, its pulls/pushes as
-        # directional rows. Decisions get their own panel below.
-        groups = {}
+        # Category tabs: 'All' always present, plus one per field that
+        # actually has a change this plan (Score, Watched Episodes,
+        # ...) -- a category with nothing to show just doesn't appear.
+        # Rebuilt fresh every plan since which categories are relevant
+        # changes plan to plan.
+        current_tab_label = self.preview_tabs.tabText(
+            self.preview_tabs.currentIndex()) \
+            if self.preview_tabs.count() else None
+        self.preview_tabs.clear()
+        self._change_items = {}
+
+        self._all_changes_tree = self._make_preview_tree()
+        self._populate_preview_tree(self._all_changes_tree, plan.changes)
+        self.preview_tabs.addTab(self._all_changes_tree,
+                                 'All (%d)' % len(plan.changes))
+
+        by_field = {}
         for change in plan.changes:
-            groups.setdefault(change.uuid,
-                              [change.title, []])[1].append(change)
-        bold = QtGui.QFont()
-        bold.setBold(True)
-        for uid, (show_title, changes) in sorted(
-                groups.items(), key=lambda kv: kv[1][0].casefold()):
-            group = QTreeWidgetItem(['%s    —  %d change(s)'
-                                     % (show_title, len(changes))])
-            group.setFont(0, bold)
-            group.setFlags(group.flags()
-                           | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                           | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
-            group.setCheckState(0, QtCore.Qt.CheckState.Checked)
-            for change in changes:
-                group.addChild(self._change_item(change))
-            self.preview_tree.addTopLevelItem(group)
-        self.preview_tree.expandAll()
+            by_field.setdefault(change.field, []).append(change)
+        restore_index = 0
+        for field in USER_FIELDS:
+            field_changes = by_field.get(field)
+            if not field_changes:
+                continue
+            tree = self._make_preview_tree()
+            self._populate_preview_tree(tree, field_changes)
+            label = '%s (%d)' % (_FIELD_LABELS.get(field, field),
+                                 len(field_changes))
+            self.preview_tabs.addTab(tree, label)
+            if current_tab_label and label.split(' (')[0] == \
+                    (current_tab_label or '').split(' (')[0]:
+                restore_index = self.preview_tabs.count() - 1
+        # Stay on the same category (by name) across replans when it
+        # still exists, rather than always snapping back to 'All'.
+        if current_tab_label and current_tab_label.startswith('All'):
+            restore_index = 0
+        self.preview_tabs.setCurrentIndex(restore_index)
+
+        groups = {change.uuid for change in plan.changes}
         self._set_decisions(plan.conflicts)
         self.apply_button.setEnabled(bool(plan.changes))
         if plan.clean:
@@ -494,7 +571,8 @@ class SyncWindow(QDialog):
             self._task.wait()
         self.store.reset()
         self._plan = None
-        self.preview_tree.clear()
+        self.preview_tabs.clear()
+        self._change_items = {}
         self._set_decisions([])
         self.preview_summary.clear()
         self.apply_button.setEnabled(False)
