@@ -1746,8 +1746,10 @@ class MainWindow(QMainWindow):
             return
         self.status('Multi-sync: applying %d change(s)...'
                     % len(plan.changes))
+        win._cancel.clear()
         win._run(win.engine.apply, self._r_multisync_applied,
-                 'Applying...', plan)
+                 'Applying...', plan,
+                 should_cancel=win._cancel.is_set, forward_progress=True)
 
     def _r_multisync_applied(self, result, error):
         self._busy(False)

@@ -187,10 +187,24 @@ class libanilist(lib):
             response = self.opener.open(request, timeout=10)
             return json.loads(response.read().decode('utf-8'))
         except urllib.error.HTTPError as e:
+            body = e.read()
+            if e.code == 429:
+                # Rate limited. Surface it distinctly (a flag + the
+                # Retry-After the server sent, which the generic
+                # message path below would otherwise throw away) so
+                # callers doing bulk work can wait exactly as long as
+                # asked and retry instead of failing.
+                err = utils.APIError("AniList rate limit (429): %s" % body)
+                err.rate_limited = True
+                retry = e.headers.get('Retry-After') if e.headers else None
+                try:
+                    err.retry_after = int(retry)
+                except (TypeError, ValueError):
+                    err.retry_after = None
+                raise err
             if e.code == 400:
-                raise utils.APIError("Invalid HTTP request: %s" % e.read())
-            else:
-                raise utils.APIError("HTTP error status: %s" % e.read())
+                raise utils.APIError("Invalid HTTP request: %s" % body)
+            raise utils.APIError("HTTP error status: %s" % body)
         except urllib.error.URLError as e:
             raise utils.APIError("HTTP connection error: %s" % e.reason)
         except socket.timeout:

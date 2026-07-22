@@ -14,7 +14,8 @@ from hakubun.sync.diff import BOTH, NO_BASE, PULL, eq, three_way
 from hakubun.sync.history import History
 from hakubun.sync.identity import IdentityResolver
 from hakubun.sync.models import (FieldChange, FieldConflict, IdentityIssue,
-                                 PolicyKind, SyncMode, SyncPlan)
+                                 PolicyKind, SyncCancelled, SyncMode,
+                                 SyncPlan)
 
 _UNSET = object()
 
@@ -455,7 +456,7 @@ class SyncEngine:
 
     # -- apply ---------------------------------------------------------
 
-    def apply(self, plan, progress=None):
+    def apply(self, plan, progress=None, should_cancel=None):
         """Commit the plan: local changes + events in one transaction,
         then pushes per provider with failure isolation. Conflicts are
         never applied -- resolve them first.
@@ -465,6 +466,11 @@ class SyncEngine:
         local commit and once per (provider, show) push batch --
         network pushes are what actually take time, so that's the
         granularity a progress bar can honestly report.
+
+        `should_cancel` (a `() -> bool`) stops a long run cleanly
+        between push batches (and inside a rate-limit wait): whatever
+        was already committed stays, the rest re-plans. The result's
+        'cancelled' flag says whether it stopped early.
         """
         txn = self.history.new_txn()
         selected = [c for c in plan.changes if c.selected]
@@ -482,6 +488,10 @@ class SyncEngine:
         def report(message):
             if progress is not None:
                 progress(done, total_steps, message)
+
+        def on_wait(provider, seconds, attempt):
+            report('Rate limited by %s; waiting %ss before retry %d...'
+                   % (provider.capitalize(), seconds, attempt))
 
         with self.store.transaction():
             for c in local_changes:
@@ -503,13 +513,19 @@ class SyncEngine:
 
         errors = {}
         pushed = 0
+        cancelled = False
         for provider, changes in pushes.items():
+            if cancelled:
+                break
             adapter = self.adapters[provider]
             by_entity = {}
             for c in changes:
                 by_entity.setdefault(c.uuid, []).append(c)
             failed = False
             for uid, chs in by_entity.items():
+                if should_cancel is not None and should_cancel():
+                    cancelled = True
+                    break
                 mapping = next((m for m in self.store.mappings_of(uid)
                                 if m['provider'] == provider), None)
                 if mapping is None:
@@ -523,7 +539,12 @@ class SyncEngine:
                 try:
                     sent = adapter.push(mapping['provider_id'],
                                         {c.field: c.new for c in chs},
-                                        title=chs[0].title, my_id=my_id)
+                                        title=chs[0].title, my_id=my_id,
+                                        on_wait=on_wait,
+                                        cancel=should_cancel)
+                except SyncCancelled:
+                    cancelled = True
+                    break
                 except AdapterError as e:
                     errors[provider] = str(e)
                     failed = True
@@ -543,10 +564,11 @@ class SyncEngine:
                 done += 1
                 report('Pushed to %s: %s.' % (provider.capitalize(),
                                               chs[0].title))
-            if failed:
-                continue
+        if cancelled:
+            report('Sync cancelled -- %d push(es) done, the rest '
+                   're-plan.' % pushed)
         return {'txn': txn, 'local': len(local_changes),
-                'pushed': pushed, 'errors': errors}
+                'pushed': pushed, 'errors': errors, 'cancelled': cancelled}
 
     # -- local edits ---------------------------------------------------
 

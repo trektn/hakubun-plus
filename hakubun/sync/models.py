@@ -17,6 +17,12 @@ SET_FIELDS = ('tags',)
 STATUSES = ('watching', 'completed', 'on_hold', 'dropped', 'plan')
 
 
+class SyncCancelled(Exception):
+    """Raised when the user cancels an in-progress apply (e.g. during a
+    rate-limit wait). Propagates out of a push uncaught so the engine
+    can stop cleanly, keeping whatever was already committed."""
+
+
 class SyncMode(enum.Enum):
     MIRROR = 'mirror'   # local state pushes outward
     PULL = 'pull'       # providers update local state

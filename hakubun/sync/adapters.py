@@ -7,13 +7,37 @@ objects; push() converts canonical values back to the provider's scales
 and calls lib.update_show() with a minimal trackma-style item dict.
 """
 
+import time
+
 from hakubun import utils
 from hakubun.sync import normalize
-from hakubun.sync.models import NormalizedEntry
+from hakubun.sync.models import NormalizedEntry, SyncCancelled
 
 
 class AdapterError(Exception):
     """Provider communication failed (network, auth, API)."""
+
+
+# Conservative minimum seconds between consecutive pushes to one
+# provider, to keep a bulk sync under each API's request-rate limit.
+# AniList publishes 90 req/min (and has run a degraded 30/min mode);
+# 1.5s (~40/min) stays well clear of the former, and the retry loop
+# below absorbs the occasional 429 from the latter. MAL/Kitsu are more
+# lenient. (Values are conservative and easily tuned.)
+_PUSH_INTERVAL = {'anilist': 1.5, 'mal': 0.5, 'kitsu': 1.0}
+_DEFAULT_PUSH_INTERVAL = 1.0
+_RATE_LIMIT_RETRIES = 5
+_RATE_LIMIT_DEFAULT_WAIT = 60   # AniList's rate window is 60s
+
+
+def is_rate_limited(error):
+    """True for a provider rate-limit error, whether flagged by the lib
+    (libanilist sets error.rate_limited) or only recognizable by its
+    message (429 / 'Too Many Requests')."""
+    if getattr(error, 'rate_limited', False):
+        return True
+    text = str(error)
+    return '429' in text or 'Too Many Requests' in text
 
 
 # Web URL templates, %-formatted with (mediatype, provider_id). MAL and
@@ -54,6 +78,10 @@ class ProviderAdapter:
         self.name = name
         self.lib = lib
         self._infolist = []
+        self._last_push = 0.0
+        # Scaled up after a rate-limit hit so the rest of the run
+        # paces itself slower and stops tripping the limit repeatedly.
+        self._interval_scale = 1.0
         # lib.signals is a *class* attribute: a freshly constructed lib
         # shares whatever callbacks the running app's Data instance
         # connected, so emitting from this instance would invoke the
@@ -131,7 +159,29 @@ class ProviderAdapter:
 
     # -- outbound ------------------------------------------------------
 
-    def push(self, provider_id, changes, title=None, my_id=None):
+    def _sleep(self, seconds, cancel):
+        """Interruptible sleep: check cancellation ~5x/sec so a long
+        rate-limit wait doesn't pin the whole sync (or the window's
+        close) for a full minute."""
+        deadline = time.time() + seconds
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return
+            if cancel is not None and cancel():
+                raise SyncCancelled()
+            time.sleep(min(0.2, remaining))
+
+    def _pace(self, cancel):
+        interval = _PUSH_INTERVAL.get(self.name, _DEFAULT_PUSH_INTERVAL) \
+            * self._interval_scale
+        gap = interval - (time.time() - self._last_push)
+        if gap > 0:
+            self._sleep(gap, cancel)
+        self._last_push = time.time()
+
+    def push(self, provider_id, changes, title=None, my_id=None,
+            on_wait=None, cancel=None):
         """Push canonical {field: value} changes to the provider.
 
         Returns the provider-scale values actually sent (what the
@@ -142,6 +192,12 @@ class ProviderAdapter:
         last fetch as remote-state '_my_id'): Kitsu, both backends,
         addresses updates by it -- item['my_id'], read unconditionally
         -- while MAL/AniList only use the media id.
+
+        Pushes are paced per provider and retried on a rate-limit
+        (429) response, waiting the server's Retry-After when given.
+        `on_wait(provider, seconds, attempt)` reports a wait; `cancel`
+        (a `() -> bool`) aborts (raising SyncCancelled) between/within
+        waits.
         """
         item = {'id': self._coerce_id(provider_id),
                 'my_id': my_id}
@@ -190,22 +246,35 @@ class ProviderAdapter:
         # the caller (SyncEngine.apply, from FieldChange.title) is
         # expected to supply the show's title for logging.
         item['title'] = title or ''
-        try:
-            self.lib.update_show(item)
-        except utils.APIError as e:
-            raise AdapterError('%s: %s' % (self.name, e)) from e
-        except Exception as e:
-            # The libs were written for trackma's native show dicts and
-            # read keys/types this adapter has to reconstruct; three
-            # field-reported crashes in a row came from exactly this
-            # boundary (KeyError 'title', str-vs-date, KeyError
-            # 'my_id'). An unexpected exception here must degrade to a
-            # per-provider failure (engine.apply isolates AdapterError,
-            # other providers proceed, changes re-plan) -- never kill
-            # the entire apply.
-            raise AdapterError('%s: %s: %s'
-                              % (self.name, type(e).__name__, e)) from e
-        return sent
+        for attempt in range(_RATE_LIMIT_RETRIES + 1):
+            self._pace(cancel)   # may raise SyncCancelled
+            try:
+                self.lib.update_show(item)
+                return sent
+            except utils.APIError as e:
+                if is_rate_limited(e) and attempt < _RATE_LIMIT_RETRIES:
+                    wait = getattr(e, 'retry_after', None) \
+                        or _RATE_LIMIT_DEFAULT_WAIT
+                    # Slow the rest of this run so we stop tripping it.
+                    self._interval_scale = min(self._interval_scale * 1.5, 6.0)
+                    if on_wait is not None:
+                        on_wait(self.name, wait, attempt + 1)
+                    self._sleep(wait, cancel)   # may raise SyncCancelled
+                    continue
+                raise AdapterError('%s: %s' % (self.name, e)) from e
+            except Exception as e:
+                # The libs were written for trackma's native show dicts
+                # and read keys/types this adapter has to reconstruct;
+                # several field-reported crashes came from exactly this
+                # boundary (KeyError 'title', str-vs-date, KeyError
+                # 'my_id'). An unexpected exception here must degrade to
+                # a per-provider failure (engine.apply isolates
+                # AdapterError, other providers proceed, changes
+                # re-plan) -- never kill the entire apply.
+                raise AdapterError('%s: %s: %s'
+                                  % (self.name, type(e).__name__, e)) from e
+        raise AdapterError('%s: still rate limited after %d retries'
+                          % (self.name, _RATE_LIMIT_RETRIES))
 
     def values_equivalent(self, field, a, b):
         """True when two canonical values project to the same value on

@@ -561,3 +561,85 @@ def test_apply_progress_reports_a_failed_provider(store):
     result = eng.apply(eng.plan(), progress=lambda d, t, m: ticks.append((d, t, m)))
     assert 'mal' in result['errors']
     assert any(m.startswith('FAILED Mal') for _, _, m in ticks)
+
+
+def test_rate_limited_push_retries_then_succeeds(store, monkeypatch):
+    """A 429 no longer fails the provider: the push waits and retries,
+    honoring a Retry-After, and succeeds -- the whole point being that
+    a big first sync survives AniList's rate limit."""
+    import hakubun.sync.adapters as adapters_mod
+    # Make waits instant so the test isn't slow.
+    monkeypatch.setattr(adapters_mod.ProviderAdapter, '_sleep',
+                        lambda self, seconds, cancel: None)
+    eng, libs = _setup(store, show('mal', 1, 'Bebop', progress=3))
+    libs['mal'].rate_limit_first = 3       # 3 x 429, then success
+    libs['mal'].rate_limit_retry_after = 2
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    waits = []
+    result = eng.apply(eng.plan(),
+                       progress=lambda d, t, m: waits.append(m))
+    assert result['errors'] == {}
+    assert result['cancelled'] is False
+    assert libs['mal'].shows['1']['my_progress'] == 8   # eventually pushed
+    assert any('Rate limited by Mal' in m and 'waiting 2s' in m
+               for m in waits)
+
+
+def test_rate_limit_gives_up_after_max_retries(store, monkeypatch):
+    import hakubun.sync.adapters as adapters_mod
+    monkeypatch.setattr(adapters_mod.ProviderAdapter, '_sleep',
+                        lambda self, seconds, cancel: None)
+    eng, libs = _setup(store, show('mal', 1, 'Bebop', progress=3))
+    libs['mal'].rate_limit_first = 999     # never recovers
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    result = eng.apply(eng.plan())
+    assert 'mal' in result['errors']
+    assert '429' in result['errors']['mal']
+    # The change stays plannable for a later retry.
+    assert [c for c in eng.plan().changes if c.target == 'mal']
+
+
+def test_cancel_stops_a_run_and_keeps_the_done_part(store):
+    """should_cancel() true stops between push batches; already-pushed
+    changes stay committed, the rest re-plan."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    # Two shows so there are multiple push batches to stop between.
+    kitsu = FakeLib('kitsu', [show('kitsu', 5, 'Cowboy Bebop 2', progress=1)])
+    from hakubun.sync.adapters import ProviderAdapter
+    eng.adapters['kitsu'] = ProviderAdapter('kitsu', kitsu)
+    eng.fetch()
+    for e in store.entities():
+        eng.edit_local(e['uuid'], 'progress', 7)
+
+    # Cancel after the very first push batch.
+    calls = {'n': 0}
+    def should_cancel():
+        calls['n'] += 1
+        return calls['n'] > 1
+    result = eng.apply(eng.plan(), should_cancel=should_cancel)
+    assert result['cancelled'] is True
+    assert result['pushed'] >= 1
+    assert result['pushed'] < 3           # stopped before finishing all
+    # A replan still has the un-pushed changes.
+    assert eng.plan().changes
+
+
+def test_push_pacing_spaces_out_requests(monkeypatch):
+    """Consecutive pushes to one provider are spaced by the provider's
+    interval (the proactive half of not tripping the rate limit)."""
+    import hakubun.sync.adapters as adapters_mod
+    from hakubun.sync.adapters import ProviderAdapter
+    slept = []
+    monkeypatch.setattr(adapters_mod.ProviderAdapter, '_sleep',
+                        lambda self, seconds, cancel: slept.append(seconds))
+    monkeypatch.setattr(adapters_mod, '_PUSH_INTERVAL', {'mal': 0.5})
+    lib = FakeLib('mal', [show('mal', 1, 'A'), show('mal', 2, 'B')])
+    adapter = ProviderAdapter('mal', lib)
+    adapter.push('1', {'progress': 5}, title='A')   # first: no wait
+    assert slept == [] or slept[0] <= 0
+    adapter.push('2', {'progress': 5}, title='B')   # second: paced
+    assert any(s > 0 for s in slept)

@@ -44,6 +44,10 @@ class FakeLib:
         self.updates = []          # update_show items received
         self.fail_fetch = False
         self.fail_update = False
+        # Raise a rate-limit APIError on the first N update_show calls,
+        # then succeed -- to exercise the adapter's 429 retry loop.
+        self.rate_limit_first = 0
+        self.rate_limit_retry_after = None
 
     def media_info(self):
         return dict(MEDIAINFO[self.provider])
@@ -61,6 +65,13 @@ class FakeLib:
     def update_show(self, item):
         if self.fail_update:
             raise utils.APIError('%s rejected the update' % self.provider)
+        if self.rate_limit_first > 0:
+            self.rate_limit_first -= 1
+            err = utils.APIError('%s rate limit (429): Too Many Requests'
+                                 % self.provider)
+            err.rate_limited = True
+            err.retry_after = self.rate_limit_retry_after
+            raise err
         # Every real lib (libmal, libanilist, libkitsu, ...) does
         # exactly this -- item['title'] for a log line, unconditional.
         # A minimal {id, my_*} patch dict with no title crashes here

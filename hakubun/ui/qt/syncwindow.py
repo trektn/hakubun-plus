@@ -21,6 +21,7 @@ field-ownership matrix ("Where should hakubun sync to?" -- lives here,
 not in Settings), and the identity-conflict workflow.
 """
 
+import threading
 import traceback
 
 from PyQt6 import QtCore, QtGui
@@ -76,6 +77,7 @@ class SyncWindow(QDialog):
         self._task = None
         self._plan = None
         self._closed = False
+        self._cancel = threading.Event()
 
         if engine is not None:
             # Injection seam for tests: a prebuilt SyncEngine (fake
@@ -179,6 +181,12 @@ class SyncWindow(QDialog):
         self.apply_button = QPushButton('Apply')
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.s_apply)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.setToolTip(
+            'Stop the sync after the current push. Whatever was already '
+            'pushed stays; the rest re-plans.')
+        self.cancel_button.setVisible(False)
+        self.cancel_button.clicked.connect(self.s_cancel_apply)
         self.reset_button = QPushButton('Reset database...')
         self.reset_button.setToolTip(
             'Wipe the sync database (identities, mappings, history, '
@@ -187,6 +195,7 @@ class SyncWindow(QDialog):
         self.reset_button.clicked.connect(self.s_reset)
         bar.addWidget(self.fetch_button)
         bar.addWidget(self.apply_button)
+        bar.addWidget(self.cancel_button)
         bar.addWidget(self.reset_button)
         layout.addLayout(bar)
 
@@ -602,6 +611,9 @@ class SyncWindow(QDialog):
                                == QtCore.Qt.CheckState.Checked)
         plan, self._plan = self._plan, None
         self.apply_button.setEnabled(False)
+        self._cancel.clear()
+        self.cancel_button.setVisible(True)
+        self.cancel_button.setEnabled(True)
         selected = sum(1 for c in plan.changes if c.selected)
         self.apply_log.clear()
         self.apply_log.appendPlainText(
@@ -610,7 +622,14 @@ class SyncWindow(QDialog):
         self.apply_progress.setRange(0, 0)   # busy until first report
         self.apply_progress.setVisible(True)
         self._run(self.engine.apply, self.r_applied,
-                  'Applying changes...', plan, forward_progress=True)
+                  'Applying changes...', plan,
+                  should_cancel=self._cancel.is_set, forward_progress=True)
+
+    def s_cancel_apply(self):
+        self._cancel.set()
+        self.cancel_button.setEnabled(False)
+        self.apply_log.appendPlainText('Cancelling after the current '
+                                       'push...')
 
     def _on_apply_progress(self, done, total, message):
         if total:
@@ -619,6 +638,7 @@ class SyncWindow(QDialog):
         self.apply_log.appendPlainText(message)
 
     def r_applied(self, result, error):
+        self.cancel_button.setVisible(False)
         if error is not None:
             self.apply_progress.setVisible(False)
             self.apply_log.appendPlainText('Apply failed: %s' % error)
@@ -626,8 +646,9 @@ class SyncWindow(QDialog):
             return
         self.apply_progress.setRange(0, 1)
         self.apply_progress.setValue(1)
-        text = 'Applied: %d local change(s), %d push(es)' % (
-            result['local'], result['pushed'])
+        verb = 'Cancelled after' if result.get('cancelled') else 'Applied:'
+        text = '%s %d local change(s), %d push(es)' % (
+            verb, result['local'], result['pushed'])
         if result['errors']:
             text += ' -- failed: %s' % ', '.join(
                 '%s (%s)' % kv for kv in result['errors'].items())
@@ -1253,6 +1274,10 @@ class SyncWindow(QDialog):
     def closeEvent(self, event):
         if not self._closed:
             self._closed = True
+            # Interrupt any in-flight apply so a rate-limit wait (up to
+            # a minute) doesn't block the close on the _task.wait()
+            # below.
+            self._cancel.set()
             if self._task is not None:
                 # Drop any queued done/progress deliveries before
                 # closing the store, so nothing runs against it after.
