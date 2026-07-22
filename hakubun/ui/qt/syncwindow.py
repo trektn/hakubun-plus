@@ -59,7 +59,7 @@ class _Task(QtCore.QThread):
 
 
 class SyncWindow(QDialog):
-    def __init__(self, parent, accountman, engine=None):
+    def __init__(self, parent, accountman, engine=None, active_api=None):
         super().__init__(parent)
         self.setWindowTitle('Multi-provider Sync')
         self.resize(760, 560)
@@ -75,6 +75,10 @@ class SyncWindow(QDialog):
             self.store = SyncStore(utils.to_data_path('multisync.db'))
             self.engine, self._adapter_errors = \
                 self._build_engine(accountman)
+        # The signed-in account is the app's editing surface (the
+        # working tree): its changes fold in as local intent.
+        if active_api and active_api in self.engine.adapters:
+            self.engine.primary = active_api
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -253,9 +257,18 @@ class SyncWindow(QDialog):
             '"Individual" keeps a field per-site; "Ask" asks every '
             'time.\nScores pushed to coarser sites are rounded to '
             'their scale.'))
+        if self.engine.primary:
+            layout.addWidget(QLabel(
+                'You are signed into <b>%s</b>: changes you make in the '
+                'app (and tracker updates) belong to it and count as '
+                'your local edits.' % self.engine.primary.capitalize()))
         providers = list(self.engine.adapters)
         columns = ([('local', 'Local')]
-                   + [('provider:%s' % p, p.capitalize()) for p in providers]
+                   + [('provider:%s' % p,
+                       p.capitalize() + (' (active)'
+                                         if p == self.engine.primary
+                                         else ''))
+                      for p in providers]
                    + [('merge', 'Merge'), ('individual', 'Individual'),
                       ('ask', 'Ask')])
         grid = QGridLayout()
@@ -299,10 +312,13 @@ class SyncWindow(QDialog):
     def _build_identity_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel('<b>Unresolved identities</b> -- entries '
-                                'that could not be linked safely:'))
+        layout.addWidget(QLabel(
+            '<b>Unresolved identities</b> -- entries with ambiguous '
+            'matches only. Exact ID links and single exact-title '
+            'matches are linked automatically and never appear here.'))
         self.identity_tree = QTreeWidget()
-        self.identity_tree.setHeaderLabels(['Provider', 'Title', 'Status'])
+        self.identity_tree.setHeaderLabels(
+            ['Provider', 'Title', 'Also known as', 'Status'])
         self.identity_tree.setRootIsDecorated(False)
         self.identity_tree.currentItemChanged.connect(
             self._identity_selected)
@@ -310,6 +326,9 @@ class SyncWindow(QDialog):
 
         self.identity_box = QGroupBox('Resolution')
         box_layout = QVBoxLayout(self.identity_box)
+        self.identity_info = QLabel()
+        self.identity_info.setWordWrap(True)
+        box_layout.addWidget(self.identity_info)
         self.rb_confirm = QRadioButton('Use a matched entry')
         self.candidate_combo = QComboBox()
         self.rb_search = QRadioButton('Search manually -- '
@@ -345,14 +364,40 @@ class SyncWindow(QDialog):
         layout.addWidget(self.identity_box, 3)
         return page
 
+    @staticmethod
+    def _display_title(title, aliases):
+        """Native-script titles get a latin alias alongside, so a user
+        whose AniList title language is Native can still tell what a
+        row refers to."""
+        import re as _re
+        title = title or '?'
+        if not _re.search('[A-Za-z]', title):
+            for alias in aliases or []:
+                if alias and _re.search('[A-Za-z]', alias):
+                    return '%s  /  %s' % (title, alias)
+        return title
+
     def _refresh_identity(self):
         self.identity_tree.clear()
         for issue in self.store.identity_open():
-            item = QTreeWidgetItem([issue['provider'], issue['title'] or '?',
+            info = issue.get('entry') or {}
+            aliases = info.get('aliases') or []
+            display = self._display_title(issue['title'], aliases)
+            others = [a for a in aliases if a and a != issue['title']]
+            item = QTreeWidgetItem([issue['provider'], display,
+                                    ' / '.join(others[:2]),
                                     issue['status']])
+            tip = '\n'.join(filter(None, [
+                '%s id %s' % (issue['provider'], issue['provider_id']),
+                'Year: %s' % info['year'] if info.get('year') else None,
+                'All titles: %s' % ', '.join(
+                    [issue['title'] or ''] + others) if others else None]))
+            for col in range(4):
+                item.setToolTip(col, tip)
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, issue)
             self.identity_tree.addTopLevelItem(item)
-        self.identity_tree.resizeColumnToContents(0)
+        for col in range(3):
+            self.identity_tree.resizeColumnToContents(col)
         self.tabs.setTabText(2, 'Identity (%d)'
                              % self.identity_tree.topLevelItemCount())
 
@@ -361,16 +406,33 @@ class SyncWindow(QDialog):
         if item is None:
             return
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        info = issue.get('entry') or {}
+        candidates = issue['candidates']
+        year = ' (%s)' % info['year'] if info.get('year') else ''
+        why = ('%d possible existing match(es) were found by title, '
+               'none certain enough to link automatically.'
+               % len(candidates) if candidates else
+               'No existing entry matched and no cross-provider ID '
+               'was published.')
+        self.identity_info.setText(
+            '<b>%s</b>%s -- %s entry %s.<br>%s' % (
+                self._display_title(issue['title'],
+                                    info.get('aliases')),
+                year, issue['provider'], issue['provider_id'], why))
         self.candidate_combo.clear()
-        for cand in issue['candidates']:
-            label = '%s (%s) via %s' % (
-                cand.get('title'), ', '.join(
-                    '%s:%s' % kv for kv in cand.get('providers',
-                                                    {}).items()),
-                cand.get('via'))
+        for cand in candidates:
+            providers = ', '.join('on %s (%s)' % kv
+                                  for kv in sorted(
+                                      cand.get('providers', {}).items()))
+            label = '%s%s -- %s -- %s' % (
+                self._display_title(cand.get('title'),
+                                    cand.get('aliases')),
+                ' (%s)' % cand['year'] if cand.get('year') else '',
+                providers or 'no providers yet',
+                cand.get('via', ''))
             self.candidate_combo.addItem(label, cand['uuid'])
-        self.rb_confirm.setEnabled(bool(issue['candidates']))
-        if issue['candidates']:
+        self.rb_confirm.setEnabled(bool(candidates))
+        if candidates:
             self.rb_confirm.setChecked(True)
         else:
             self.rb_defer.setChecked(True)

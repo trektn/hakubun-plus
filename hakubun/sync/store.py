@@ -105,6 +105,16 @@ class SyncStore:
             self._conn.execute('PRAGMA journal_mode=WAL')
             self._conn.execute('PRAGMA foreign_keys=ON')
             self._conn.executescript(_SCHEMA)
+            # Migrations for databases created by earlier revisions.
+            self._ensure_column('entities', 'aliases', 'TEXT')
+            self._ensure_column('identity_conflicts', 'entry', 'TEXT')
+
+    def _ensure_column(self, table, column, decl):
+        cols = {r['name'] for r in
+                self._conn.execute('PRAGMA table_info(%s)' % table)}
+        if column not in cols:
+            self._conn.execute('ALTER TABLE %s ADD COLUMN %s %s'
+                               % (table, column, decl))
 
     def close(self):
         with self._lock:
@@ -180,6 +190,25 @@ class SyncStore:
         cols = ', '.join('%s=?' % k for k in sets)
         self._exec('UPDATE entities SET %s WHERE uuid=?' % cols,
                    (*sets.values(), uid))
+
+    def entity_aliases(self, uid):
+        row = self._exec('SELECT aliases FROM entities WHERE uuid=?',
+                         (uid,)).fetchone()
+        return (_load(row['aliases']) or []) if row else []
+
+    def entity_add_aliases(self, uid, titles):
+        """Accumulate known titles (any provider, any language) so
+        title matching works across title-language settings -- e.g. an
+        entity created from AniList with a native title still matches a
+        romaji Kitsu entry via the shared alias."""
+        current = self.entity_aliases(uid)
+        seen = set(current)
+        for title in titles:
+            if title and title not in seen:
+                current.append(title)
+                seen.add(title)
+        self._exec('UPDATE entities SET aliases=? WHERE uuid=?',
+                   (_dump(current), uid))
 
     def add_mapping(self, uid, provider, provider_id, confirmed=False):
         self._exec(
@@ -261,14 +290,15 @@ class SyncStore:
     # -- identity conflicts -------------------------------------------
 
     def identity_upsert(self, provider, provider_id, title, candidates,
-                        status='open'):
+                        status='open', entry=None):
         self._exec(
             'INSERT INTO identity_conflicts(provider, provider_id, title,'
-            ' candidates, status, created_at) VALUES(?,?,?,?,?,?)'
+            ' candidates, status, created_at, entry) VALUES(?,?,?,?,?,?,?)'
             ' ON CONFLICT(provider, provider_id) DO UPDATE SET'
-            ' title=excluded.title, candidates=excluded.candidates',
+            ' title=excluded.title, candidates=excluded.candidates,'
+            ' entry=excluded.entry',
             (provider, str(provider_id), title, _dump(candidates),
-             status, time.time()))
+             status, time.time(), _dump(entry)))
 
     def identity_get(self, provider, provider_id):
         row = self._exec(
@@ -292,6 +322,7 @@ class SyncStore:
             return None
         d = dict(row)
         d['candidates'] = _load(d['candidates']) or []
+        d['entry'] = _load(d.get('entry')) or {}
         return d
 
     # -- events --------------------------------------------------------

@@ -17,6 +17,7 @@ quarter-star -- "MAL and Kitsu will be rounded".
 
 import datetime
 import re
+import unicodedata
 
 from hakubun.sync.models import NormalizedEntry, STATUSES
 
@@ -125,10 +126,14 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
     )
 
 
-_TITLE_JUNK = re.compile(r'[^a-z0-9]+')
+_TITLE_JUNK = re.compile(r'[\W_]+', re.UNICODE)
 
 
 def normalize_title(title):
-    """Casefold + strip punctuation for candidate matching. Fuzzy by
-    nature -- results feed candidate lists, never automatic merges."""
-    return _TITLE_JUNK.sub(' ', (title or '').casefold()).strip()
+    """NFKC + casefold + strip punctuation, keeping word characters of
+    every script -- a native title like 葬送のフリーレン must survive
+    normalization (an earlier latin-only regex reduced CJK titles to
+    empty strings, breaking matching entirely for users whose AniList
+    title language is Native). NFKC also unifies full-width forms."""
+    text = unicodedata.normalize('NFKC', title or '')
+    return _TITLE_JUNK.sub(' ', text.casefold()).strip()

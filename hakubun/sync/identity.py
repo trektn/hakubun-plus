@@ -1,9 +1,18 @@
 """Identity resolution: provider entries -> internal UUIDs.
 
-Only exact, provider-published id links merge automatically. Anything
-heuristic (title/year candidates) becomes an identity conflict for the
-user -- ambiguous entries are never auto-merged (docs/multisync.md §3).
+Three tiers (docs/multisync.md §3):
+1. Exact, provider-published id links merge automatically (confirmed).
+2. A single title candidate that matches *exactly* (normalized title or
+   alias equality, compatible type and year) links automatically as an
+   unconfirmed "auto" mapping -- without this, every legacy-Kitsu entry
+   in a large list becomes a manual confirmation.
+3. Anything genuinely ambiguous -- multiple candidates, similarity
+   short of equality, a year mismatch, a same-provider duplicate --
+   becomes an identity conflict for the user. Ambiguity is never
+   auto-merged.
 """
+
+import json
 
 from hakubun.sync.normalize import normalize_title
 
@@ -39,13 +48,25 @@ class IdentityResolver:
                 store.identity_set_status(previous['id'], 'resolved')
             return linked
 
-        # 4. Heuristic candidates -> user decides. No candidates -> new
-        #    entity.
+        # 4. Title candidates: auto-link the unambiguous, ask about the
+        #    rest, create a new entity when nothing matches at all.
         candidates = self._candidates(entry)
+        exact = [c for c in candidates
+                 if c['exact'] and c['year_ok']
+                 and entry.provider not in c['providers']]
+        if len(candidates) == 1 and len(exact) == 1:
+            uid = exact[0]['uuid']
+            store.add_mapping(uid, entry.provider, entry.provider_id,
+                              confirmed=False)   # auto, not user-confirmed
+            store.entity_add_aliases(uid, [entry.title] + entry.aliases)
+            if previous:
+                store.identity_set_status(previous['id'], 'resolved')
+            return uid
         if candidates:
             status = previous['status'] if previous else 'open'
             store.identity_upsert(entry.provider, entry.provider_id,
-                                  entry.title, candidates, status=status)
+                                  entry.title, candidates, status=status,
+                                  entry=self._entry_payload(entry))
             return None
         return self._create_entity(entry)
 
@@ -78,6 +99,7 @@ class IdentityResolver:
                 return 'ambiguous'
             store.add_mapping(uid, entry.provider, entry.provider_id,
                               confirmed=True)
+            store.entity_add_aliases(uid, [entry.title] + entry.aliases)
             self._record_external_ids(uid, entry)
             return uid
         return None
@@ -93,29 +115,49 @@ class IdentityResolver:
         return a == b or a.startswith(b + ' ') or b.startswith(a + ' ')
 
     def _candidates(self, entry):
-        wanted = normalize_title(entry.title)
-        names = {wanted} | {normalize_title(a) for a in entry.aliases}
-        names.discard('')
-        if not names:
+        entry_names = {normalize_title(entry.title)} | {
+            normalize_title(a) for a in entry.aliases}
+        entry_names.discard('')
+        if not entry_names:
             return []
         found = []
         for ent in self._store.entities():
             if ent['media_type'] != entry.media_type:
                 continue
-            if any(self._titles_match(normalize_title(ent['title']), name)
-                   for name in names):
-                if entry.year and ent['year'] and entry.year != ent['year']:
-                    via = 'title (year differs: %s vs %s)' % (ent['year'],
-                                                              entry.year)
-                else:
-                    via = 'title'
-                found.append(self._candidate_of(ent['uuid'], via=via))
+            aliases = json.loads(ent['aliases']) if ent.get('aliases') \
+                else []
+            ent_names = {normalize_title(ent['title'])} | {
+                normalize_title(a) for a in aliases}
+            ent_names.discard('')
+            exact = bool(entry_names & ent_names)
+            if not exact and not any(self._titles_match(a, b)
+                                     for a in ent_names
+                                     for b in entry_names):
+                continue
+            year_ok = not (entry.year and ent['year']
+                           and entry.year != ent['year'])
+            via = 'title (exact)' if exact else 'title (similar)'
+            if not year_ok:
+                via += '; year differs: %s vs %s' % (ent['year'],
+                                                     entry.year)
+            cand = self._candidate_of(ent['uuid'], via=via)
+            cand['exact'] = exact
+            cand['year_ok'] = year_ok
+            found.append(cand)
         return found
+
+    @staticmethod
+    def _entry_payload(entry):
+        """What the UI needs to render an unresolved entry usefully."""
+        return {'title': entry.title, 'aliases': entry.aliases,
+                'year': entry.year, 'media_type': entry.media_type,
+                'total': entry.total}
 
     def _candidate_of(self, uid, via):
         ent = self._store.get_entity(uid) or {}
         return {'uuid': uid,
                 'title': ent.get('title'),
+                'aliases': self._store.entity_aliases(uid),
                 'year': ent.get('year'),
                 'providers': {m['provider']: m['provider_id']
                               for m in self._store.mappings_of(uid)},
@@ -128,6 +170,7 @@ class IdentityResolver:
             provider_only=provider_only)
         self._store.add_mapping(uid, entry.provider, entry.provider_id,
                                 confirmed=True)
+        self._store.entity_add_aliases(uid, [entry.title] + entry.aliases)
         if provider_only is None:
             # A pinned ("keep provider-only") entity must not record the
             # provider-published external ids: they would auto-link other
@@ -167,6 +210,14 @@ class IdentityResolver:
                 raise ValueError("'confirm' needs target_uuid")
             store.add_mapping(target_uuid, row['provider'],
                               row['provider_id'], confirmed=True)
+            info = row.get('entry') or {}
+            titles = [row.get('title'), info.get('title'),
+                      *(info.get('aliases') or [])]
+            store.entity_add_aliases(target_uuid,
+                                     [t for t in titles if t])
+            if entry is not None:
+                store.entity_add_aliases(target_uuid,
+                                         [entry.title] + entry.aliases)
             store.identity_set_status(conflict_id, 'resolved')
             return target_uuid
         if action == 'provider_only':

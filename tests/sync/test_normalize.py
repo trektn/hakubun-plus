@@ -63,3 +63,12 @@ def test_normalize_title_for_matching():
         normalize.normalize_title('ghost in the shell')
     assert normalize.normalize_title('Re:ZERO -Starting Life-') == \
         normalize.normalize_title('re zero starting life')
+
+
+def test_normalize_title_keeps_non_latin_scripts():
+    # An earlier latin-only regex reduced CJK titles to '' -- matching
+    # was silently dead for Native-title AniList users.
+    assert normalize.normalize_title('葬送のフリーレン') == '葬送のフリーレン'
+    assert normalize.normalize_title('「葬送のフリーレン」') == '葬送のフリーレン'
+    # NFKC unifies full-width forms.
+    assert normalize.normalize_title('ＦＲＩＥＲＥＮ') == 'frieren'

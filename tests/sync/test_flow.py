@@ -245,3 +245,73 @@ def test_event_log_records_every_modification(store):
     assert pushes[0]['source'] == 'mal'
     history = eng.history.watch_history(uid)
     assert history and history[0]['to'] == 6
+
+
+def test_primary_provider_edit_is_local_intent(store):
+    """The signed-in account is the working tree: its changes fold into
+    local without policy friction -- even under 'ask' they are not a
+    conflict against the reconciled DB's stale value."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    store.set_ownership('progress', FieldPolicy(PolicyKind.ASK))
+    eng.primary = 'mal'
+    libs['mal'].shows['1']['my_progress'] = 7    # edit made in the app
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert plan.conflicts == []
+    locals_ = [c for c in plan.changes
+               if c.field == 'progress' and c.target == 'local']
+    assert len(locals_) == 1 and locals_[0].new == 7
+    assert locals_[0].source == 'mal'
+    pushes = [c for c in plan.changes
+              if c.field == 'progress' and c.target == 'anilist']
+    assert len(pushes) == 1 and pushes[0].new == 7
+    eng.apply(plan)
+    assert libs['anilist'].shows['9']['my_progress'] == 7
+
+
+def test_owner_still_beats_primary_intent(store):
+    """Field ownership arbitrates between the working tree's intent and
+    the other providers: Score -> AniList wins over a Kitsu/MAL-side
+    edit, and MAL receives the rounded projection."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=7),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=70))
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER,
+                                             'anilist'))
+    eng.primary = 'mal'
+    libs['mal'].shows['1']['my_score'] = 9        # app-side edit
+    libs['anilist'].shows['9']['my_score'] = 84   # owner's own edit
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert plan.conflicts == []
+    locals_ = [c for c in plan.changes
+               if c.field == 'score' and c.target == 'local']
+    assert len(locals_) == 1 and locals_[0].new == 8.4
+    assert locals_[0].source == 'anilist'
+    eng.apply(plan)
+    assert libs['mal'].shows['1']['my_score'] == 8
+
+
+def test_primary_vs_other_divergence_still_asks(store):
+    """'Ask' still guards genuine cross-provider divergence: the
+    conflict is between the app-side intent and the other provider,
+    and the intent itself is still recorded into local state."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    store.set_ownership('progress', FieldPolicy(PolicyKind.ASK))
+    eng.primary = 'mal'
+    libs['mal'].shows['1']['my_progress'] = 7      # app edit
+    libs['anilist'].shows['9']['my_progress'] = 9  # website edit elsewhere
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    conflicts = [c for c in plan.conflicts if c.field == 'progress']
+    assert len(conflicts) == 1
+    assert conflicts[0].values == {'local': 7, 'anilist': 9}
+    locals_ = [c for c in plan.changes
+               if c.field == 'progress' and c.target == 'local']
+    assert len(locals_) == 1 and locals_[0].new == 7
+    assert not [c for c in plan.changes
+                if c.field == 'progress' and c.target != 'local']

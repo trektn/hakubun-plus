@@ -1638,7 +1638,12 @@ class MainWindow(QMainWindow):
 
     def s_multisync(self):
         from hakubun.ui.qt.syncwindow import SyncWindow
-        self.syncwindow = SyncWindow(None, self.accountman)
+        # The signed-in account is the app's editing surface; the sync
+        # engine treats its changes as local intent.
+        active_api = (self.account or {}).get('api') \
+            if getattr(self, 'account', None) else None
+        self.syncwindow = SyncWindow(None, self.accountman,
+                                     active_api=active_api)
         self.syncwindow.show()
 
     def s_mediatype(self, action):

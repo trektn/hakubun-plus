@@ -33,7 +33,7 @@ def test_missing_external_id_titles_differ_makes_conflict(store):
     via normalized title, but nothing is auto-merged."""
     libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
             'kitsu': FakeLib('kitsu',
-                             [show('kitsu', 77, 'Ghost in the SHELL!')])}
+                             [show('kitsu', 77, 'Ghost in the Shell Arise')])}
     eng = make_engine(store, libs)
     eng.fetch()
     assert len(store.entities()) == 1          # kitsu entry NOT merged
@@ -56,12 +56,12 @@ def test_no_candidates_creates_new_entity(store):
 def test_confirm_stores_mapping_permanently(store):
     libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
             'kitsu': FakeLib('kitsu',
-                             [show('kitsu', 77, 'Ghost In The Shell')])}
+                             [show('kitsu', 77, 'Ghost in the Shell Innocence')])}
     eng = make_engine(store, libs)
     eng.fetch()
     conflict = store.identity_open()[0]
     target = conflict['candidates'][0]['uuid']
-    entry = _entry('kitsu', 77, 'Ghost In The Shell')
+    entry = _entry('kitsu', 77, 'Ghost in the Shell Innocence')
     eng.identity.resolve_conflict(conflict['id'], 'confirm', entry=entry,
                                   target_uuid=target)
     assert store.mapping_for('kitsu', '77')['uuid'] == target
@@ -75,11 +75,11 @@ def test_confirm_stores_mapping_permanently(store):
 def test_provider_only_pins_and_never_cross_syncs(store):
     libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
             'kitsu': FakeLib('kitsu',
-                             [show('kitsu', 77, 'ghost in the shell')])}
+                             [show('kitsu', 77, 'ghost in the shell sac')])}
     eng = make_engine(store, libs)
     eng.fetch()
     conflict = store.identity_open()[0]
-    entry = _entry('kitsu', 77, 'ghost in the shell')
+    entry = _entry('kitsu', 77, 'ghost in the shell sac')
     uid = eng.identity.resolve_conflict(conflict['id'], 'provider_only',
                                         entry=entry)
     ent = store.get_entity(uid)
@@ -93,7 +93,7 @@ def test_provider_only_pins_and_never_cross_syncs(store):
 def test_ignore_never_asks_again(store):
     libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
             'kitsu': FakeLib('kitsu',
-                             [show('kitsu', 77, 'Ghost in the Shell')])}
+                             [show('kitsu', 77, 'Ghost in the Shell 2')])}
     eng = make_engine(store, libs)
     eng.fetch()
     conflict = store.identity_open()[0]
@@ -146,3 +146,55 @@ def test_ambiguous_external_ids_never_merge_entities(store):
     assert eng.identity.resolve_entry(entry) is None
     assert len(store.entities()) == 2          # still two entities
     assert len(store.identity_open()) == 1
+
+
+def test_single_exact_title_match_auto_links(store):
+    """One candidate, exact normalized-title equality, compatible year
+    -> linked automatically as an *auto* (unconfirmed) mapping. This is
+    what keeps a large legacy-Kitsu list from becoming hundreds of
+    manual confirmations."""
+    libs = {'mal': FakeLib('mal', [show('mal', 1, 'Cowboy Bebop')]),
+            'kitsu': FakeLib('kitsu',
+                             [show('kitsu', 9, 'Cowboy  Bebop!')])}
+    eng = make_engine(store, libs)
+    assert eng.fetch() == {}
+    assert store.identity_open() == []
+    assert len(store.entities()) == 1
+    mapping = store.mapping_for('kitsu', '9')
+    assert mapping is not None
+    assert mapping['confirmed'] == 0          # auto, not user-confirmed
+
+
+def test_native_title_matches_via_alias(store):
+    """AniList set to Native titles: the entity is created with a CJK
+    title but carries the romaji alias; a romaji Kitsu entry then
+    auto-links through the alias instead of duplicating."""
+    anilist_show = show('anilist', 5, '葬送のフリーレン',
+                        aliases=['Sousou no Frieren',
+                                 "Frieren: Beyond Journey's End"])
+    libs = {'anilist': FakeLib('anilist', [anilist_show]),
+            'kitsu': FakeLib('kitsu',
+                             [show('kitsu', 6, 'Sousou no Frieren')])}
+    eng = make_engine(store, libs)
+    assert eng.fetch() == {}
+    assert len(store.entities()) == 1
+    assert store.mapping_for('kitsu', '6') is not None
+    assert store.identity_open() == []
+    aliases = store.entity_aliases(store.entities()[0]['uuid'])
+    assert 'Sousou no Frieren' in aliases
+
+
+def test_ambiguous_similarity_still_asks_with_context(store):
+    """Prefix similarity is not equality: still a user question, and
+    the conflict row carries the entry payload the UI renders."""
+    libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
+            'kitsu': FakeLib('kitsu',
+                             [show('kitsu', 77, 'Ghost in the Shell 2',
+                                   aliases=['Koukaku Kidoutai 2'])])}
+    eng = make_engine(store, libs)
+    eng.fetch()
+    rows = store.identity_open()
+    assert len(rows) == 1
+    assert rows[0]['entry']['aliases'] == ['Koukaku Kidoutai 2']
+    assert rows[0]['candidates'][0]['via'].startswith('title (similar')
+    assert rows[0]['candidates'][0]['exact'] is False

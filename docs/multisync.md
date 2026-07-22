@@ -74,13 +74,24 @@ Resolution pipeline (per fetched provider entry):
 1. **Exact mapping** — provider id already mapped → done.
 2. **Exact external-id link** — the entry carries another provider's id
    (AniList/Kitsu-GraphQL expose `mal_id`) that is already mapped, or
-   two fetched entries share the same `mal_id` → link automatically.
-   This is the only automatic merge; it is exact, not heuristic.
-3. **Candidate scoring** — normalized-title (+type, +year) match against
-   existing entities produces *candidates*. Ambiguous or fuzzy results
-   are **never auto-merged**: they create an *identity conflict* for the
-   user, with the candidates attached.
-4. Unmatched, no candidates → new entity with a single mapping.
+   two fetched entries share the same `mal_id` → link automatically
+   (`confirmed = 1`).
+3. **Single exact title match** — exactly one candidate whose
+   *normalized title or alias is equal* (same media type, compatible
+   year) → link automatically as an **auto** mapping (`confirmed = 0`,
+   distinguishable from user-confirmed). Without this tier, a large
+   legacy-Kitsu list turns into hundreds of manual confirmations.
+4. **Candidate scoring** — anything short of that (multiple candidates,
+   prefix-only similarity, year mismatch, same-provider duplicate) is
+   **never auto-merged**: it creates an *identity conflict* for the
+   user, with the candidates and the entry's own titles attached.
+5. Unmatched, no candidates → new entity with a single mapping.
+
+Titles are matched after NFKC + casefold normalization that preserves
+every script (a Native-language AniList title like 葬送のフリーレン must
+survive), and entities **accumulate aliases** — every title any
+provider reports, merged on every fetch and link — so an entity created
+with a native title still matches a romaji entry via the shared alias.
 
 Identity conflict workflow (per unresolved entry — UI mock is the spec):
 
@@ -141,6 +152,20 @@ Policies per field (superset of the mock, covering the examples given):
 
 No provider always wins: ownership is per-field, user-editable, stored
 in the `ownership` table.
+
+### The primary provider (the working tree)
+
+The app's editing surface is the **active account's list** — the main
+window and the tracker write there, not to the reconciliation DB. In
+git terms the signed-in account is the working tree: a checkout of one
+remote. The sync engine therefore treats one provider as **primary**
+(the account the app is signed into, passed by the main window): its
+fetched changes **fold into local state as the user's own intent** —
+they never conflict against the reconciled DB's stale value, even under
+`ask`. Ownership then arbitrates, as usual, between that intent and the
+*other* providers: `Score → AniList` still overrides a Kitsu-side edit,
+and `ask` still surfaces genuine cross-provider divergence. The
+ownership matrix marks the active provider's column.
 
 Score scales: canonical score is a 0–10 float. Adapter conversion:
 MAL 0–10 int (round), AniList 0–100 (POINT_100; ×10), Kitsu 0–20

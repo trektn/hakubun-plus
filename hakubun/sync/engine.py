@@ -20,11 +20,18 @@ _UNSET = object()
 
 
 class SyncEngine:
-    def __init__(self, store, adapters=None, msg=None):
+    def __init__(self, store, adapters=None, msg=None, primary=None):
         self.store = store
         self.adapters = dict(adapters or {})
         self.history = History(store)
         self.identity = IdentityResolver(store)
+        # The primary provider is the account the app is signed into --
+        # the working tree, in git terms. The main window (and the
+        # tracker) edit *that account's* list, so its fetched changes
+        # ARE the user's local intent: they fold into local state
+        # without policy friction, and ownership then arbitrates
+        # between that intent and the other providers.
+        self.primary = primary
         self._msg = msg
 
     def _debug(self, text):
@@ -101,6 +108,9 @@ class SyncEngine:
             updates['status'] = entry.airing_status
         if updates:
             self.store.update_entity_meta(uid, **updates)
+        # Accumulate every title this provider knows -- cross-language
+        # matching (e.g. AniList Native vs Kitsu romaji) depends on it.
+        self.store.entity_add_aliases(uid, [entry.title] + entry.aliases)
 
     # -- plan ----------------------------------------------------------
 
@@ -153,8 +163,32 @@ class SyncEngine:
             if not states:
                 continue
 
+            # Fold the primary provider's changes in as local intent
+            # (see __init__): they replace the local value up front and
+            # are never a conflict against the reconciled DB itself.
+            orig_l = l_val
+            intent = None
+            if self.primary and self.primary in states:
+                p_state, p_val, p_ts = states[self.primary]
+                if p_state in (PULL, BOTH):
+                    intent = (p_val, p_ts)
+                    l_val, l_ts = p_val, p_ts
+                    merged = {**pulls, **divergent}
+                    merged.pop(self.primary, None)
+                    # Reclassify the others against the new local value:
+                    # equal means converged; different means both sides
+                    # moved -> divergence for the policy to arbitrate.
+                    pulls = {}
+                    divergent = {q: qv for q, qv in merged.items()
+                                 if not eq(qv[0], p_val)}
+
             if mode is SyncMode.MIRROR:
-                # Local pushes outward; remote changes are overwritten.
+                # Local pushes outward; remote changes are overwritten
+                # (the primary's, folded above, being the exception).
+                if intent is not None and not eq(l_val, orig_l):
+                    plan.changes.append(FieldChange(
+                        uid, field, orig_l, l_val, target='local',
+                        source=self.primary, title=title))
                 for provider, (state, r_val, _) in states.items():
                     if not self.adapters[provider].values_equivalent(
                             field, r_val, l_val):
@@ -167,16 +201,24 @@ class SyncEngine:
                 plan, uid, title, field, policy, l_val, l_ts,
                 pulls, divergent, mode)
             if resolution is _UNSET:      # conflict recorded; freeze
+                # Still record the working tree's own edit: the
+                # conflict is between that intent and the others, not
+                # against the reconciled DB's stale value.
+                if intent is not None and not eq(intent[0], orig_l):
+                    plan.changes.append(FieldChange(
+                        uid, field, orig_l, intent[0], target='local',
+                        source=self.primary, title=title))
                 continue
             if resolution is not None:
-                new_val, source = resolution
-                if not eq(new_val, l_val):
-                    plan.changes.append(FieldChange(
-                        uid, field, l_val, new_val, target='local',
-                        source=source, title=title))
-                effective, eff_source = new_val, source
+                effective, eff_source = resolution
+            elif intent is not None:
+                effective, eff_source = intent[0], self.primary
             else:
-                effective, eff_source = l_val, 'local'
+                effective, eff_source = orig_l, 'local'
+            if not eq(effective, orig_l):
+                plan.changes.append(FieldChange(
+                    uid, field, orig_l, effective, target='local',
+                    source=eff_source, title=title))
 
             if mode is SyncMode.PULL:
                 continue  # providers update local; nothing pushes
