@@ -21,7 +21,7 @@ field-ownership matrix ("Where should hakubun sync to?" -- lives here,
 not in Settings), and the identity-conflict workflow.
 """
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QRadioButton,
@@ -31,8 +31,9 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
 from hakubun import messenger, utils
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import (FieldPolicy, NormalizedEntry, PolicyKind,
-                                 SyncMode, USER_FIELDS)
+from hakubun.sync.models import (FieldConflict, FieldPolicy,
+                                 NormalizedEntry, PolicyKind, SyncMode,
+                                 USER_FIELDS)
 from hakubun.sync.store import SyncStore
 
 _FIELD_LABELS = {
@@ -144,25 +145,94 @@ class SyncWindow(QDialog):
         bar.addWidget(self.reset_button)
         layout.addLayout(bar)
 
-        layout.addWidget(QLabel('<b>Changes</b> (uncheck to skip):'))
-        self.changes_tree = QTreeWidget()
-        self.changes_tree.setHeaderLabels(['Show', 'Change'])
-        self.changes_tree.setRootIsDecorated(False)
-        layout.addWidget(self.changes_tree, 3)
-
-        layout.addWidget(QLabel('<b>Conflicts</b> (resolve before they '
-                                'sync):'))
-        self.conflicts_tree = QTreeWidget()
-        self.conflicts_tree.setHeaderLabels(['Show', 'Conflict'])
-        self.conflicts_tree.setRootIsDecorated(False)
-        layout.addWidget(self.conflicts_tree, 2)
+        legend = QLabel(
+            '<span style="color:#42a5f5">⬆ push to a site</span> · '
+            '<span style="color:#4caf50">⬇ pull into Hakubun</span> · '
+            '<span style="color:#ff9800">⚠ needs your resolution '
+            '(double-click)</span> — uncheck anything to skip it')
+        layout.addWidget(legend)
+        self.preview_tree = QTreeWidget()
+        self.preview_tree.setHeaderHidden(True)
+        self.preview_tree.itemDoubleClicked.connect(self.s_resolve)
+        layout.addWidget(self.preview_tree, 5)
         resolve_bar = QHBoxLayout()
+        self.preview_summary = QLabel()
+        resolve_bar.addWidget(self.preview_summary)
         resolve_bar.addStretch()
         self.resolve_button = QPushButton('Resolve...')
+        self.resolve_button.setEnabled(False)
         self.resolve_button.clicked.connect(self.s_resolve)
+        self.preview_tree.currentItemChanged.connect(
+            lambda item, _prev: self.resolve_button.setEnabled(
+                item is not None and isinstance(
+                    item.data(0, QtCore.Qt.ItemDataRole.UserRole),
+                    FieldConflict)))
         resolve_bar.addWidget(self.resolve_button)
         layout.addLayout(resolve_bar)
         return page
+
+    # -- preview rendering --------------------------------------------
+
+    _PULL_COLOR = QtGui.QColor('#4caf50')
+    _PUSH_COLOR = QtGui.QColor('#42a5f5')
+    _CONFLICT_COLOR = QtGui.QColor('#ff9800')
+
+    @classmethod
+    def _fmt_value(cls, field, value):
+        if value is None or value == []:
+            return '—'
+        if isinstance(value, list):
+            return ', '.join(map(str, value))
+        if isinstance(value, bool):
+            return 'Yes' if value else 'No'
+        if field == 'score' and isinstance(value, float):
+            return ('%g' % value)
+        if field == 'status' and isinstance(value, str):
+            return value.replace('_', ' ').title()
+        return str(value)
+
+    def _change_item(self, change):
+        label = _FIELD_LABELS.get(change.field, change.field)
+        values = '%s → %s' % (self._fmt_value(change.field, change.old),
+                              self._fmt_value(change.field, change.new))
+        if change.target == 'local':
+            text = '⬇ Pull from %s — %s: %s' % (
+                change.source.capitalize(), label, values)
+            color = self._PULL_COLOR
+        else:
+            text = '⬆ Push to %s — %s: %s' % (
+                change.target.capitalize(), label, values)
+            color = self._PUSH_COLOR
+        item = QTreeWidgetItem([text])
+        item.setForeground(0, color)
+        item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
+        return item
+
+    def _conflict_item(self, conflict):
+        label = _FIELD_LABELS.get(conflict.field, conflict.field)
+        sides = '  vs  '.join(
+            '%s: %s' % (source.capitalize(),
+                        self._fmt_value(conflict.field, value))
+            for source, value in sorted(conflict.values.items()))
+        text = '⚠ %s differs — %s' % (label, sides)
+        if conflict.note:
+            text += '   (%s)' % conflict.note
+        item = QTreeWidgetItem([text])
+        item.setForeground(0, self._CONFLICT_COLOR)
+        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, conflict)
+        return item
+
+    def _iter_change_items(self):
+        for i in range(self.preview_tree.topLevelItemCount()):
+            group = self.preview_tree.topLevelItem(i)
+            for j in range(group.childCount()):
+                child = group.child(j)
+                data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                if data is not None and not isinstance(data,
+                                                       FieldConflict):
+                    yield child, data
 
     def s_fetch(self):
         self._run(self._fetch_and_plan, self.r_planned,
@@ -179,22 +249,46 @@ class SyncWindow(QDialog):
             self._status('Sync failed: %s' % error)
             return
         self._plan = plan
-        self.changes_tree.clear()
+        self.preview_tree.clear()
+        # One box per show: its pulls/pushes and its conflicts together,
+        # instead of two flat spreadsheets.
+        groups = {}
         for change in plan.changes:
-            item = QTreeWidgetItem([change.title, change.describe()])
-            item.setFlags(item.flags()
-                          | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, QtCore.Qt.CheckState.Checked)
-            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
-            self.changes_tree.addTopLevelItem(item)
-        self.conflicts_tree.clear()
+            groups.setdefault(change.uuid,
+                              [change.title, [], []])[1].append(change)
         for conflict in plan.conflicts:
-            item = QTreeWidgetItem([conflict.title, conflict.describe()])
-            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, conflict)
-            self.conflicts_tree.addTopLevelItem(item)
-        for tree in (self.changes_tree, self.conflicts_tree):
-            tree.resizeColumnToContents(0)
+            groups.setdefault(conflict.uuid,
+                              [conflict.title, [], []])[2].append(conflict)
+        bold = QtGui.QFont()
+        bold.setBold(True)
+        for uid, (show_title, changes, conflicts) in sorted(
+                groups.items(), key=lambda kv: kv[1][0].casefold()):
+            summary = []
+            if changes:
+                summary.append('%d change(s)' % len(changes))
+            if conflicts:
+                summary.append('%d conflict(s)' % len(conflicts))
+            group = QTreeWidgetItem(['%s    —  %s'
+                                     % (show_title, ', '.join(summary))])
+            group.setFont(0, bold)
+            if changes:
+                group.setFlags(group.flags()
+                               | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                               | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+                group.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            for change in changes:
+                group.addChild(self._change_item(change))
+            for conflict in conflicts:
+                group.addChild(self._conflict_item(conflict))
+            self.preview_tree.addTopLevelItem(group)
+        self.preview_tree.expandAll()
         self.apply_button.setEnabled(bool(plan.changes))
+        if plan.clean:
+            self.preview_summary.setText('Everything is in sync.')
+        else:
+            self.preview_summary.setText(
+                '%d show(s): %d change(s), %d conflict(s)'
+                % (len(groups), len(plan.changes), len(plan.conflicts)))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
@@ -207,9 +301,7 @@ class SyncWindow(QDialog):
     def s_apply(self):
         if self._plan is None:
             return
-        for i in range(self.changes_tree.topLevelItemCount()):
-            item = self.changes_tree.topLevelItem(i)
-            change = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        for item, change in self._iter_change_items():
             change.selected = (item.checkState(0)
                                == QtCore.Qt.CheckState.Checked)
         plan, self._plan = self._plan, None
@@ -243,18 +335,21 @@ class SyncWindow(QDialog):
             self._task.wait()
         self.store.reset()
         self._plan = None
-        self.changes_tree.clear()
-        self.conflicts_tree.clear()
+        self.preview_tree.clear()
+        self.preview_summary.clear()
         self.apply_button.setEnabled(False)
         self._refresh_identity()
         self._status('Sync database reset -- run Fetch & Plan to '
                      're-derive it.')
 
-    def s_resolve(self):
-        item = self.conflicts_tree.currentItem()
+    def s_resolve(self, item=None, _column=0):
+        if item is None:
+            item = self.preview_tree.currentItem()
         if item is None:
             return
         conflict = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(conflict, FieldConflict):
+            return
         options = list(conflict.values.items())
         labels = ['%s: %s' % (source, value) for source, value in options]
         box = QMessageBox(self)
