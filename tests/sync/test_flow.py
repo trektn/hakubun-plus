@@ -370,3 +370,77 @@ def test_partial_progress_across_structures_conflicts_with_note(store):
     assert 'episode structures differ' in conflicts[0].note
     assert not [c for c in plan.changes if c.field == 'progress'
                 and c.target != 'local']
+
+
+def test_mal_rounding_alone_is_never_a_conflict(store):
+    """local 9.5, MAL 10 (MAL's own rounding of 9.5), no other
+    provider present: MAL offers no independent information -- fully
+    silent, no conflict, no change, no push."""
+    eng, libs = _setup(store, show('mal', 1, 'Frieren', score=0))
+    store.set_ownership('score', FieldPolicy(PolicyKind.ASK))
+    uid = _uid(store)
+    eng.edit_local(uid, 'score', 9.5)
+    libs['mal'].shows['1']['my_score'] = 10   # MAL: only integers
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert [c for c in plan.conflicts if c.field == 'score'] == []
+    assert [c for c in plan.changes if c.field == 'score'] == []
+
+
+def test_mal_rounding_collapses_out_of_a_real_anilist_conflict(store):
+    """Screenshot case 1: local 9.5 / AniList 9.9 / MAL 10. MAL's '10'
+    is just what AniList's 9.9 (or local's 9.5) rounds to on MAL's
+    scale -- it must not appear as a third option. Only AniList's
+    genuinely different, more precise number is a real conflict."""
+    eng, libs = _setup(store,
+                       show('mal', 1, '3-gatsu no Lion', score=0),
+                       show('anilist', 9, '3-gatsu no Lion', mal_id=1,
+                            score=0))
+    store.set_ownership('score', FieldPolicy(PolicyKind.ASK))
+    uid = _uid(store)
+    eng.edit_local(uid, 'score', 9.5)
+    libs['anilist'].shows['9']['my_score'] = 99   # canonical 9.9
+    libs['mal'].shows['1']['my_score'] = 10
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    conflicts = [c for c in plan.conflicts if c.field == 'score']
+    assert len(conflicts) == 1
+    assert conflicts[0].values == {'local': 9.5, 'anilist': 9.9}
+    assert 'mal' not in conflicts[0].values
+
+
+def test_duplicate_provider_scores_collapse_to_one_option(store):
+    """Screenshot case 2: local 2.5 / AniList 3 / MAL 3. AniList and
+    MAL exactly agree with each other -- MAL's vote is a duplicate of
+    AniList's, not independent corroboration worth a separate button."""
+    eng, libs = _setup(store,
+                       show('mal', 1, '3D Kanojo', score=0),
+                       show('anilist', 9, '3D Kanojo', mal_id=1, score=0))
+    store.set_ownership('score', FieldPolicy(PolicyKind.ASK))
+    uid = _uid(store)
+    eng.edit_local(uid, 'score', 2.5)
+    libs['anilist'].shows['9']['my_score'] = 30   # canonical 3.0
+    libs['mal'].shows['1']['my_score'] = 3
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    conflicts = [c for c in plan.conflicts if c.field == 'score']
+    assert len(conflicts) == 1
+    assert conflicts[0].values == {'local': 2.5, 'anilist': 3.0}
+
+
+def test_genuine_mal_only_edit_still_surfaces(store):
+    """MAL disagreeing with EVERYONE (not explained by local or any
+    other provider) is a real edit and must still be asked about."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=0),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=0))
+    store.set_ownership('score', FieldPolicy(PolicyKind.ASK))
+    uid = _uid(store)
+    eng.edit_local(uid, 'score', 8.0)
+    libs['anilist'].shows['9']['my_score'] = 80   # agrees with local: 8.0
+    libs['mal'].shows['1']['my_score'] = 5        # real, unexplained edit
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    conflicts = [c for c in plan.conflicts if c.field == 'score']
+    assert len(conflicts) == 1
+    assert conflicts[0].values == {'local': 8.0, 'mal': 5.0}

@@ -243,6 +243,20 @@ class SyncEngine:
                     divergent = {q: qv for q, qv in merged.items()
                                  if not eq(qv[0], p_val)}
 
+            # Drop a provider's voice from divergent/pulls when it's
+            # fully explained by local's current value or another
+            # provider's value once THAT provider's own precision is
+            # applied (see _collapse_precision_redundant): a coarser
+            # provider that merely reflects the rounding of a value
+            # already present isn't independent information and must
+            # never turn into a redundant conflict option.
+            if divergent:
+                divergent = self._collapse_precision_redundant(
+                    field, l_val, divergent)
+            if pulls:
+                pulls = self._collapse_precision_redundant(
+                    field, l_val, pulls)
+
             if mode is SyncMode.MIRROR:
                 # Local pushes outward; remote changes are overwritten
                 # (the primary's, folded above, being the exception).
@@ -296,6 +310,58 @@ class SyncEngine:
                 self._plan_push(plan, uid, title, field, policy,
                                 provider, r_val, effective, eff_source,
                                 progress_field, p_scales, ent_total)
+
+    def _collapse_precision_redundant(self, field, l_val, group):
+        """Drop a provider's value from a same-field group (divergent
+        or pull candidates) when it is fully explained by -- consistent
+        with, under THAT provider's own precision -- local's current
+        value or another, at-least-as-precise provider's value already
+        kept from this same group.
+
+        Concretely: MAL only stores an integer 0-10 score. If local
+        reads 9.5 and MAL reads 10, that is not MAL disagreeing with
+        anyone -- 10 is exactly what MAL would show for 9.5 (or for
+        AniList's more precise 9.9). A provider whose number is fully
+        explained this way is never asked about; it carries no
+        information beyond what a more precise source already states.
+
+        Processing order matters: providers are checked from most to
+        least precise, each only against SURVIVORS confirmed so far
+        (never the full original group). Checking symmetrically against
+        every other raw value would make two providers that happen to
+        agree EXACTLY (e.g. AniList 3.0 and MAL 3) each look "explained
+        by" the other and delete both, losing the value entirely: MAL
+        gets to be redundant against AniList, but never the reverse.
+
+        Never drops local itself, and never drops a value that isn't
+        actually redundant -- a MAL score that does NOT match anyone
+        else's rounding is a real edit and stays.
+        """
+        if not group:
+            return group
+
+        def precision(provider):
+            if field != 'score':
+                return 0
+            info = getattr(self.adapters.get(provider), 'mediainfo',
+                          None) or {}
+            smax = info.get('score_max') or 10
+            step = info.get('score_step') or 1
+            return smax / step if step else float('inf')
+
+        kept = {}
+        survivors = [l_val]
+        for provider, (r_val, r_ts) in sorted(
+                group.items(), key=lambda kv: precision(kv[0]),
+                reverse=True):
+            adapter = self.adapters.get(provider)
+            if adapter is not None and any(
+                    adapter.values_equivalent(field, r_val, other)
+                    for other in survivors):
+                continue    # redundant -- add nothing to survivors
+            kept[provider] = (r_val, r_ts)
+            survivors.append(r_val)
+        return kept
 
     def _plan_push(self, plan, uid, title, field, policy, provider,
                    state_val, effective, source, progress_field,
