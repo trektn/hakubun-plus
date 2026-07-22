@@ -493,7 +493,8 @@ class SyncEngine:
                     continue
                 try:
                     sent = adapter.push(mapping['provider_id'],
-                                        {c.field: c.new for c in chs})
+                                        {c.field: c.new for c in chs},
+                                        title=chs[0].title)
                 except AdapterError as e:
                     errors[provider] = str(e)
                     failed = True

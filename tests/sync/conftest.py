@@ -61,6 +61,12 @@ class FakeLib:
     def update_show(self, item):
         if self.fail_update:
             raise utils.APIError('%s rejected the update' % self.provider)
+        # Every real lib (libmal, libanilist, libkitsu, ...) does
+        # exactly this -- item['title'] for a log line, unconditional.
+        # A minimal {id, my_*} patch dict with no title crashes here
+        # with a bare KeyError('title'); replicate that so a caller
+        # that forgets to supply one is actually caught by the suite.
+        _ = item['title']
         self.updates.append(dict(item))
         self.shows.setdefault(str(item['id']), {'id': item['id']})
         self.shows[str(item['id'])].update(item)

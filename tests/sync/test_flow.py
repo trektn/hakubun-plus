@@ -444,3 +444,18 @@ def test_genuine_mal_only_edit_still_surfaces(store):
     conflicts = [c for c in plan.conflicts if c.field == 'score']
     assert len(conflicts) == 1
     assert conflicts[0].values == {'local': 8.0, 'mal': 5.0}
+
+
+def test_push_includes_title_for_the_libs_own_logging(store):
+    """Field report: 'cannot sync. Apply failed 'title'' -- a bare
+    KeyError('title') str()s to exactly that. Every real lib's
+    update_show()/delete_show() unconditionally reads item['title']
+    for a log line (not the actual API payload, which is id/my_* only)
+    -- the adapter's minimal patch dict must always supply one."""
+    eng, libs = _setup(store, show('mal', 1, 'Cowboy Bebop', progress=3))
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    result = eng.apply(eng.plan())
+    assert result['errors'] == {}
+    assert libs['mal'].updates[-1]['title'] == 'Cowboy Bebop'
+    assert libs['mal'].shows['1']['my_progress'] == 8

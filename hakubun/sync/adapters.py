@@ -131,7 +131,7 @@ class ProviderAdapter:
 
     # -- outbound ------------------------------------------------------
 
-    def push(self, provider_id, changes):
+    def push(self, provider_id, changes, title=None):
         """Push canonical {field: value} changes to the provider.
 
         Returns the provider-scale values actually sent (what the
@@ -171,8 +171,17 @@ class ProviderAdapter:
                 # No lib exposes notes yet; kept in the model for the
                 # 'individual' policy and future adapters.
                 continue
-        if len(item) == 1:
+        if not sent:
             return {}
+        # Every lib's update_show()/delete_show() logs item['title']
+        # (purely informational -- the actual API payload is built
+        # from id/my_* only) but accesses it unconditionally, so a
+        # missing key crashes the whole push with a bare
+        # KeyError('title') ("Apply failed: 'title'"). This adapter's
+        # item is a minimal {id, my_*} patch with no title of its own;
+        # the caller (SyncEngine.apply, from FieldChange.title) is
+        # expected to supply the show's title for logging.
+        item['title'] = title or ''
         try:
             self.lib.update_show(item)
         except utils.APIError as e:
