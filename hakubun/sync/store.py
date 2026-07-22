@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS mappings(
     provider TEXT NOT NULL,
     provider_id TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0,
+    via TEXT,
     created_at REAL NOT NULL,
     UNIQUE(provider, provider_id),
     UNIQUE(uuid, provider));
@@ -108,6 +109,7 @@ class SyncStore:
             # Migrations for databases created by earlier revisions.
             self._ensure_column('entities', 'aliases', 'TEXT')
             self._ensure_column('identity_conflicts', 'entry', 'TEXT')
+            self._ensure_column('mappings', 'via', 'TEXT')
 
     def _ensure_column(self, table, column, decl):
         cols = {r['name'] for r in
@@ -139,6 +141,7 @@ class SyncStore:
                 self._conn.executescript(_SCHEMA)
                 self._ensure_column('entities', 'aliases', 'TEXT')
                 self._ensure_column('identity_conflicts', 'entry', 'TEXT')
+                self._ensure_column('mappings', 'via', 'TEXT')
             finally:
                 self._conn.execute('PRAGMA foreign_keys=ON')
 
@@ -232,11 +235,13 @@ class SyncStore:
         self._exec('UPDATE entities SET aliases=? WHERE uuid=?',
                    (_dump(current), uid))
 
-    def add_mapping(self, uid, provider, provider_id, confirmed=False):
+    def add_mapping(self, uid, provider, provider_id, confirmed=False,
+                    via=None):
         self._exec(
             'INSERT OR REPLACE INTO mappings(uuid, provider, provider_id,'
-            ' confirmed, created_at) VALUES(?,?,?,?,?)',
-            (uid, provider, str(provider_id), int(confirmed), time.time()))
+            ' confirmed, via, created_at) VALUES(?,?,?,?,?,?)',
+            (uid, provider, str(provider_id), int(confirmed), via,
+             time.time()))
 
     def mapping_for(self, provider, provider_id):
         row = self._exec(

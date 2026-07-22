@@ -25,12 +25,25 @@ class IdentityResolver:
         # provider-published ones.
         self._atlas = atlas
 
+    @property
+    def atlas(self):
+        """Exposed for the Inspector: it needs to show what the atlas
+        independently says about an id, regardless of resolution
+        state, so the user can cross-check trust."""
+        return self._atlas
+
     def _external_ids(self, entry):
-        ids = dict(entry.external_ids)
+        """{provider: (id, source)}. Provider-published ids ('published'
+        -- e.g. AniList/Kitsu-GraphQL's own idMal) take priority; the
+        community anime-relations atlas ('atlas') fills in anything the
+        provider itself doesn't publish. The source is kept (not just
+        the id) so a mapping created from this can record exactly how
+        it was linked, for the Inspector."""
+        ids = {p: (pid, 'published') for p, pid in entry.external_ids.items()}
         if self._atlas is not None:
             for provider, pid in self._atlas.lookup(
                     entry.provider, entry.provider_id).items():
-                ids.setdefault(provider, pid)
+                ids.setdefault(provider, (pid, 'atlas'))
         ids.pop(entry.provider, None)
         return ids
 
@@ -75,7 +88,8 @@ class IdentityResolver:
         if len(exact_all) == 1 and len(exact) == 1:
             uid = exact[0]['uuid']
             store.add_mapping(uid, entry.provider, entry.provider_id,
-                              confirmed=False)   # auto, not user-confirmed
+                              confirmed=False,   # auto, not user-confirmed
+                              via='exact title match (auto-linked)')
             store.entity_add_aliases(uid, [entry.title] + entry.aliases)
             if previous:
                 store.identity_set_status(previous['id'], 'resolved')
@@ -95,15 +109,20 @@ class IdentityResolver:
         return self._create_entity(entry)
 
     def _exact_link(self, entry):
-        """Link via ids the provider itself publishes. A claimed id
-        already mapped to a *different* entity than another claim is an
-        ambiguity -> identity conflict, never an auto-merge."""
+        """Link via ids the provider itself publishes (or the
+        anime-relations atlas). A claimed id already mapped to a
+        *different* entity than another claim is an ambiguity ->
+        identity conflict, never an auto-merge."""
         store = self._store
-        targets = set()
-        for other_provider, other_id in self._external_ids(entry).items():
+        targets = {}   # uuid -> via label naming the exact id that matched
+        for other_provider, (other_id, source) in \
+                self._external_ids(entry).items():
             m = store.mapping_for(other_provider, other_id)
             if m:
-                targets.add(m['uuid'])
+                label = '%s %s id %s' % (
+                    'published' if source == 'published' else
+                    'anime-relations', other_provider, other_id)
+                targets.setdefault(m['uuid'], label)
         if len(targets) > 1:
             candidates = [self._candidate_of(u, via='external-id-clash')
                           for u in sorted(targets)]
@@ -111,7 +130,7 @@ class IdentityResolver:
                                   entry.title, candidates)
             return 'ambiguous'
         if targets:
-            uid = targets.pop()
+            uid, via_label = next(iter(targets.items()))
             existing = {m['provider'] for m in store.mappings_of(uid)}
             if entry.provider in existing:
                 # Entity already has a different entry of this provider:
@@ -122,7 +141,7 @@ class IdentityResolver:
                                       entry.title, candidates)
                 return 'ambiguous'
             store.add_mapping(uid, entry.provider, entry.provider_id,
-                              confirmed=True)
+                              confirmed=True, via=via_label)
             store.entity_add_aliases(uid, [entry.title] + entry.aliases)
             self._record_external_ids(uid, entry)
             return uid
@@ -192,8 +211,11 @@ class IdentityResolver:
             entry.title, media_type=entry.media_type, year=entry.year,
             total=entry.total, status=entry.airing_status,
             provider_only=provider_only)
+        via = ('kept %s-only by user choice' % provider_only
+               if provider_only else
+               'first seen on %s (no match found)' % entry.provider)
         self._store.add_mapping(uid, entry.provider, entry.provider_id,
-                                confirmed=True)
+                                confirmed=True, via=via)
         self._store.entity_add_aliases(uid, [entry.title] + entry.aliases)
         if provider_only is None:
             # A pinned ("keep provider-only") entity must not record the
@@ -204,17 +226,20 @@ class IdentityResolver:
         return uid
 
     def _record_external_ids(self, uid, entry):
-        """Provider-published ids become mappings themselves (exact),
-        unless that slot is taken -- a clash surfaces as ambiguity on
-        the other provider's own fetch."""
-        for other_provider, other_id in self._external_ids(entry).items():
+        """Provider-published (or atlas) ids become mappings themselves
+        (exact), unless that slot is taken -- a clash surfaces as
+        ambiguity on the other provider's own fetch."""
+        for other_provider, (other_id, source) in \
+                self._external_ids(entry).items():
             if self._store.mapping_for(other_provider, other_id):
                 continue
             if any(m['provider'] == other_provider
                    for m in self._store.mappings_of(uid)):
                 continue
+            via = ('published by %s' % entry.provider if source == 'published'
+                  else 'anime-relations atlas (seen via %s)' % entry.provider)
             self._store.add_mapping(uid, other_provider, other_id,
-                                    confirmed=True)
+                                    confirmed=True, via=via)
 
     # -- the user's four-option workflow ------------------------------
 
@@ -233,7 +258,8 @@ class IdentityResolver:
             if not target_uuid:
                 raise ValueError("'confirm' needs target_uuid")
             store.add_mapping(target_uuid, row['provider'],
-                              row['provider_id'], confirmed=True)
+                              row['provider_id'], confirmed=True,
+                              via='confirmed by user')
             info = row.get('entry') or {}
             titles = [row.get('title'), info.get('title'),
                       *(info.get('aliases') or [])]

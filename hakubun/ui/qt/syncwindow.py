@@ -25,8 +25,9 @@ from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QRadioButton,
-                             QScrollArea, QSplitter, QTabWidget, QTreeWidget,
-                             QTreeWidgetItem, QVBoxLayout, QWidget)
+                             QScrollArea, QSplitter, QTabWidget, QTextBrowser,
+                             QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                             QWidget)
 
 from hakubun import messenger, utils
 from hakubun.sync.adapters import adapter_from_account
@@ -86,6 +87,7 @@ class SyncWindow(QDialog):
         self.tabs.addTab(self._build_preview_tab(), 'Preview')
         self.tabs.addTab(self._build_ownership_tab(), 'Ownership')
         self.tabs.addTab(self._build_identity_tab(), 'Identity')
+        self.tabs.addTab(self._build_inspector_tab(), 'Inspector')
         layout.addWidget(self.tabs)
         self.status_label = QLabel()
         layout.addWidget(self.status_label)
@@ -732,6 +734,147 @@ class SyncWindow(QDialog):
             return
         self._refresh_identity()
         self._status('Identity updated; fetch again to sync the entry.')
+
+    # -- Inspector -------------------------------------------------------
+
+    def _build_inspector_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        intro = QLabel(
+            '<b>Identity inspector</b> — punch in one entry by its '
+            'provider id and see exactly how multisync resolved it: '
+            'what it maps to on your other providers, how each link '
+            'was made (a published id, the anime-relations atlas, a '
+            'title match, or your own confirmation), and the raw data '
+            'recorded for it.')
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel('Provider:'))
+        self.inspect_provider = QComboBox()
+        for name in self.engine.adapters:
+            self.inspect_provider.addItem(name.capitalize(), name)
+        bar.addWidget(self.inspect_provider)
+        bar.addWidget(QLabel('ID:'))
+        self.inspect_id = QLineEdit()
+        self.inspect_id.setPlaceholderText('e.g. 52991')
+        self.inspect_id.returnPressed.connect(self.s_inspect)
+        bar.addWidget(self.inspect_id)
+        inspect_button = QPushButton('Look up')
+        inspect_button.clicked.connect(self.s_inspect)
+        bar.addWidget(inspect_button)
+        bar.addStretch()
+        layout.addLayout(bar)
+
+        self.inspect_output = QTextBrowser()
+        self.inspect_output.setOpenExternalLinks(False)
+        self.inspect_output.setHtml(
+            '<p style="color:gray">Nothing looked up yet.</p>')
+        layout.addWidget(self.inspect_output, 1)
+        return page
+
+    def s_inspect(self):
+        provider = self.inspect_provider.currentData()
+        provider_id = self.inspect_id.text().strip()
+        if not provider or not provider_id:
+            return
+        from hakubun.sync.inspect import inspect_entry
+        result = inspect_entry(self.store, provider, provider_id,
+                               atlas=self.engine.identity.atlas)
+        self.inspect_output.setHtml(self._render_inspection(result))
+
+    def _render_inspection(self, r):
+        p = ['<h3>%s id %s</h3>' % (r.provider.capitalize(),
+                                    r.provider_id)]
+        if not r.found:
+            p.append('<p>%s</p>' % r.note)
+            issue = r.identity_issue
+            if issue and issue.get('candidates'):
+                p.append('<p><b>Candidates on file:</b></p><ul>')
+                for c in issue['candidates']:
+                    providers = ', '.join(
+                        '%s:%s' % kv
+                        for kv in (c.get('providers') or {}).items()) \
+                        or 'no providers yet'
+                    p.append('<li>%s%s — %s — <i>%s</i></li>' % (
+                        c.get('title') or '?',
+                        ' (%s)' % c['year'] if c.get('year') else '',
+                        providers, c.get('via', '')))
+                p.append('</ul>')
+            if r.atlas_hint:
+                p.append('<p><b>anime-relations atlas independently '
+                         'says:</b> %s</p>' % ', '.join(
+                             '%s=%s' % kv for kv in
+                             r.atlas_hint.items()))
+            return ''.join(p)
+
+        p.append('<p><b>%s</b>%s%s</p>' % (
+            r.title or '?', ' (%s)' % r.year if r.year else '',
+            ' — pinned provider-only (%s), excluded from cross-'
+            'provider sync' % r.provider_only.capitalize()
+            if r.provider_only else ''))
+        if r.aliases:
+            p.append('<p>Also known as: %s</p>'
+                     % ', '.join(a for a in r.aliases if a != r.title))
+        p.append('<p>Internal id: <code>%s</code></p>' % r.uuid)
+
+        p.append('<h4>Mapped providers</h4>'
+                 '<table border="1" cellpadding="4" cellspacing="0">'
+                 '<tr><th>Provider</th><th>ID</th><th>Confirmed</th>'
+                 '<th>Linked via</th></tr>')
+        mapped_ids = {}
+        for m in r.mappings:
+            mapped_ids[m.provider] = m.provider_id
+            p.append('<tr><td>%s</td><td>%s</td><td>%s</td>'
+                     '<td>%s</td></tr>' % (
+                         m.provider.capitalize(), m.provider_id,
+                         'Yes' if m.confirmed else 'Auto',
+                         m.via or '—'))
+        p.append('</table>')
+
+        if r.atlas_hint:
+            mismatches = [
+                '%s: mapped %s, atlas says %s'
+                % (prov.capitalize(), mapped_ids[prov], hint_id)
+                for prov, hint_id in r.atlas_hint.items()
+                if prov in mapped_ids and mapped_ids[prov] != hint_id]
+            verdict = ('<span style="color:#ff9800">differs from the '
+                      'mapping above: %s</span>' % '; '.join(mismatches)
+                      if mismatches else
+                      'consistent with the mapping above')
+            p.append('<p><b>anime-relations atlas independently says:'
+                     '</b> %s — %s</p>' % (
+                         ', '.join('%s=%s' % kv
+                                   for kv in r.atlas_hint.items()),
+                         verdict))
+
+        providers = sorted({prov for row in r.fields
+                            for prov in row.per_provider})
+        rows = [row for row in r.fields
+               if row.per_provider or row.local not in (None, [], 0)]
+        if rows and providers:
+            p.append('<h4>Field data</h4>'
+                     '<table border="1" cellpadding="4" cellspacing="0">'
+                     '<tr><th>Field</th><th>Local</th>' + ''.join(
+                         '<th>%s (remote / last-synced)</th>'
+                         % prov.capitalize() for prov in providers)
+                     + '</tr>')
+            for row in rows:
+                cells = ['<td>%s</td>' % _FIELD_LABELS.get(
+                             row.field, row.field),
+                        '<td>%s</td>' % self._fmt_value(row.field,
+                                                        row.local)]
+                for prov in providers:
+                    pv = row.per_provider.get(prov)
+                    cells.append(
+                        '<td>—</td>' if pv is None else
+                        '<td>%s / %s</td>' % (
+                            self._fmt_value(row.field, pv['remote']),
+                            self._fmt_value(row.field, pv['base'])))
+                p.append('<tr>%s</tr>' % ''.join(cells))
+            p.append('</table>')
+        return ''.join(p)
 
     # -- plumbing ------------------------------------------------------
 
