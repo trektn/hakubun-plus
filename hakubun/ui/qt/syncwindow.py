@@ -272,13 +272,24 @@ class SyncWindow(QDialog):
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
         return item
 
+    def _local_label(self):
+        """'local' is really just whatever the signed-in account fed
+        it (see the primary fold in SyncEngine._plan_entity -- local's
+        value always equals the primary's own value when a primary is
+        set). Naming it 'Local' as if it were some third, separate
+        thing is needless jargon; call it by the platform it actually
+        is. Falls back to 'Local' only when no account is signed in."""
+        return self.engine.primary.capitalize() if self.engine.primary \
+            else 'Local'
+
     def _conflict_why(self, conflict):
         """Explain why this needs a human, not just what differs."""
         label = _FIELD_LABELS.get(conflict.field, conflict.field)
+        local_label = self._local_label()
         others = sorted(s for s in conflict.values if s != 'local')
         sides = ' and '.join(
-            ['your side (%s)' % self._fmt_value(conflict.field,
-                                                conflict.values['local'])]
+            ['%s (%s)' % (local_label, self._fmt_value(
+                conflict.field, conflict.values['local']))]
             + ['%s (%s)' % (s.capitalize(),
                             self._fmt_value(conflict.field,
                                             conflict.values[s]))
@@ -312,8 +323,12 @@ class SyncWindow(QDialog):
         row = QHBoxLayout()
         for source, value in sorted(conflict.values.items()):
             shown = self._fmt_value(conflict.field, value)
-            text = ('Keep yours: %s' % shown if source == 'local'
-                    else 'Use %s: %s' % (source.capitalize(), shown))
+            if source == 'local':
+                text = ('Use %s: %s' % (self._local_label(), shown)
+                        if self.engine.primary else
+                        'Keep yours: %s' % shown)
+            else:
+                text = 'Use %s: %s' % (source.capitalize(), shown)
             button = QPushButton(text)
             button.clicked.connect(
                 lambda _checked=False, c=conflict, s=source:
