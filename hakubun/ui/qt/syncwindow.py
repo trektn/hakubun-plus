@@ -244,8 +244,23 @@ class SyncWindow(QDialog):
         if target != 'local' and field == 'score' \
                 and target in self.engine.adapters:
             info = self.engine.adapters[target].mediainfo
+            smax = info.get('score_max', 10)
             value = normalize.provider_score(
-                value, info.get('score_max', 10), info.get('score_step', 1))
+                value, smax, info.get('score_step', 1))
+            if target == 'kitsu' and smax:
+                # UI-only re-expression, not a precision change: Kitsu's
+                # API stores ratings at quarter-star granularity
+                # (ratingTwenty, 0-20) on its 0-5 native scale, but
+                # kitsu.app's own list view only ever shows half-star
+                # increments -- projecting straight through the raw
+                # native scale for display would show a number ("4.25")
+                # nobody sees on Kitsu itself. Every quarter-star value
+                # doubles to an exact half-integer on a 0-10 scale
+                # (i.e. canonical units), which is what Kitsu's site
+                # actually displays -- so show that instead. The
+                # quantization above (what will actually be pushed) is
+                # unchanged; only how it's presented differs.
+                value = value * (10.0 / smax)
         return self._fmt_value(field, value)
 
     def _change_item(self, change):
