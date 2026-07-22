@@ -62,9 +62,12 @@ class _Task(QtCore.QThread):
 
 
 class SyncWindow(QDialog):
-    def __init__(self, parent, accountman, engine=None, active_api=None):
+    def __init__(self, parent, accountman, engine=None, active_api=None,
+                media_type='anime'):
         super().__init__(parent)
-        self.setWindowTitle('Multi-provider Sync')
+        self.media_type = media_type
+        self.setWindowTitle('Multi-provider Sync (%s)'
+                           % media_type.capitalize())
         self.resize(760, 560)
         self._task = None
         self._plan = None
@@ -75,9 +78,18 @@ class SyncWindow(QDialog):
             self.store = engine.store
             self.engine, self._adapter_errors = engine, []
         else:
-            self.store = SyncStore(utils.to_data_path('multisync.db'))
+            # A separate database PER media type, never one shared
+            # file: MAL/AniList/Kitsu each use independent numeric id
+            # spaces for anime vs manga (their id 1 for anime and id 1
+            # for manga are unrelated works), so a single mappings
+            # table keyed only on (provider, provider_id) would
+            # collide between them the moment an account switches
+            # media type -- exactly the breakage this separates away,
+            # rather than only detecting it after the fact.
+            self.store = SyncStore(utils.to_data_path(
+                'multisync-%s.db' % media_type))
             self.engine, self._adapter_errors = \
-                self._build_engine(accountman)
+                self._build_engine(accountman, media_type)
         # The signed-in account is the app's editing surface (the
         # working tree): its changes fold in as local intent.
         if active_api and active_api in self.engine.adapters:
@@ -97,25 +109,36 @@ class SyncWindow(QDialog):
             self._status('Some accounts could not be loaded: %s'
                          % '; '.join(self._adapter_errors))
         elif not self.engine.adapters:
-            self._status('No provider accounts configured.')
+            self._status('No %s accounts configured (check Settings if '
+                        'you have accounts set up for the other media '
+                        'type).' % media_type)
         self._refresh_identity()
 
-    def _build_engine(self, accountman):
-        adapters, errors = {}, []
+    def _build_engine(self, accountman, media_type):
+        by_provider, errors = {}, []
         msg = messenger.Messenger(None, 'Sync')
         for num, account in accountman.get_accounts():
             api = account['api']
-            if api in adapters:
+            if api in by_provider:
                 errors.append('%s: only one account per provider is '
                               'supported for now' % api)
                 continue
             try:
-                adapters[api] = adapter_from_account(account, msg)
+                adapter = adapter_from_account(account, msg)
             except Exception as e:
                 errors.append('%s: %s' % (api, e))
+                continue
+            if adapter.lib.mediatype != media_type:
+                # This account is configured (in Settings) for the
+                # OTHER media type -- not an error, just not part of
+                # this sync. Mixing them here would be exactly the
+                # cross-type id collision the separate database exists
+                # to prevent.
+                continue
+            by_provider[api] = adapter
         from hakubun.sync.relations import RelationsAtlas
-        return SyncEngine(self.store, adapters,
-                          relations=RelationsAtlas.from_file()), errors
+        atlas = RelationsAtlas.from_file() if media_type == 'anime' else None
+        return SyncEngine(self.store, by_provider, relations=atlas), errors
 
     # -- Preview -------------------------------------------------------
 

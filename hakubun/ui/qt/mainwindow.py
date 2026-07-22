@@ -1656,15 +1656,28 @@ class MainWindow(QMainWindow):
     def _get_syncwindow(self):
         """The one SyncWindow instance: reused (and its already-fetched
         plan preserved) across both the manual 'Multi-provider Sync...'
-        entry and the toolbar button's headless attempt."""
+        entry and the toolbar button's headless attempt -- but only
+        for as long as the loaded account's media type doesn't change.
+        Anime and manga use separate multisync databases (independent
+        provider id spaces -- see SyncWindow.__init__), so switching
+        media type (Settings, then reloading the account) must open a
+        fresh window against the OTHER database, never keep reusing
+        the stale one."""
         from hakubun.ui.qt.syncwindow import SyncWindow
-        if getattr(self, 'syncwindow', None) is None:
+        media_type = self.worker.engine.data_handler.userconfig.get(
+            'mediatype') or 'anime'
+        existing = getattr(self, 'syncwindow', None)
+        if existing is not None and existing.media_type != media_type:
+            existing.close()
+            self.syncwindow = existing = None
+        if existing is None:
             # The signed-in account is the app's editing surface; the
             # sync engine treats its changes as local intent.
             active_api = (self.account or {}).get('api') \
                 if getattr(self, 'account', None) else None
             self.syncwindow = SyncWindow(None, self.accountman,
-                                         active_api=active_api)
+                                         active_api=active_api,
+                                         media_type=media_type)
         return self.syncwindow
 
     def s_multisync(self):
