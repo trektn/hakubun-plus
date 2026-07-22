@@ -131,8 +131,15 @@ class SyncWindow(QDialog):
         self.apply_button = QPushButton('Apply')
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.s_apply)
+        self.reset_button = QPushButton('Reset database...')
+        self.reset_button.setToolTip(
+            'Wipe the sync database (identities, mappings, history, '
+            'ownership) and start clean. Your provider lists are never '
+            'touched; the next Fetch re-derives everything.')
+        self.reset_button.clicked.connect(self.s_reset)
         bar.addWidget(self.fetch_button)
         bar.addWidget(self.apply_button)
+        bar.addWidget(self.reset_button)
         layout.addLayout(bar)
 
         layout.addWidget(QLabel('<b>Changes</b> (uncheck to skip):'))
@@ -220,6 +227,26 @@ class SyncWindow(QDialog):
             text += ' (their changes stay planned)'
         self._status(text)
         self.s_fetch()
+
+    def s_reset(self):
+        answer = QMessageBox.question(
+            self, 'Reset sync database',
+            'Wipe the sync database? Identities, mappings, sync '
+            'history, resolved decisions and ownership choices are '
+            'deleted and re-derived on the next fetch. Your provider '
+            'lists are NOT touched.')
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._task is not None and self._task.isRunning():
+            self._task.wait()
+        self.store.reset()
+        self._plan = None
+        self.changes_tree.clear()
+        self.conflicts_tree.clear()
+        self.apply_button.setEnabled(False)
+        self._refresh_identity()
+        self._status('Sync database reset -- run Fetch & Plan to '
+                     're-derive it.')
 
     def s_resolve(self):
         item = self.conflicts_tree.currentItem()

@@ -309,8 +309,31 @@ class libkitsu(lib):
             })
 
         if 'included' in data_json:
+            # 'included' now mixes media and mapping resources; index
+            # the mappings first, then attach each media's MAL id.
+            mappings = {}
+            for res in data_json['included']:
+                if res['type'] == 'mappings':
+                    attrs = res.get('attributes') or {}
+                    mappings[res['id']] = (attrs.get('externalSite'),
+                                           attrs.get('externalId'))
+            wanted_site = 'myanimelist/' + (
+                'manga' if self.mediatype == 'manga' else 'anime')
             for media in data_json['included']:
-                infolist.append(self._parse_info(media))
+                if media['type'] == 'mappings':
+                    continue
+                mal_id = None
+                refs = ((media.get('relationships') or {})
+                        .get('mappings', {}).get('data') or [])
+                for ref in refs:
+                    site, ext_id = mappings.get(ref['id'], (None, None))
+                    if site == wanted_site and ext_id:
+                        try:
+                            mal_id = int(ext_id)
+                        except (TypeError, ValueError):
+                            pass
+                        break
+                infolist.append(self._parse_info(media, mal_id=mal_id))
 
     def fetch_list(self):
         """Queries the full list from the remote server.
@@ -327,7 +350,13 @@ class libkitsu(lib):
                 "filter[user_id]": self._get_userconfig('userid'),
                 "filter[kind]": self.mediatype,
                 # "include": self.mediatype, # TODO : This returns a 500 for some reason.
-                "include": "media",
+                # media.mappings carries Kitsu's external-site id links
+                # (notably MyAnimeList) -- the same community mapping
+                # data mal-sync style tools use. Multisync identity
+                # resolution depends on it; without it every legacy
+                # Kitsu entry falls back to title matching.
+                "include": "media,media.mappings",
+                "fields[mappings]": "externalSite,externalId",
                 # TODO : List for manga should be different
                 f"fields[{self.mediatype}]": ','.join([
                     'id',
@@ -398,6 +427,7 @@ class libkitsu(lib):
     def merge(self, show, info):
         show['title'] = info['title']
         show['aliases'] = info['aliases']
+        show['mal_id'] = info.get('mal_id')
         show['url'] = info['url']
         show['total'] = info['total']
         show['image'] = info['image']
@@ -572,8 +602,9 @@ class libkitsu(lib):
         # Safe to assume dates haven't even been announced yet
         return utils.Status.NOTYET
 
-    def _parse_info(self, media):
+    def _parse_info(self, media, mal_id=None):
         info = utils.show()
+        info['mal_id'] = mal_id
         attr = media['attributes']
 
         if media['type'] == 'anime':

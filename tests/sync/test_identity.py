@@ -198,3 +198,55 @@ def test_ambiguous_similarity_still_asks_with_context(store):
     assert rows[0]['entry']['aliases'] == ['Koukaku Kidoutai 2']
     assert rows[0]['candidates'][0]['via'].startswith('title (similar')
     assert rows[0]['candidates'][0]['exact'] is False
+
+
+def test_franchise_prefix_titles_do_not_block_auto_link(store):
+    """'Frieren' and 'Frieren Season 2' in the same lists: each entry
+    has ONE exact candidate plus prefix-similar noise. Similarity must
+    not block the exact auto-link -- this pattern covers most of a
+    real anime list (seasons, movies, spin-offs)."""
+    libs = {'mal': FakeLib('mal', [show('mal', 1, 'Frieren'),
+                                   show('mal', 2, 'Frieren Season 2')]),
+            'kitsu': FakeLib('kitsu',
+                             [show('kitsu', 11, 'Frieren'),
+                              show('kitsu', 12, 'Frieren Season 2')])}
+    eng = make_engine(store, libs)
+    assert eng.fetch() == {}
+    assert store.identity_open() == []
+    assert len(store.entities()) == 2
+    assert store.mapping_for('kitsu', '11') is not None
+    assert store.mapping_for('kitsu', '12') is not None
+    # And they linked to the RIGHT entities.
+    assert (store.mapping_for('kitsu', '11')['uuid']
+            == store.mapping_for('mal', '1')['uuid'])
+    assert (store.mapping_for('kitsu', '12')['uuid']
+            == store.mapping_for('mal', '2')['uuid'])
+
+
+def test_two_exact_candidates_still_ask(store):
+    """Duplicate exact titles (recap vs TV, polluted DBs) are genuine
+    ambiguity -> user question, never a guess."""
+    a = store.create_entity('Same Title', media_type='anime')
+    store.add_mapping(a, 'mal', '1', confirmed=True)
+    store.entity_add_aliases(a, ['Same Title'])
+    b = store.create_entity('Same Title', media_type='anime')
+    store.add_mapping(b, 'anilist', '2', confirmed=True)
+    store.entity_add_aliases(b, ['Same Title'])
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 9, 'Same Title')])}
+    eng = make_engine(store, libs)
+    eng.fetch()
+    assert store.mapping_for('kitsu', '9') is None
+    assert len(store.identity_open()) == 1
+
+
+def test_store_reset_wipes_everything(store):
+    libs = {'mal': FakeLib('mal', [show('mal', 1, 'Bebop')])}
+    eng = make_engine(store, libs)
+    eng.fetch()
+    assert store.entities()
+    store.reset()
+    assert store.entities() == []
+    assert store.identity_open() == []
+    # And it's immediately usable again.
+    assert eng.fetch() == {}
+    assert len(store.entities()) == 1

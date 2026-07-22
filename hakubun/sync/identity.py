@@ -50,11 +50,16 @@ class IdentityResolver:
 
         # 4. Title candidates: auto-link the unambiguous, ask about the
         #    rest, create a new entity when nothing matches at all.
+        #    ONLY exact candidates gate the auto-link: similarity-grade
+        #    candidates must never block it, or every franchise entry
+        #    ("Frieren" vs "Frieren Season 2" in the same list) turns
+        #    into a manual confirmation.
         candidates = self._candidates(entry)
-        exact = [c for c in candidates
-                 if c['exact'] and c['year_ok']
+        exact_all = [c for c in candidates if c['exact']]
+        exact = [c for c in exact_all
+                 if c['year_ok']
                  and entry.provider not in c['providers']]
-        if len(candidates) == 1 and len(exact) == 1:
+        if len(exact_all) == 1 and len(exact) == 1:
             uid = exact[0]['uuid']
             store.add_mapping(uid, entry.provider, entry.provider_id,
                               confirmed=False)   # auto, not user-confirmed
@@ -62,10 +67,16 @@ class IdentityResolver:
             if previous:
                 store.identity_set_status(previous['id'], 'resolved')
             return uid
-        if candidates:
+        # Only candidates NOT already mapped on this provider are worth
+        # asking about: a similar-titled entity that already has its own
+        # entry of this provider is a franchise sibling ("Frieren" next
+        # to "Frieren Season 2"), not a potential duplicate.
+        askable = [c for c in candidates
+                   if entry.provider not in c['providers']]
+        if askable:
             status = previous['status'] if previous else 'open'
             store.identity_upsert(entry.provider, entry.provider_id,
-                                  entry.title, candidates, status=status,
+                                  entry.title, askable, status=status,
                                   entry=self._entry_payload(entry))
             return None
         return self._create_entity(entry)

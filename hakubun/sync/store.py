@@ -120,6 +120,28 @@ class SyncStore:
         with self._lock:
             self._conn.close()
 
+    def reset(self):
+        """Drop everything and re-create the schema. The database is
+        derived state (fetch re-populates it) plus user decisions;
+        after a bad run -- e.g. one polluted by broken title matching
+        creating duplicate entities -- a reset re-derives cleanly."""
+        with self._lock:
+            # FK enforcement must be off for the drops, and the pragma
+            # is a no-op inside a transaction -- toggle it outside.
+            self._conn.execute('PRAGMA foreign_keys=OFF')
+            try:
+                with self.transaction():
+                    rows = self._exec("SELECT name FROM sqlite_master"
+                                      " WHERE type='table'").fetchall()
+                    for row in rows:
+                        if not row['name'].startswith('sqlite_'):
+                            self._exec('DROP TABLE %s' % row['name'])
+                self._conn.executescript(_SCHEMA)
+                self._ensure_column('entities', 'aliases', 'TEXT')
+                self._ensure_column('identity_conflicts', 'entry', 'TEXT')
+            finally:
+                self._conn.execute('PRAGMA foreign_keys=ON')
+
     # -- transactions -------------------------------------------------
 
     class _Txn:

@@ -22,29 +22,61 @@ class ProviderAdapter:
     # show-dict keys that may carry another provider's id.
     _EXTERNAL_ID_KEYS = {'mal_id': 'mal'}
 
-    def __init__(self, name, lib):
+    def __init__(self, name, lib, on_userconfig=None):
         self.name = name
         self.lib = lib
         self.mediainfo = dict(lib.media_info())
+        self._infolist = []
+        # lib.signals is a *class* attribute: a freshly constructed lib
+        # shares whatever callbacks the running app's Data instance
+        # connected, so emitting from this instance would invoke the
+        # app's cache handlers against the wrong lib. Shadow it with an
+        # instance dict: info payloads are captured here (legacy Kitsu
+        # delivers titles/aliases/mal_id only via this signal), token
+        # refreshes go to on_userconfig.
+        lib.signals = {
+            'show_info_changed': self._capture_info,
+            'userconfig_changed': on_userconfig or (lambda: None),
+        }
+
+    def _capture_info(self, infolist):
+        self._infolist.extend(infolist or [])
 
     # -- inbound -------------------------------------------------------
 
     def fetch(self):
         """Download the account's list -> [NormalizedEntry]."""
+        self._infolist = []
         try:
             self.lib.check_credentials()
             showlist = self.lib.fetch_list()
         except utils.APIError as e:
             raise AdapterError('%s: %s' % (self.name, e)) from e
+        shows = list(showlist.values() if isinstance(showlist, dict)
+                     else showlist)
+        self._merge_infolist(shows)
         entries = []
-        for show in showlist.values() if isinstance(showlist, dict) \
-                else showlist:
+        for show in shows:
             external = {canon: show.get(key)
                         for key, canon in self._EXTERNAL_ID_KEYS.items()
                         if show.get(key) and canon != self.name}
             entries.append(normalize.normalize_show(
                 self.name, show, self.mediainfo, external))
         return entries
+
+    def _merge_infolist(self, shows):
+        """Legacy Kitsu's library entries carry no titles at all -- the
+        media details (title, aliases, mal_id) arrive as a separate
+        infolist via show_info_changed, and data.py normally merges
+        them. Do the same here or its entries normalize as empty-titled
+        husks that can never be identified."""
+        if not self._infolist or not hasattr(self.lib, 'merge'):
+            return
+        by_id = {info['id']: info for info in self._infolist}
+        for show in shows:
+            info = by_id.get(show.get('id'))
+            if info is not None and not show.get('title'):
+                self.lib.merge(show, info)
 
     def search(self, criteria):
         try:
@@ -161,17 +193,7 @@ def adapter_from_account(account, messenger, userconfig=None):
                                         utils.userconfig_defaults)
 
     lib = libclass(messenger, account, userconfig)
-
-    # lib.signals is a *class* attribute: a freshly constructed lib
-    # shares whatever callbacks the running app's Data instance
-    # connected, so emitting from this instance would invoke the app's
-    # cache handlers against the wrong lib (surfacing as "Call to
-    # undefined signal" when they blow up) and could corrupt its info
-    # cache. Shadow it with an instance dict: info-cache pings are
-    # dropped, token refreshes persist to this account's user.json.
-    lib.signals = {
-        'show_info_changed': None,
-        'userconfig_changed': lambda: utils.save_config(userconfig,
-                                                        userconfig_file),
-    }
-    return ProviderAdapter(account['api'], lib)
+    return ProviderAdapter(
+        account['api'], lib,
+        on_userconfig=lambda: utils.save_config(userconfig,
+                                                userconfig_file))
