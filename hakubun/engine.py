@@ -1577,6 +1577,12 @@ class Engine:
             if epoch != self._mal_fetch_epoch:
                 self.msg.debug(
                     'MAL score fetch superseded by a newer request, stopping.')
+                if unsaved_scores:
+                    # Persist what this batch already fetched -- the
+                    # scores are applied to the show dicts and emitted
+                    # to the UI, and the superseding task may fail
+                    # before reaching its own save.
+                    self.data_handler.save_cache()
                 return
 
             try:

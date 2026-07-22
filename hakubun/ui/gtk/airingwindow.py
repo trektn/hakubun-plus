@@ -17,6 +17,7 @@
 import datetime
 import os
 import threading
+import traceback
 
 from gi.repository import GdkPixbuf, GLib, Gtk
 
@@ -73,9 +74,17 @@ class AiringScheduleWindow(Gtk.Window):
     def _fetch_task(self):
         try:
             schedule = self._engine.get_airing_schedule()
+        except utils.HakubunError as e:
+            # Expected failures (network, AniList error bodies) come
+            # through as EngineError -- show them plainly.
+            GLib.idle_add(self._status_label.set_text,
+                          'Could not load airing schedule: %s' % e)
+            return
         except Exception as e:
-            # Broad on purpose: any stray exception would otherwise kill
-            # this daemon thread and leave the window on 'Loading...'.
+            # Anything else is a bug, but this daemon thread dying
+            # silently would leave the window stuck on 'Loading...' --
+            # keep the traceback visible instead of swallowing it.
+            traceback.print_exc()
             GLib.idle_add(self._status_label.set_text,
                           'Could not load airing schedule: %s' % e)
             return

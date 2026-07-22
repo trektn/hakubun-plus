@@ -487,6 +487,19 @@ class Data:
                 # before _info_schema existed would otherwise crash the
                 # loader thread here.
                 if info is not None:
+                    # Stamp the entry as current so the staleness check
+                    # above stops re-firing: without this, every request
+                    # for the show re-calls request_info just to catch
+                    # this NotImplementedError again. Stamp a copy and
+                    # swap it in whole, so a concurrent pickle of the
+                    # infocache never sees a dict change size mid-
+                    # iteration.
+                    if (info.get('_info_schema') != self.info_schema
+                            or info.get('_details_pending')):
+                        info = dict(info)
+                        info.pop('_details_pending', None)
+                        info['_info_schema'] = self.info_schema
+                        self.infocache[showid] = info
                     return self._sanitized_info(info)
                 raise utils.DataError(
                     "Show details aren't supported by this API.")
