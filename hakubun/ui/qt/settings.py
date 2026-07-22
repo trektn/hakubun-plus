@@ -430,6 +430,35 @@ class SettingsDialog(QDialog):
 
         page_behavior_layout.addWidget(g_apply)
 
+        # Group: Sync
+        g_sync = QGroupBox('Sync')
+        g_sync.setFlat(True)
+        self.multisync_enabled = QCheckBox(
+            'Enable multi-sync (BETA)')
+        self.multisync_enabled.setToolTip(
+            'BETA: Sync will now multi-sync across every configured '
+            'provider by default, reconciling them with your local '
+            'list instead of just uploading/downloading one account. '
+            'Turn this off to fall back to the classic single-account '
+            'sync.')
+        self.multisync_mode = QComboBox()
+        self.multisync_mode.addItem('Merge (reconcile every provider)',
+                                    'merge')
+        self.multisync_mode.addItem('Pull (providers update local)',
+                                    'pull')
+        self.multisync_mode.addItem('Push (local overwrites providers)',
+                                    'push')
+        self.multisync_enabled.toggled.connect(
+            self.multisync_mode.setEnabled)
+        g_sync_layout = QVBoxLayout()
+        g_sync_layout.addWidget(self.multisync_enabled)
+        mode_row = QFormLayout()
+        mode_row.addRow('Mode:', self.multisync_mode)
+        g_sync_layout.addLayout(mode_row)
+        g_sync.setLayout(g_sync_layout)
+
+        page_behavior_layout.addWidget(g_sync)
+
         # Group: Taiga Mode
         g_taiga = QGroupBox('Taiga Mode')
         g_taiga.setFlat(True)
@@ -762,6 +791,11 @@ class SettingsDialog(QDialog):
             self.filter_bar_position.findData(self.config['filter_bar_position']))
         self.inline_edit.setChecked(self.config['inline_edit'])
         self.filter_global.setChecked(self.config['filter_global'])
+        self.multisync_enabled.setChecked(self.config['multisync_enabled'])
+        self.multisync_mode.setCurrentIndex(
+            max(0, self.multisync_mode.findData(
+                self.config['multisync_mode'])))
+        self.multisync_mode.setEnabled(self.config['multisync_enabled'])
         self.taiga_mode.setChecked(self.config['taiga_mode'])
 
         self.ep_bar_style.setCurrentIndex(
@@ -894,6 +928,9 @@ class SettingsDialog(QDialog):
             self.filter_bar_position.currentIndex())
         self.config['inline_edit'] = self.inline_edit.isChecked()
         self.config['filter_global'] = self.filter_global.isChecked()
+        self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
+        self.config['multisync_mode'] = self.multisync_mode.itemData(
+            self.multisync_mode.currentIndex())
 
         self.config['episodebar_style'] = self.ep_bar_style.itemData(
             self.ep_bar_style.currentIndex())

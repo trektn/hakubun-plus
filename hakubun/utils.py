@@ -809,6 +809,8 @@ qt_defaults = {
     'episodebar_text': False,
     'filter_bar_position': 2,
     'filter_global': False,
+    'multisync_enabled': True,
+    'multisync_mode': 'merge',
     'colors': {
         'is_airing': '#D2FAFA',
         'is_playing': '#9696FA',

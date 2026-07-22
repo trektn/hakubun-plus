@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QChe
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
+from hakubun.sync.models import SyncMode
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
@@ -194,10 +195,9 @@ class MainWindow(QMainWindow):
         self.action_redo.triggered.connect(self.s_redo)
 
         self.action_sync = QAction(getIcon('view-refresh'), '&Sync', self)
-        self.action_sync.setStatusTip(
-            'Send changes and then retrieve remote list')
         self.action_sync.setShortcut('Ctrl+S')
-        self.action_sync.triggered.connect(lambda: self.s_send(True))
+        self.action_sync.triggered.connect(self.s_sync_button)
+        self._apply_sync_action_label()
         self.action_send = QAction('S&end changes', self)
         self.action_send.setShortcut('Ctrl+E')
         self.action_send.setStatusTip(
@@ -884,11 +884,24 @@ class MainWindow(QMainWindow):
         self._apply_view()
         self._apply_tray()
         self._apply_filter_bar()
+        self._apply_sync_action_label()
         # TODO: Reload listviews?
         if self._taiga_mode:
             self._rebuild_library_folders_menu()
         if self.worker.engine.get_config('sync_on_settings_apply'):
             self.s_send(False)
+
+    def _apply_sync_action_label(self):
+        if self.config['multisync_enabled']:
+            self.action_sync.setText('&Multi-sync (BETA)')
+            self.action_sync.setStatusTip(
+                'Reconcile your list across every configured provider '
+                '(mode set in Settings > Behavior); opens for review '
+                'only if something needs your decision.')
+        else:
+            self.action_sync.setText('&Sync')
+            self.action_sync.setStatusTip(
+                'Send queued changes and download the current list.')
 
     def _apply_view(self):
         if self.config['inline_edit']:
@@ -1640,15 +1653,95 @@ class MainWindow(QMainWindow):
         self.airingwindow.setModal(True)
         self.airingwindow.show()
 
-    def s_multisync(self):
+    def _get_syncwindow(self):
+        """The one SyncWindow instance: reused (and its already-fetched
+        plan preserved) across both the manual 'Multi-provider Sync...'
+        entry and the toolbar button's headless attempt."""
         from hakubun.ui.qt.syncwindow import SyncWindow
-        # The signed-in account is the app's editing surface; the sync
-        # engine treats its changes as local intent.
-        active_api = (self.account or {}).get('api') \
-            if getattr(self, 'account', None) else None
-        self.syncwindow = SyncWindow(None, self.accountman,
-                                     active_api=active_api)
-        self.syncwindow.show()
+        if getattr(self, 'syncwindow', None) is None:
+            # The signed-in account is the app's editing surface; the
+            # sync engine treats its changes as local intent.
+            active_api = (self.account or {}).get('api') \
+                if getattr(self, 'account', None) else None
+            self.syncwindow = SyncWindow(None, self.accountman,
+                                         active_api=active_api)
+        return self.syncwindow
+
+    def s_multisync(self):
+        win = self._get_syncwindow()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    _MULTISYNC_MODES = {'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
+                        'push': SyncMode.MIRROR}
+
+    def s_sync_button(self):
+        """The toolbar/menu Sync action. Classic single-account sync
+        when multi-sync is disabled in Settings > Behavior; otherwise
+        attempts a full multi-sync headlessly and only surfaces the
+        Sync window if it produced something the user must decide."""
+        if not self.config['multisync_enabled']:
+            self.s_send(True)
+            return
+
+        win = self._get_syncwindow()
+        if not win.engine.adapters:
+            detail = ('; '.join(win._adapter_errors)
+                      if win._adapter_errors else
+                      'no provider accounts could be loaded')
+            self.error('Multi-sync: %s.' % detail)
+            return
+
+        mode = self._MULTISYNC_MODES.get(
+            self.config['multisync_mode'], SyncMode.MERGE)
+        idx = win.mode_combo.findData(mode)
+        if idx >= 0:
+            win.mode_combo.setCurrentIndex(idx)
+
+        self._busy(True)
+        self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
+        win._run(win._fetch_and_plan, self._r_multisync_planned,
+                 'Fetching provider lists...')
+
+    def _r_multisync_planned(self, plan, error):
+        win = self._get_syncwindow()
+        if error is not None:
+            self._busy(False)
+            self.error('Multi-sync failed: %s' % error)
+            return
+        if plan.conflicts:
+            # Let the window render and own this exact plan (no
+            # refetch) and bring it forward -- this is the one case
+            # the toolbar button surfaces the window for.
+            self._busy(False)
+            win.r_planned(plan, None)
+            win.show()
+            win.raise_()
+            win.activateWindow()
+            self.status('Multi-sync needs your decision on %d '
+                       'conflict(s).' % len(plan.conflicts))
+            return
+        if not plan.changes:
+            self._busy(False)
+            self.status('Multi-sync: already in sync.')
+            return
+        self.status('Multi-sync: applying %d change(s)...'
+                    % len(plan.changes))
+        win._run(win.engine.apply, self._r_multisync_applied,
+                 'Applying...', plan)
+
+    def _r_multisync_applied(self, result, error):
+        self._busy(False)
+        if error is not None:
+            self.error('Multi-sync apply failed: %s' % error)
+            return
+        text = ('Multi-sync: %d local change(s), %d push(es)'
+               % (result['local'], result['pushed']))
+        if result['errors']:
+            text += ' -- some providers failed: %s' % ', '.join(
+                '%s (%s)' % kv for kv in result['errors'].items())
+        self.status(text)
 
     def s_mediatype(self, action):
         index = action.data()
