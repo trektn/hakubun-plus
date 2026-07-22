@@ -1,0 +1,352 @@
+"""SyncEngine: fetch -> identity -> plan (diff+policies) -> apply.
+
+Git shape: fetch snapshots remotes, plan is the merge preview, apply is
+the commit (event log) plus pushes. Local state is canonical; a
+provider failing isolates to that provider (its merge base does not
+advance, so the same changes re-plan next run).
+"""
+
+import json
+
+from hakubun.sync import conflicts as conflicts_mod
+from hakubun.sync.adapters import AdapterError
+from hakubun.sync.diff import BOTH, NO_BASE, PULL, eq, three_way
+from hakubun.sync.history import History
+from hakubun.sync.identity import IdentityResolver
+from hakubun.sync.models import (FieldChange, FieldConflict, IdentityIssue,
+                                 PolicyKind, SyncMode, SyncPlan)
+
+_UNSET = object()
+
+
+class SyncEngine:
+    def __init__(self, store, adapters=None, msg=None):
+        self.store = store
+        self.adapters = dict(adapters or {})
+        self.history = History(store)
+        self.identity = IdentityResolver(store)
+        self._msg = msg
+
+    def _debug(self, text):
+        if self._msg:
+            self._msg.debug(text)
+
+    # -- fetch ---------------------------------------------------------
+
+    def fetch(self, providers=None):
+        """Download every provider's state (remote-tracking update).
+        Returns {provider: error message} for providers that failed;
+        the others complete regardless."""
+        errors = {}
+        seed_txn = None
+        for name, adapter in self.adapters.items():
+            if providers and name not in providers:
+                continue
+            try:
+                entries = adapter.fetch()
+            except Exception as e:  # failure isolation, incl. bugs
+                errors[name] = str(e)
+                continue
+            for entry in entries:
+                self.store.remote_set_all(name, entry.provider_id,
+                                          entry.user)
+                uid = self.identity.resolve_entry(entry)
+                if uid is None:
+                    continue
+                self._update_entity_meta(uid, entry)
+                if not self.store.local_get(uid):
+                    if seed_txn is None:
+                        seed_txn = self.history.new_txn()
+                    self._seed_entity(seed_txn, uid, entry)
+                else:
+                    self._settle_base(uid, name, entry)
+        return errors
+
+    def _seed_entity(self, txn, uid, entry):
+        """First sight of an entity: import this provider's state as the
+        local state and set the merge base -- in sync at birth."""
+        with self.store.transaction():
+            for field, value in entry.user.items():
+                self.store.local_set(uid, field, value)
+                self.history.record(txn, uid, field, None, value,
+                                    entry.provider)
+                self.store.base_set(uid, entry.provider, field, value)
+
+    def _settle_base(self, uid, provider, entry):
+        """No merge base recorded but local and remote already agree:
+        record the agreement. Without this, a later remote-only edit
+        reads as divergence instead of a clean pull -- and a 'local'
+        policy would overwrite a legitimate website edit."""
+        local = self.store.local_get(uid)
+        base = self.store.base_get(uid, provider)
+        for field, value in entry.user.items():
+            if field in base or field not in local:
+                continue
+            if eq(local[field][0], value):
+                self.store.base_set(uid, provider, field, value)
+
+    def _update_entity_meta(self, uid, entry):
+        """Known metadata never loses to unknown; airing status tracks
+        the latest fetch. (Cross-provider metadata conflicts render per
+        provider in remote_state; a dedicated UI is follow-up work.)"""
+        ent = self.store.get_entity(uid)
+        updates = {}
+        if entry.title and not ent.get('title'):
+            updates['title'] = entry.title
+        if entry.year and not ent.get('year'):
+            updates['year'] = entry.year
+        if entry.total and not ent.get('total'):
+            updates['total'] = entry.total
+        if entry.airing_status:
+            updates['status'] = entry.airing_status
+        if updates:
+            self.store.update_entity_meta(uid, **updates)
+
+    # -- plan ----------------------------------------------------------
+
+    def plan(self, mode=SyncMode.MERGE):
+        ownership = self.store.ownership()
+        plan = SyncPlan(mode)
+        plan.identity = [IdentityIssue(id=r['id'], provider=r['provider'],
+                                       provider_id=r['provider_id'],
+                                       title=r['title'],
+                                       candidates=r['candidates'],
+                                       status=r['status'])
+                         for r in self.store.identity_open()]
+        for ent in self.store.entities():
+            self._plan_entity(plan, ent, ownership, mode)
+        return plan
+
+    def _plan_entity(self, plan, ent, ownership, mode):
+        uid = ent['uuid']
+        title = ent.get('title') or uid[:8]
+        mappings = [m for m in self.store.mappings_of(uid)
+                    if m['provider'] in self.adapters]
+        if ent.get('provider_only'):
+            mappings = [m for m in mappings
+                        if m['provider'] == ent['provider_only']]
+        if not mappings:
+            return
+        local = self.store.local_get(uid)
+        sides = {}
+        for m in mappings:
+            provider = m['provider']
+            sides[provider] = (
+                self.store.remote_get(provider, m['provider_id']),
+                self.store.base_get(uid, provider))
+
+        for field, policy in ownership.items():
+            if policy.kind is PolicyKind.INDIVIDUAL:
+                continue
+            l_val, l_ts = local.get(field, (None, 0))
+            states, pulls, divergent = {}, {}, {}
+            for provider, (remote, base) in sides.items():
+                if field not in remote:
+                    continue  # provider can't represent this field
+                r_val, r_ts = remote[field]
+                state = three_way(base.get(field, NO_BASE), l_val, r_val)
+                states[provider] = (state, r_val, r_ts)
+                if state == PULL:
+                    pulls[provider] = (r_val, r_ts)
+                elif state == BOTH:
+                    divergent[provider] = (r_val, r_ts)
+            if not states:
+                continue
+
+            if mode is SyncMode.MIRROR:
+                # Local pushes outward; remote changes are overwritten.
+                for provider, (state, r_val, _) in states.items():
+                    if not self.adapters[provider].values_equivalent(
+                            field, r_val, l_val):
+                        plan.changes.append(FieldChange(
+                            uid, field, r_val, l_val, target=provider,
+                            source='local', title=title))
+                continue
+
+            resolution = self._resolve_field(
+                plan, uid, title, field, policy, l_val, l_ts,
+                pulls, divergent, mode)
+            if resolution is _UNSET:      # conflict recorded; freeze
+                continue
+            if resolution is not None:
+                new_val, source = resolution
+                if not eq(new_val, l_val):
+                    plan.changes.append(FieldChange(
+                        uid, field, l_val, new_val, target='local',
+                        source=source, title=title))
+                effective, eff_source = new_val, source
+            else:
+                effective, eff_source = l_val, 'local'
+
+            if mode is SyncMode.PULL:
+                continue  # providers update local; nothing pushes
+            for provider, (state, r_val, _) in states.items():
+                if not self.adapters[provider].values_equivalent(
+                        field, r_val, effective):
+                    plan.changes.append(FieldChange(
+                        uid, field, r_val, effective, target=provider,
+                        source=eff_source, title=title))
+
+    def _resolve_field(self, plan, uid, title, field, policy,
+                       l_val, l_ts, pulls, divergent, mode):
+        """Returns None (keep local), (value, source), or _UNSET when a
+        FieldConflict was recorded (field frozen until resolved)."""
+        def conflict():
+            values = {'local': l_val}
+            values.update({p: v for p, (v, _) in divergent.items()})
+            values.update({p: v for p, (v, _) in pulls.items()})
+            plan.conflicts.append(FieldConflict(
+                uid, field, values, base=None, policy=policy, title=title))
+            return _UNSET
+
+        candidates = {}
+        if divergent:
+            if mode is SyncMode.PULL:
+                # Providers update local: remote side wins divergence.
+                candidates.update(divergent)
+            else:
+                for provider, (r_val, r_ts) in divergent.items():
+                    kind, value = conflicts_mod.resolve(
+                        policy, field, l_val, r_val, provider, l_ts, r_ts)
+                    if kind == 'conflict':
+                        return conflict()
+                    if kind in ('remote', 'merged'):
+                        candidates[provider] = (value, r_ts)
+                    # kind 'local': local wins -> push happens in caller
+        candidates.update(pulls)
+        if not candidates:
+            return None
+        distinct = {}
+        for provider, (value, ts) in candidates.items():
+            distinct.setdefault(self._value_key(value),
+                                (value, provider, ts))
+        if len(distinct) == 1:
+            value, provider, _ = next(iter(distinct.values()))
+            return (value, provider)
+        # Multiple providers propose different values.
+        if policy.kind is PolicyKind.PROVIDER and policy.provider in candidates:
+            value, ts = candidates[policy.provider]
+            return (value, policy.provider)
+        if policy.kind is PolicyKind.MERGE:
+            values = [v for v, _, _ in distinct.values()]
+            if all(isinstance(v, list) for v in values):
+                union = sorted({str(x) for v in values for x in v})
+                return (union, 'merge')
+            value, provider, _ = max(distinct.values(), key=lambda t: t[2])
+            return (value, provider)
+        return conflict()
+
+    @staticmethod
+    def _value_key(value):
+        if isinstance(value, list):
+            value = sorted(map(str, value))
+        return json.dumps(value, sort_keys=True)
+
+    # -- apply ---------------------------------------------------------
+
+    def apply(self, plan):
+        """Commit the plan: local changes + events in one transaction,
+        then pushes per provider with failure isolation. Conflicts are
+        never applied -- resolve them first."""
+        txn = self.history.new_txn()
+        selected = [c for c in plan.changes if c.selected]
+        local_changes = [c for c in selected if c.target == 'local']
+        pushes = {}
+        for c in selected:
+            if c.target != 'local':
+                pushes.setdefault(c.target, []).append(c)
+
+        with self.store.transaction():
+            for c in local_changes:
+                self.store.local_set(c.uuid, c.field, c.new)
+                self.history.record(txn, c.uuid, c.field, c.old, c.new,
+                                    c.source)
+                if c.source in self.adapters:
+                    # Pulled from that provider: we now agree with it.
+                    self.store.base_set(c.uuid, c.source, c.field, c.new)
+
+        errors = {}
+        pushed = 0
+        for provider, changes in pushes.items():
+            adapter = self.adapters[provider]
+            by_entity = {}
+            for c in changes:
+                by_entity.setdefault(c.uuid, []).append(c)
+            failed = False
+            for uid, chs in by_entity.items():
+                mapping = next((m for m in self.store.mappings_of(uid)
+                                if m['provider'] == provider), None)
+                if mapping is None:
+                    continue
+                try:
+                    sent = adapter.push(mapping['provider_id'],
+                                        {c.field: c.new for c in chs})
+                except AdapterError as e:
+                    errors[provider] = str(e)
+                    failed = True
+                    break  # isolate: skip the rest of this provider
+                with self.store.transaction():
+                    for c in chs:
+                        value = sent.get(c.field, c.new)
+                        self.history.record(txn, uid, c.field, c.old,
+                                            value, provider, op='push')
+                        self.store.base_set(uid, provider, c.field, value)
+                        self.store.remote_set_all(
+                            provider, mapping['provider_id'],
+                            {c.field: value})
+                        pushed += 1
+            if failed:
+                continue
+        return {'txn': txn, 'local': len(local_changes),
+                'pushed': pushed, 'errors': errors}
+
+    # -- local edits ---------------------------------------------------
+
+    def edit_local(self, uid, field, value, source='local'):
+        """Record a local edit (git: a commit). All app-originated
+        changes should come through here so the event log stays the
+        complete history -- direct store writes have no events and
+        therefore can't be undone."""
+        old = self.store.local_get(uid).get(field, (None, 0))[0]
+        txn = self.history.new_txn()
+        with self.store.transaction():
+            self.store.local_set(uid, field, value)
+            self.history.record(txn, uid, field, old, value, source)
+        return txn
+
+    # -- conflicts & undo ---------------------------------------------
+
+    def resolve_conflict(self, conflict, choice, value=_UNSET):
+        """Resolve a FieldConflict: choice is a source key from
+        conflict.values ('local', a provider) or 'value' with an
+        explicit value. Writes local state; divergent providers re-plan
+        as pushes of the resolved value."""
+        if choice == 'value':
+            if value is _UNSET:
+                raise ValueError("choice 'value' needs value=")
+            chosen = value
+        else:
+            if choice not in conflict.values:
+                raise ValueError('unknown side: %s' % choice)
+            chosen = conflict.values[choice]
+        txn = self.history.new_txn()
+        old = conflict.values.get('local')
+        with self.store.transaction():
+            self.store.local_set(conflict.uuid, conflict.field, chosen)
+            self.history.record(txn, conflict.uuid, conflict.field,
+                                old, chosen, 'resolve')
+            for provider in conflict.values:
+                if provider == 'local' or provider not in self.adapters:
+                    continue
+                # The provider's current value becomes the merge base:
+                # the user has acknowledged it. If it differs from the
+                # chosen value, the next plan sees a clean local-side
+                # change and pushes the resolution -- it never re-raises
+                # the same conflict.
+                self.store.base_set(conflict.uuid, provider,
+                                    conflict.field,
+                                    conflict.values[provider])
+        return txn
+
+    def undo(self, txn):
+        return self.history.undo(txn)
