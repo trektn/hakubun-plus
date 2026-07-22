@@ -84,3 +84,31 @@ def test_kitsu_backend_follows_app_setting(home):
     adapter = adapter_from_account(account, MSG)
     assert type(adapter.lib).__name__ == 'libkitsu_graphql'
     assert adapter.name == 'kitsu'
+
+
+def test_forced_media_type_builds_adapter_for_that_type(home):
+    """A Kitsu account stored as MANGA still builds as anime for an
+    anime multisync -- otherwise it (and its Ownership column) vanish
+    when MAL/AniList is the active account."""
+    _write_userconfig(home, 'tester', 'kitsu', mediatype='manga')
+    account = {'username': 'tester', 'password': 'pw', 'api': 'kitsu'}
+    adapter = adapter_from_account(account, MSG, media_type='anime')
+    assert adapter.lib.mediatype == 'anime'
+    assert adapter.mediainfo['mediatype'] == 'anime'
+
+
+def test_forced_media_type_does_not_clobber_stored_mediatype(home):
+    """Building an anime adapter from a manga account, then a token
+    refresh, must NOT rewrite the account's own user.json mediatype --
+    the main app still sees it as manga."""
+    import json
+    path = _write_userconfig(home, 'tester', 'anilist', mediatype='manga')
+    account = {'username': 'tester', 'password': 'token', 'api': 'anilist'}
+    adapter = adapter_from_account(account, MSG, media_type='anime')
+    assert adapter.lib.mediatype == 'anime'          # this sync: anime
+    # A token refresh persists...
+    adapter.lib._set_userconfig('access_token', 'refreshed')
+    adapter.lib._emit_signal('userconfig_changed')
+    on_disk = json.loads(path.read_text())
+    assert on_disk['access_token'] == 'refreshed'    # tokens saved
+    assert on_disk['mediatype'] == 'manga'           # but type preserved

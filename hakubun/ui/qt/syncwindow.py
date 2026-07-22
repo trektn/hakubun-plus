@@ -131,16 +131,15 @@ class SyncWindow(QDialog):
                               'supported for now' % api)
                 continue
             try:
-                adapter = adapter_from_account(account, msg)
+                # Force this media type on every account (a Kitsu
+                # account last used for manga still contributes its
+                # ANIME list to an anime sync). Providers that can't do
+                # this media type at all (e.g. VNDB is VN-only) raise
+                # here and are reported, not silently dropped.
+                adapter = adapter_from_account(account, msg,
+                                               media_type=media_type)
             except Exception as e:
                 errors.append('%s: %s' % (api, e))
-                continue
-            if adapter.lib.mediatype != media_type:
-                # This account is configured (in Settings) for the
-                # OTHER media type -- not an error, just not part of
-                # this sync. Mixing them here would be exactly the
-                # cross-type id collision the separate database exists
-                # to prevent.
                 continue
             by_provider[api] = adapter
         from hakubun.sync.relations import RelationsAtlas

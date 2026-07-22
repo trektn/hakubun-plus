@@ -111,7 +111,14 @@ class ProviderAdapter:
         media_info() is a cheap dict lookup, so paying for a fresh read
         every time costs nothing and rules the whole staleness class
         out permanently."""
-        return dict(self.lib.media_info())
+        info = dict(self.lib.media_info())
+        # The real libs' media_info() (mediatypes[type]) carries no
+        # 'mediatype' key -- only api_info does -- so without this,
+        # normalize.normalize_show()'s `.get('mediatype', 'anime')`
+        # would type EVERY entry as anime, even in a manga sync.
+        if 'mediatype' not in info:
+            info['mediatype'] = getattr(self.lib, 'mediatype', 'anime')
+        return info
 
     # -- inbound -------------------------------------------------------
 
@@ -302,7 +309,8 @@ class ProviderAdapter:
             pass
 
 
-def adapter_from_account(account, messenger, userconfig=None):
+def adapter_from_account(account, messenger, userconfig=None,
+                        media_type=None):
     """Construct an adapter for an accounts.py account dict, mirroring
     data.py's lib construction.
 
@@ -311,6 +319,15 @@ def adapter_from_account(account, messenger, userconfig=None):
     throwaway userconfig makes OAuth backends re-redeem the original,
     already-consumed authorization code (MAL answers HTTP 400
     invalid_grant). Token refreshes the lib performs are written back.
+
+    `media_type`, when given, is the mediatype this adapter is built
+    for regardless of what the account was last used as -- a multisync
+    of anime fetches every provider's ANIME list, even a Kitsu account
+    whose stored mediatype happens to be manga (all three providers
+    keep both lists under one login). The account's OWN stored
+    mediatype is never overwritten by this: token refreshes are saved
+    back with the account's original mediatype preserved, so the main
+    app's view of the account is untouched.
     """
     libbase = account['api']
     libname = 'lib' + libbase
@@ -332,8 +349,22 @@ def adapter_from_account(account, messenger, userconfig=None):
         userconfig = utils.parse_config(userconfig_file,
                                         utils.userconfig_defaults)
 
-    lib = libclass(messenger, account, userconfig)
-    return ProviderAdapter(
-        account['api'], lib,
-        on_userconfig=lambda: utils.save_config(userconfig,
-                                                userconfig_file))
+    stored_mediatype = userconfig.get('mediatype')
+    # The lib gets a COPY with the target mediatype forced, so token
+    # refreshes (written into this copy) can be persisted without
+    # clobbering the account's own stored mediatype.
+    lib_userconfig = dict(userconfig)
+    if media_type is not None:
+        lib_userconfig['mediatype'] = media_type
+
+    lib = libclass(messenger, account, lib_userconfig)
+
+    def save():
+        merged = dict(lib_userconfig)
+        if stored_mediatype is not None:
+            merged['mediatype'] = stored_mediatype
+        else:
+            merged.pop('mediatype', None)
+        utils.save_config(merged, userconfig_file)
+
+    return ProviderAdapter(account['api'], lib, on_userconfig=save)

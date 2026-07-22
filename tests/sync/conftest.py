@@ -38,8 +38,9 @@ MEDIAINFO = {
 class FakeLib:
     """Duck-typed lib/ instance: in-memory shows, failure injection."""
 
-    def __init__(self, provider, shows=None):
+    def __init__(self, provider, shows=None, mediatype='anime'):
         self.provider = provider
+        self.mediatype = mediatype       # real libs expose this
         self.shows = {str(s['id']): dict(s) for s in (shows or [])}
         self.updates = []          # update_show items received
         self.fail_fetch = False
