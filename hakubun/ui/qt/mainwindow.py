@@ -1555,7 +1555,11 @@ class MainWindow(QMainWindow):
         except utils.EngineError as e:
             self.error(e.args[0])
 
-    def s_retrieve(self):
+    def s_retrieve(self, result=None):
+        # `result` present because this is also used as a worker_call
+        # callback (the upload-then-retrieve chain). The old signal
+        # dispatch silently dropped extra arguments for zero-arg slots;
+        # the direct dispatch does not.
         queue = self.worker.engine.get_queue()
 
         if queue:

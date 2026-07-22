@@ -15,6 +15,7 @@
 #
 
 import os
+import traceback
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -204,14 +205,22 @@ class EngineWorker(QtCore.QThread):
         self.kwargs = kwargs
 
     def _dispatch(self, ret_function, result):
-        if ret_function:
-            ret_function(result)
-        if self._pending:
-            # run() has already emitted; make sure the thread fully
-            # stopped before starting the next queued call.
-            self.wait()
-            self._set_current(*self._pending.pop(0))
-            self.start()
+        try:
+            if ret_function:
+                ret_function(result)
+        except Exception as e:
+            # A buggy callback must never take the app down (PyQt
+            # aborts on unhandled exceptions in slots) nor strand the
+            # calls queued behind it.
+            traceback.print_exc()
+            self._error('Internal callback error: %r' % e)
+        finally:
+            if self._pending:
+                # run() has already emitted; make sure the thread fully
+                # stopped before starting the next queued call.
+                self.wait()
+                self._set_current(*self._pending.pop(0))
+                self.start()
 
     def __del__(self):
         self.wait()
