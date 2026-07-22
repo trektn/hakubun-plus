@@ -455,10 +455,17 @@ class SyncEngine:
 
     # -- apply ---------------------------------------------------------
 
-    def apply(self, plan):
+    def apply(self, plan, progress=None):
         """Commit the plan: local changes + events in one transaction,
         then pushes per provider with failure isolation. Conflicts are
-        never applied -- resolve them first."""
+        never applied -- resolve them first.
+
+        `progress`, when given, is called as progress(done, total,
+        message) from THIS thread (the UI marshals it): once for the
+        local commit and once per (provider, show) push batch --
+        network pushes are what actually take time, so that's the
+        granularity a progress bar can honestly report.
+        """
         txn = self.history.new_txn()
         selected = [c for c in plan.changes if c.selected]
         local_changes = [c for c in selected if c.target == 'local']
@@ -466,6 +473,15 @@ class SyncEngine:
         for c in selected:
             if c.target != 'local':
                 pushes.setdefault(c.target, []).append(c)
+
+        total_steps = (1 if local_changes else 0) + sum(
+            len({c.uuid for c in changes})
+            for changes in pushes.values())
+        done = 0
+
+        def report(message):
+            if progress is not None:
+                progress(done, total_steps, message)
 
         with self.store.transaction():
             for c in local_changes:
@@ -481,6 +497,9 @@ class SyncEngine:
                         c.uuid, c.source, c.field,
                         c.remote_raw if c.remote_raw is not None
                         else c.new)
+        if local_changes:
+            done += 1
+            report('Committed %d local change(s).' % len(local_changes))
 
         errors = {}
         pushed = 0
@@ -495,6 +514,9 @@ class SyncEngine:
                                 if m['provider'] == provider), None)
                 if mapping is None:
                     continue
+                report('Pushing to %s: %s (%s)...' % (
+                    provider.capitalize(), chs[0].title,
+                    ', '.join(c.field for c in chs)))
                 remote = self.store.remote_get(provider,
                                                mapping['provider_id'])
                 my_id = (remote.get('_my_id') or (None, None))[0]
@@ -505,6 +527,8 @@ class SyncEngine:
                 except AdapterError as e:
                     errors[provider] = str(e)
                     failed = True
+                    done += 1
+                    report('FAILED %s: %s' % (provider.capitalize(), e))
                     break  # isolate: skip the rest of this provider
                 with self.store.transaction():
                     for c in chs:
@@ -516,6 +540,9 @@ class SyncEngine:
                             provider, mapping['provider_id'],
                             {c.field: value})
                         pushed += 1
+                done += 1
+                report('Pushed to %s: %s.' % (provider.capitalize(),
+                                              chs[0].title))
             if failed:
                 continue
         return {'txn': txn, 'local': len(local_changes),

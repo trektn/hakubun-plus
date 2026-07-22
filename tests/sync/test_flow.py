@@ -529,3 +529,35 @@ def test_unexpected_lib_crash_degrades_to_provider_error(store):
     plan2 = eng.plan()
     assert [c for c in plan2.changes
             if c.field == 'progress' and c.target == 'mal']
+
+
+def test_apply_reports_progress_per_step(store):
+    """apply(progress=cb) calls back once per unit of real work (the
+    local commit, then each provider/show push batch) so a UI can show
+    an honest progress bar."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    ticks = []
+    result = eng.apply(eng.plan(), progress=lambda d, t, m: ticks.append((d, t, m)))
+    assert result['errors'] == {}
+    # local edit -> pull step is 0 here (primary=None, local-owned), so
+    # steps are the two pushes (mal + anilist).
+    totals = {t for _, t, _ in ticks}
+    assert totals == {2}
+    assert ticks[-1][0] == 2               # ended at total
+    assert any('Pushing to' in m for _, _, m in ticks)
+    assert any('Pushed to' in m for _, _, m in ticks)
+
+
+def test_apply_progress_reports_a_failed_provider(store):
+    eng, libs = _setup(store, show('mal', 1, 'Bebop', progress=3))
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    libs['mal'].fail_update = True
+    ticks = []
+    result = eng.apply(eng.plan(), progress=lambda d, t, m: ticks.append((d, t, m)))
+    assert 'mal' in result['errors']
+    assert any(m.startswith('FAILED Mal') for _, _, m in ticks)

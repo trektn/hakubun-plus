@@ -24,7 +24,8 @@ not in Settings), and the identity-conflict workflow.
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                             QMenu, QMessageBox, QPushButton, QRadioButton,
+                             QMenu, QMessageBox, QPlainTextEdit,
+                             QProgressBar, QPushButton, QRadioButton,
                              QScrollArea, QSplitter, QTabWidget, QTextBrowser,
                              QToolButton, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
@@ -48,6 +49,7 @@ _FIELD_LABELS = {
 class _Task(QtCore.QThread):
     """Runs one engine call off the GUI thread."""
     done = QtCore.pyqtSignal(object, object)   # result, error
+    progressed = QtCore.pyqtSignal(int, int, str)   # done, total, message
 
     def __init__(self, fn, *args, **kwargs):
         super().__init__()
@@ -147,6 +149,20 @@ class SyncWindow(QDialog):
         layout = QVBoxLayout(page)
 
         bar = QHBoxLayout()
+        # The signed-in tracker's icon, same imagery the main window
+        # uses (utils.available_libs) -- an at-a-glance answer to
+        # "whose state feeds 'local' here?".
+        if self.engine.primary:
+            lib_info = utils.available_libs.get(self.engine.primary)
+            if lib_info:
+                icon_label = QLabel()
+                icon_label.setPixmap(QtGui.QPixmap(lib_info[1]).scaled(
+                    24, 24, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                    QtCore.Qt.TransformationMode.SmoothTransformation))
+                icon_label.setToolTip(
+                    'Signed into %s -- its changes count as your local '
+                    'edits.' % lib_info[0])
+                bar.addWidget(icon_label)
         bar.addWidget(QLabel('Mode:'))
         self.mode_combo = QComboBox()
         for mode, label in ((SyncMode.MERGE, 'Merge (reconcile all)'),
@@ -197,6 +213,7 @@ class SyncWindow(QDialog):
         # only when relevant, see r_planned) so a long mixed plan can
         # be narrowed down instead of scrolled through as one list.
         self.preview_tabs = QTabWidget()
+        self._all_changes_tree = None   # built by the first r_planned
         self._change_items = {}   # id(FieldChange) -> [item in each tab
                                   # showing it] -- keeps checkbox state
                                   # in sync across tabs (see
@@ -221,6 +238,18 @@ class SyncWindow(QDialog):
         splitter.setSizes([620, 380])
         layout.addWidget(splitter, 1)
         self._set_decisions([])   # placeholder until the first plan
+
+        # Revealed during Apply: a real progress bar (one tick per
+        # network push batch, since that's what actually takes time)
+        # over a running log of what was pushed where.
+        self.apply_progress = QProgressBar()
+        self.apply_progress.setVisible(False)
+        self.apply_log = QPlainTextEdit()
+        self.apply_log.setReadOnly(True)
+        self.apply_log.setMaximumHeight(110)
+        self.apply_log.setVisible(False)
+        layout.addWidget(self.apply_progress)
+        layout.addWidget(self.apply_log)
 
         self.preview_summary = QLabel()
         layout.addWidget(self.preview_summary)
@@ -478,6 +507,8 @@ class SyncWindow(QDialog):
         # from it (rather than every tab) avoids processing the same
         # change twice when it also appears in a category tab.
         tree = self._all_changes_tree
+        if tree is None:
+            return   # no plan rendered yet -- nothing to iterate
         for i in range(tree.topLevelItemCount()):
             group = tree.topLevelItem(i)
             for j in range(group.childCount()):
@@ -541,6 +572,9 @@ class SyncWindow(QDialog):
 
         groups = {change.uuid for change in plan.changes}
         self._set_decisions(plan.conflicts)
+        # A fresh plan supersedes the last apply's progress bar; its
+        # log stays readable until the next apply clears it.
+        self.apply_progress.setVisible(False)
         self.apply_button.setEnabled(bool(plan.changes))
         if plan.clean:
             self.preview_summary.setText('Everything is in sync.')
@@ -565,19 +599,37 @@ class SyncWindow(QDialog):
                                == QtCore.Qt.CheckState.Checked)
         plan, self._plan = self._plan, None
         self.apply_button.setEnabled(False)
+        selected = sum(1 for c in plan.changes if c.selected)
+        self.apply_log.clear()
+        self.apply_log.appendPlainText(
+            'Applying %d change(s)...' % selected)
+        self.apply_log.setVisible(True)
+        self.apply_progress.setRange(0, 0)   # busy until first report
+        self.apply_progress.setVisible(True)
         self._run(self.engine.apply, self.r_applied,
-                  'Applying changes...', plan)
+                  'Applying changes...', plan, forward_progress=True)
+
+    def _on_apply_progress(self, done, total, message):
+        if total:
+            self.apply_progress.setRange(0, total)
+            self.apply_progress.setValue(done)
+        self.apply_log.appendPlainText(message)
 
     def r_applied(self, result, error):
         if error is not None:
+            self.apply_progress.setVisible(False)
+            self.apply_log.appendPlainText('Apply failed: %s' % error)
             self._status('Apply failed: %s' % error)
             return
+        self.apply_progress.setRange(0, 1)
+        self.apply_progress.setValue(1)
         text = 'Applied: %d local change(s), %d push(es)' % (
             result['local'], result['pushed'])
         if result['errors']:
             text += ' -- failed: %s' % ', '.join(
                 '%s (%s)' % kv for kv in result['errors'].items())
             text += ' (their changes stay planned)'
+        self.apply_log.appendPlainText(text)
         self._status(text)
         self.s_fetch()
 
@@ -597,6 +649,9 @@ class SyncWindow(QDialog):
         self.preview_tabs.clear()
         self._change_items = {}
         self._set_decisions([])
+        self.apply_progress.setVisible(False)
+        self.apply_log.clear()
+        self.apply_log.setVisible(False)
         self.preview_summary.clear()
         self.apply_button.setEnabled(False)
         self._refresh_identity()
@@ -1148,13 +1203,20 @@ class SyncWindow(QDialog):
 
     # -- plumbing ------------------------------------------------------
 
-    def _run(self, fn, callback, busy_text, *args, **kwargs):
+    def _run(self, fn, callback, busy_text, *args,
+            forward_progress=False, **kwargs):
         if self._task is not None and self._task.isRunning():
             self._status('Another sync operation is still running.')
             return
         self._status(busy_text)
         self.fetch_button.setEnabled(False)
         task = _Task(fn, *args, **kwargs)
+        if forward_progress:
+            # fn accepts progress(done, total, msg); the callable runs
+            # in the worker thread, and emitting a signal is the
+            # thread-safe way to marshal it onto the GUI thread.
+            task._call[2]['progress'] = task.progressed.emit
+            task.progressed.connect(self._on_apply_progress)
 
         def done(result, error):
             # The signal is emitted from inside run(), so the thread may
