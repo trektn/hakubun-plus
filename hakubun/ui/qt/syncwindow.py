@@ -24,13 +24,13 @@ not in Settings), and the identity-conflict workflow.
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                             QMessageBox, QPushButton, QRadioButton,
+                             QMenu, QMessageBox, QPushButton, QRadioButton,
                              QScrollArea, QSplitter, QTabWidget, QTextBrowser,
-                             QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-                             QWidget)
+                             QToolButton, QTreeWidget, QTreeWidgetItem,
+                             QVBoxLayout, QWidget)
 
 from hakubun import messenger, utils
-from hakubun.sync import normalize
+from hakubun.sync import adapters, normalize
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.models import (FieldConflict, FieldPolicy,
@@ -586,13 +586,18 @@ class SyncWindow(QDialog):
         layout.addWidget(QLabel(
             '<b>Unresolved identities</b> -- entries with ambiguous '
             'matches only. Exact ID links and single exact-title '
-            'matches are linked automatically and never appear here.'))
+            'matches are linked automatically and never appear here. '
+            'Right-click a row to inspect it or open it on its site.'))
         self.identity_tree = QTreeWidget()
         self.identity_tree.setHeaderLabels(
-            ['Provider', 'Title', 'Also known as', 'Status'])
+            ['Provider', 'Type', 'Title', 'Also known as', 'Status'])
         self.identity_tree.setRootIsDecorated(False)
         self.identity_tree.currentItemChanged.connect(
             self._identity_selected)
+        self.identity_tree.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.identity_tree.customContextMenuRequested.connect(
+            self._identity_context_menu)
         layout.addWidget(self.identity_tree, 2)
 
         self.identity_box = QGroupBox('Resolution')
@@ -602,6 +607,16 @@ class SyncWindow(QDialog):
         box_layout.addWidget(self.identity_info)
         self.rb_confirm = QRadioButton('Use a matched entry')
         self.candidate_combo = QComboBox()
+        self.candidate_combo.currentIndexChanged.connect(
+            self._update_candidate_open_button)
+        self.candidate_open_button = QToolButton()
+        self.candidate_open_button.setText('Open page')
+        self.candidate_open_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.candidate_open_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.candidate_open_button.setMenu(QMenu(self.candidate_open_button))
+        self.candidate_open_button.setEnabled(False)
         self.rb_search = QRadioButton('Search manually -- '
                                       'find the entry on another provider')
         search_bar = QHBoxLayout()
@@ -612,17 +627,26 @@ class SyncWindow(QDialog):
         search_bar.addWidget(self.search_provider)
         search_bar.addWidget(self.search_text)
         search_bar.addWidget(self.search_button)
+        results_row = QHBoxLayout()
         self.search_results = QComboBox()
+        self.search_results.currentIndexChanged.connect(
+            self._update_search_open_button)
+        self.search_open_button = QPushButton('Open page')
+        self.search_open_button.setEnabled(False)
+        self.search_open_button.clicked.connect(self.s_open_search_result)
+        results_row.addWidget(self.search_results, 1)
+        results_row.addWidget(self.search_open_button)
         self.rb_provider_only = QRadioButton(
             'Keep provider-only -- do not sync this entry elsewhere')
         self.rb_defer = QRadioButton(
             'Create provider mappings later -- keep watching for new '
             'matches')
         self.rb_ignore = QRadioButton('Ignore this title -- never ask again')
-        for w in (self.rb_confirm, self.candidate_combo, self.rb_search):
+        for w in (self.rb_confirm, self.candidate_combo,
+                 self.candidate_open_button, self.rb_search):
             box_layout.addWidget(w)
         box_layout.addLayout(search_bar)
-        box_layout.addWidget(self.search_results)
+        box_layout.addLayout(results_row)
         for w in (self.rb_provider_only, self.rb_defer, self.rb_ignore):
             box_layout.addWidget(w)
         resolve_bar = QHBoxLayout()
@@ -655,19 +679,28 @@ class SyncWindow(QDialog):
             aliases = info.get('aliases') or []
             display = self._display_title(issue['title'], aliases)
             others = [a for a in aliases if a and a != issue['title']]
-            item = QTreeWidgetItem([issue['provider'], display,
-                                    ' / '.join(others[:2]),
-                                    issue['status']])
+            media_type = info.get('media_type')
+            item = QTreeWidgetItem([
+                issue['provider'],
+                media_type.capitalize() if media_type else '?',
+                display, ' / '.join(others[:2]), issue['status']])
+            # A row whose only candidate is a type mismatch is a data
+            # problem, not an ordinary ambiguity -- make it visually
+            # impossible to miss in the list itself, not just the text.
+            if any('TYPE MISMATCH' in (c.get('via') or '')
+                  for c in issue['candidates']):
+                item.setForeground(0, self._CONFLICT_COLOR)
+                item.setForeground(1, self._CONFLICT_COLOR)
             tip = '\n'.join(filter(None, [
                 '%s id %s' % (issue['provider'], issue['provider_id']),
                 'Year: %s' % info['year'] if info.get('year') else None,
                 'All titles: %s' % ', '.join(
                     [issue['title'] or ''] + others) if others else None]))
-            for col in range(4):
+            for col in range(5):
                 item.setToolTip(col, tip)
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, issue)
             self.identity_tree.addTopLevelItem(item)
-        for col in range(3):
+        for col in range(4):
             self.identity_tree.resizeColumnToContents(col)
         self.tabs.setTabText(2, 'Identity (%d)'
                              % self.identity_tree.topLevelItemCount())
@@ -701,7 +734,8 @@ class SyncWindow(QDialog):
                 ' (%s)' % cand['year'] if cand.get('year') else '',
                 providers or 'no providers yet',
                 cand.get('via', ''))
-            self.candidate_combo.addItem(label, cand['uuid'])
+            self.candidate_combo.addItem(label, cand)   # full dict: the
+            # Open-page button needs providers/media_type, not just uuid.
         self.rb_confirm.setEnabled(bool(candidates))
         if candidates:
             self.rb_confirm.setChecked(True)
@@ -716,6 +750,8 @@ class SyncWindow(QDialog):
                 self.search_provider.addItem(name)
         self.search_text.setText(issue['title'] or '')
         self.search_results.clear()
+        self._update_candidate_open_button()
+        self._update_search_open_button()
 
     def s_identity_search(self):
         provider = self.search_provider.currentText()
@@ -736,7 +772,74 @@ class SyncWindow(QDialog):
                 '%s (%s %s)' % (entry.title, entry.provider,
                                 entry.provider_id), entry)
         self.rb_search.setChecked(True)
+        self._update_search_open_button()
         self._status('Found %d result(s).' % (len(results or [])))
+
+    # -- Inspect / Open-page (Identity + resolution box) ---------------
+
+    def _open_provider_page(self, provider, media_type, provider_id):
+        url = adapters.web_url(provider, media_type, provider_id)
+        if url:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        else:
+            self._status('No web page known for %s.' % provider)
+
+    def _update_candidate_open_button(self):
+        menu = self.candidate_open_button.menu()
+        menu.clear()
+        cand = self.candidate_combo.currentData()
+        providers = (cand or {}).get('providers') or {}
+        media_type = (cand or {}).get('media_type')
+        for provider, pid in sorted(providers.items()):
+            action = menu.addAction('Open on %s' % provider.capitalize())
+            action.triggered.connect(
+                lambda checked=False, p=provider, mt=media_type, i=pid:
+                self._open_provider_page(p, mt, i))
+        self.candidate_open_button.setEnabled(bool(providers))
+
+    def _update_search_open_button(self):
+        self.search_open_button.setEnabled(
+            self.search_results.currentData() is not None)
+
+    def s_open_search_result(self):
+        entry = self.search_results.currentData()
+        if entry is None:
+            return
+        self._open_provider_page(entry.provider, entry.media_type,
+                                 entry.provider_id)
+
+    def _identity_context_menu(self, pos):
+        item = self.identity_tree.itemAt(pos)
+        if item is None:
+            return
+        issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        inspect_action = menu.addAction('Inspect')
+        inspect_action.triggered.connect(
+            lambda: self._inspect_from_identity(issue['provider'],
+                                                issue['provider_id']))
+        media_type = (issue.get('entry') or {}).get('media_type')
+        url = adapters.web_url(issue['provider'], media_type,
+                               issue['provider_id'])
+        open_action = menu.addAction('Open on %s'
+                                     % issue['provider'].capitalize())
+        open_action.setEnabled(url is not None)
+        if url:
+            open_action.triggered.connect(
+                lambda checked=False, u=url:
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl(u)))
+        menu.exec(self.identity_tree.viewport().mapToGlobal(pos))
+
+    def _inspect_from_identity(self, provider, provider_id):
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i).startswith('Inspector'):
+                self.tabs.setCurrentIndex(i)
+                break
+        idx = self.inspect_provider.findData(provider)
+        if idx >= 0:
+            self.inspect_provider.setCurrentIndex(idx)
+        self.inspect_id.setText(str(provider_id))
+        self.s_inspect()
 
     def s_identity_resolve(self):
         item = self.identity_tree.currentItem()
@@ -749,11 +852,11 @@ class SyncWindow(QDialog):
                                 title=issue['title'] or '')
         try:
             if self.rb_confirm.isChecked():
-                uid = self.candidate_combo.currentData()
-                if uid is None:
+                cand = self.candidate_combo.currentData()
+                if cand is None:
                     return
                 identity.resolve_conflict(issue['id'], 'confirm',
-                                          target_uuid=uid)
+                                          target_uuid=cand['uuid'])
             elif self.rb_search.isChecked():
                 found = self.search_results.currentData()
                 if found is None:
@@ -814,6 +917,10 @@ class SyncWindow(QDialog):
         inspect_button = QPushButton('Look up')
         inspect_button.clicked.connect(self.s_inspect)
         bar.addWidget(inspect_button)
+        self.inspect_open_button = QPushButton('Open page')
+        self.inspect_open_button.setEnabled(False)
+        self.inspect_open_button.clicked.connect(self.s_inspect_open)
+        bar.addWidget(self.inspect_open_button)
         bar.addStretch()
         layout.addLayout(bar)
 
@@ -833,6 +940,18 @@ class SyncWindow(QDialog):
         result = inspect_entry(self.store, provider, provider_id,
                                atlas=self.engine.identity.atlas)
         self.inspect_output.setHtml(self._render_inspection(result))
+        # Openable even when unresolved -- media_type may be unknown
+        # (a truly never-seen id), in which case web_url's own anime
+        # default applies; still lets the user go look at the raw page.
+        url = adapters.web_url(provider, result.media_type, provider_id)
+        self.inspect_open_button.setEnabled(url is not None)
+        self.inspect_open_button.setText(
+            'Open on %s' % provider.capitalize())
+        self._inspect_url = url
+
+    def s_inspect_open(self):
+        if getattr(self, '_inspect_url', None):
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(self._inspect_url))
 
     def _render_inspection(self, r):
         p = ['<h3>%s id %s</h3>' % (r.provider.capitalize(),
