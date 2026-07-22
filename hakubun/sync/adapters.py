@@ -131,14 +131,20 @@ class ProviderAdapter:
 
     # -- outbound ------------------------------------------------------
 
-    def push(self, provider_id, changes, title=None):
+    def push(self, provider_id, changes, title=None, my_id=None):
         """Push canonical {field: value} changes to the provider.
 
         Returns the provider-scale values actually sent (what the
         remote is expected to hold afterwards, e.g. the rounded score).
         Unsupported fields are silently projected out.
+
+        `my_id` is the provider's library-entry id (persisted from the
+        last fetch as remote-state '_my_id'): Kitsu, both backends,
+        addresses updates by it -- item['my_id'], read unconditionally
+        -- while MAL/AniList only use the media id.
         """
-        item = {'id': self._coerce_id(provider_id)}
+        item = {'id': self._coerce_id(provider_id),
+                'my_id': my_id}
         sent = {}
         statuses_dict = self.mediainfo.get('statuses_dict') or {}
         for field, value in changes.items():
@@ -188,6 +194,17 @@ class ProviderAdapter:
             self.lib.update_show(item)
         except utils.APIError as e:
             raise AdapterError('%s: %s' % (self.name, e)) from e
+        except Exception as e:
+            # The libs were written for trackma's native show dicts and
+            # read keys/types this adapter has to reconstruct; three
+            # field-reported crashes in a row came from exactly this
+            # boundary (KeyError 'title', str-vs-date, KeyError
+            # 'my_id'). An unexpected exception here must degrade to a
+            # per-provider failure (engine.apply isolates AdapterError,
+            # other providers proceed, changes re-plan) -- never kill
+            # the entire apply.
+            raise AdapterError('%s: %s: %s'
+                              % (self.name, type(e).__name__, e)) from e
         return sent
 
     def values_equivalent(self, field, a, b):

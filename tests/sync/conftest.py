@@ -76,6 +76,15 @@ class FakeLib:
         for key in ('my_start_date', 'my_finish_date'):
             if item.get(key) is not None:
                 _ = item[key].year
+        if self.provider == 'kitsu':
+            # Both real Kitsu backends address the update by the
+            # library-entry id -- item['my_id'], read unconditionally
+            # (REST: PATCH /library-entries/<my_id>; GraphQL:
+            # str(item['my_id'])) -- and a None would go to the API as
+            # a garbage id. Require it present and real.
+            if not item['my_id']:
+                raise utils.APIError('kitsu update without a '
+                                     'library-entry id')
         self.updates.append(dict(item))
         self.shows.setdefault(str(item['id']), {'id': item['id']})
         self.shows[str(item['id'])].update(item)
@@ -90,9 +99,12 @@ class FakeLib:
 
 def show(provider, sid, title, progress=0, score=0, status=None,
          total=12, airing=1, **extra):
-    """Provider-scale show dict in trackma shape."""
+    """Provider-scale show dict in trackma shape. my_id mirrors the
+    library-entry id real fetches carry (Kitsu addresses updates by
+    it, so the fake requires it back on update)."""
     defaults = {'mal': 'watching', 'anilist': 'CURRENT', 'kitsu': 'current'}
-    return {'id': sid, 'title': title, 'my_progress': progress,
+    return {'id': sid, 'title': title, 'my_id': 'entry-%s' % sid,
+            'my_progress': progress,
             'my_score': score, 'my_status': status or defaults[provider],
             'my_start_date': None, 'my_finish_date': None,
             'total': total, 'status': airing, **extra}

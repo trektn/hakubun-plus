@@ -479,3 +479,53 @@ def test_date_pushes_are_real_date_objects(store):
     # which normalizes back to the same canonical string -- quiet plan.
     assert eng.fetch() == {}
     assert [c for c in eng.plan().changes if c.field == 'start_date'] == []
+
+
+def test_kitsu_pushes_carry_the_library_entry_id(store):
+    """Both Kitsu backends address updates by item['my_id'] (the
+    library-entry id from the fetch), not the media id -- read
+    unconditionally, so a push without it dies. It must survive the
+    whole trip: fetch -> remote-state '_my_id' -> apply -> push."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    # Add a kitsu side by exact-title auto-link.
+    kitsu = FakeLib('kitsu', [show('kitsu', 77, 'Bebop', progress=3)])
+    from hakubun.sync.adapters import ProviderAdapter
+    eng.adapters['kitsu'] = ProviderAdapter('kitsu', kitsu)
+    assert eng.fetch() == {}
+    assert store.mapping_for('kitsu', '77') is not None
+
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+    result = eng.apply(eng.plan())
+    assert result['errors'] == {}, result['errors']
+    assert kitsu.updates, 'kitsu never received the push'
+    assert kitsu.updates[-1]['my_id'] == 'entry-77'
+    assert kitsu.shows['77']['my_progress'] == 8
+
+
+def test_unexpected_lib_crash_degrades_to_provider_error(store):
+    """Boundary hardening: three field crashes in a row came from libs
+    reading keys/types the adapter didn't supply. Whatever the NEXT
+    one is, it must isolate to that provider (error in the report,
+    changes re-planned), never kill the entire apply."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=3),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=3))
+    uid = _uid(store)
+    eng.edit_local(uid, 'progress', 8)
+
+    def explode(item):
+        raise RuntimeError('surprise from deep inside a lib')
+    libs['mal'].update_show = explode
+
+    result = eng.apply(eng.plan())
+    assert 'mal' in result['errors']
+    assert 'RuntimeError' in result['errors']['mal']
+    # The other provider proceeded normally.
+    assert libs['anilist'].shows['9']['my_progress'] == 8
+    # And MAL's change is still pending, not lost.
+    plan2 = eng.plan()
+    assert [c for c in plan2.changes
+            if c.field == 'progress' and c.target == 'mal']

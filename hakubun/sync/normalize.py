@@ -135,6 +135,8 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
         provider_id=str(show['id']),
         title=show.get('title') or '',
         media_type=(mediainfo or {}).get('mediatype', 'anime'),
+        my_id=(str(show['my_id']) if show.get('my_id') is not None
+               else None),
         aliases=list(show.get('aliases') or []),
         year=year,
         total=show.get('total') or None,

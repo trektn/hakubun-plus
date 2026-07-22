@@ -79,6 +79,9 @@ class NormalizedEntry:
     provider_id: str
     title: str
     media_type: str = 'anime'
+    # The provider's *library-entry* id, distinct from the media id --
+    # Kitsu (both backends) keys updates on this, not on provider_id.
+    my_id: Optional[str] = None
     aliases: List[str] = dc_field(default_factory=list)
     year: Optional[int] = None
     total: Optional[int] = None            # None: unknown episode count

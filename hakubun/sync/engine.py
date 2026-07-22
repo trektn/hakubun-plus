@@ -56,14 +56,18 @@ class SyncEngine:
                 errors[name] = str(e)
                 continue
             for entry in entries:
-                # '_total' is metadata, not a synced field (never in
-                # ownership, so it never diffs): each provider's own
-                # episode count, needed to translate progress between
-                # differing structures (a 1-episode movie vs a
-                # 4-episode listing of the same work).
+                # Reserved '_'-prefixed fields are metadata, never
+                # synced (never in ownership, so they never diff):
+                # '_total' is the provider's own episode count (needed
+                # to translate progress between differing structures);
+                # '_my_id' is the provider's library-entry id, which
+                # Kitsu (both backends) requires to address an update
+                # -- distinct from the media id and only learnable
+                # from a fetch, so it must be persisted for pushes.
                 self.store.remote_set_all(
                     name, entry.provider_id,
-                    {**entry.user, '_total': entry.total})
+                    {**entry.user, '_total': entry.total,
+                     '_my_id': entry.my_id})
                 uid = self.identity.resolve_entry(entry)
                 if uid is None:
                     continue
@@ -491,10 +495,13 @@ class SyncEngine:
                                 if m['provider'] == provider), None)
                 if mapping is None:
                     continue
+                remote = self.store.remote_get(provider,
+                                               mapping['provider_id'])
+                my_id = (remote.get('_my_id') or (None, None))[0]
                 try:
                     sent = adapter.push(mapping['provider_id'],
                                         {c.field: c.new for c in chs},
-                                        title=chs[0].title)
+                                        title=chs[0].title, my_id=my_id)
                 except AdapterError as e:
                     errors[provider] = str(e)
                     failed = True
