@@ -18,8 +18,21 @@ from hakubun.sync.normalize import normalize_title
 
 
 class IdentityResolver:
-    def __init__(self, store):
+    def __init__(self, store, atlas=None):
         self._store = store
+        # Optional anime-relations id atlas (sync/relations.py):
+        # community-verified cross-provider ids, trusted like
+        # provider-published ones.
+        self._atlas = atlas
+
+    def _external_ids(self, entry):
+        ids = dict(entry.external_ids)
+        if self._atlas is not None:
+            for provider, pid in self._atlas.lookup(
+                    entry.provider, entry.provider_id).items():
+                ids.setdefault(provider, pid)
+        ids.pop(entry.provider, None)
+        return ids
 
     # -- resolution ----------------------------------------------------
 
@@ -87,7 +100,7 @@ class IdentityResolver:
         ambiguity -> identity conflict, never an auto-merge."""
         store = self._store
         targets = set()
-        for other_provider, other_id in entry.external_ids.items():
+        for other_provider, other_id in self._external_ids(entry).items():
             m = store.mapping_for(other_provider, other_id)
             if m:
                 targets.add(m['uuid'])
@@ -194,7 +207,7 @@ class IdentityResolver:
         """Provider-published ids become mappings themselves (exact),
         unless that slot is taken -- a clash surfaces as ambiguity on
         the other provider's own fetch."""
-        for other_provider, other_id in entry.external_ids.items():
+        for other_provider, other_id in self._external_ids(entry).items():
             if self._store.mapping_for(other_provider, other_id):
                 continue
             if any(m['provider'] == other_provider

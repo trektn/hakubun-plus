@@ -109,7 +109,9 @@ class SyncWindow(QDialog):
                 adapters[api] = adapter_from_account(account, msg)
             except Exception as e:
                 errors.append('%s: %s' % (api, e))
-        return SyncEngine(self.store, adapters), errors
+        from hakubun.sync.relations import RelationsAtlas
+        return SyncEngine(self.store, adapters,
+                          relations=RelationsAtlas.from_file()), errors
 
     # -- Preview -------------------------------------------------------
 

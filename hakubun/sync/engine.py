@@ -20,11 +20,12 @@ _UNSET = object()
 
 
 class SyncEngine:
-    def __init__(self, store, adapters=None, msg=None, primary=None):
+    def __init__(self, store, adapters=None, msg=None, primary=None,
+                 relations=None):
         self.store = store
         self.adapters = dict(adapters or {})
         self.history = History(store)
-        self.identity = IdentityResolver(store)
+        self.identity = IdentityResolver(store, atlas=relations)
         # The primary provider is the account the app is signed into --
         # the working tree, in git terms. The main window (and the
         # tracker) edit *that account's* list, so its fetched changes

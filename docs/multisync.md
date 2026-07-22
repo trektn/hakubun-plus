@@ -73,9 +73,14 @@ Resolution pipeline (per fetched provider entry):
 
 1. **Exact mapping** — provider id already mapped → done.
 2. **Exact external-id link** — the entry carries another provider's id
-   (AniList/Kitsu-GraphQL expose `mal_id`) that is already mapped, or
-   two fetched entries share the same `mal_id` → link automatically
-   (`confirmed = 1`).
+   (AniList/Kitsu-GraphQL expose `mal_id`; legacy Kitsu's library fetch
+   now includes its `mappings` relationship for the same purpose) that
+   is already mapped, or two fetched entries share the same `mal_id` →
+   link automatically (`confirmed = 1`). The community
+   **anime-relations** database (erengy/anime-relations, already
+   bundled for the tracker's episode redirections) is harvested as an
+   id atlas — every rule carries MAL|Kitsu|AniList triples — and its
+   links are trusted the same way.
 3. **Single exact title match** — exactly one candidate whose
    *normalized title or alias is equal* (same media type, compatible
    year) → link automatically as an **auto** mapping (`confirmed = 0`,
@@ -275,6 +280,17 @@ Unknown episode counts: `total` is metadata, not user state — progress
 is never clamped against an unknown total, and a provider reporting
 `total=None` for an airing show never produces a metadata conflict
 (missing values never "win" over known values, and never conflict).
+
+**Differing episode structures**: the same work can be a 1-episode
+movie on one provider and a 4-episode listing on another (Kaguya-sama:
+First Kiss). Each provider's own total is snapshotted (`_total` in
+remote state) and progress is classified through the local structure:
+*completion is equivalence* (1/1 ≡ 4/4 — no diff), completion converts
+on push/pull (each provider receives its own total, never a raw copy),
+and *partial* progress across differing structures is incomparable — it
+surfaces once as a structure-mismatch conflict and is never guessed.
+(anime-relations' episode ranges are the future path for translating
+partials.)
 
 ### Apply, failure, rollback
 
