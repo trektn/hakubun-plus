@@ -315,3 +315,58 @@ def test_primary_vs_other_divergence_still_asks(store):
     assert len(locals_) == 1 and locals_[0].new == 7
     assert not [c for c in plan.changes
                 if c.field == 'progress' and c.target != 'local']
+
+
+def test_progress_completion_across_structures_is_equivalent(store):
+    """Kaguya First Kiss: a 1-episode movie on MAL/Kitsu, a 4-episode
+    listing on AniList. 1/1 and 4/4 are the same fact -- no changes, no
+    conflicts, and definitely no 'update AniList to 1'."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'First Kiss', progress=1, total=1),
+                       show('anilist', 9, 'First Kiss', mal_id=1,
+                            progress=4, total=4))
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert [c for c in plan.changes if c.field == 'progress'] == []
+    assert [c for c in plan.conflicts if c.field == 'progress'] == []
+
+
+def test_progress_completion_converts_on_push(store):
+    """Completing the 4-episode listing on the active account pushes 1
+    (the movie's own total) to the movie entry -- never a raw 4."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'First Kiss', progress=0, total=1),
+                       show('anilist', 9, 'First Kiss', mal_id=1,
+                            progress=4, total=4))
+    eng.primary = 'anilist'
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert plan.conflicts == []
+    pushes = [c for c in plan.changes
+              if c.field == 'progress' and c.target == 'mal']
+    assert len(pushes) == 1 and pushes[0].new == 1     # converted!
+    # And the AniList side is left alone (it already reads complete).
+    assert not [c for c in plan.changes
+                if c.field == 'progress' and c.target == 'anilist']
+    eng.apply(plan)
+    assert libs['mal'].shows['1']['my_progress'] == 1
+    # Converged: replan is quiet.
+    assert eng.fetch() == {}
+    assert [c for c in eng.plan().changes if c.field == 'progress'] == []
+
+
+def test_partial_progress_across_structures_conflicts_with_note(store):
+    """Episode 2 of a 4-episode listing has no meaningful projection
+    onto a 1-episode movie: surfaced once, honestly, never guessed."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'First Kiss', progress=0, total=1),
+                       show('anilist', 9, 'First Kiss', mal_id=1,
+                            progress=2, total=4))
+    eng.primary = 'anilist'
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    conflicts = [c for c in plan.conflicts if c.field == 'progress']
+    assert len(conflicts) == 1
+    assert 'episode structures differ' in conflicts[0].note
+    assert not [c for c in plan.changes if c.field == 'progress'
+                and c.target != 'local']

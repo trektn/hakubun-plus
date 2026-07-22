@@ -55,8 +55,14 @@ class SyncEngine:
                 errors[name] = str(e)
                 continue
             for entry in entries:
-                self.store.remote_set_all(name, entry.provider_id,
-                                          entry.user)
+                # '_total' is metadata, not a synced field (never in
+                # ownership, so it never diffs): each provider's own
+                # episode count, needed to translate progress between
+                # differing structures (a 1-episode movie vs a
+                # 4-episode listing of the same work).
+                self.store.remote_set_all(
+                    name, entry.provider_id,
+                    {**entry.user, '_total': entry.total})
                 uid = self.identity.resolve_entry(entry)
                 if uid is None:
                     continue
@@ -79,6 +85,25 @@ class SyncEngine:
                                     entry.provider)
                 self.store.base_set(uid, entry.provider, field, value)
 
+    @staticmethod
+    def _complete(value, scale):
+        return bool(scale) and value is not None and value >= scale
+
+    @classmethod
+    def _progress_convert(cls, value, from_scale, to_scale):
+        """View a progress value through another episode structure.
+        Completion maps to the target's own total (1/1 movie == 4/4
+        listing); zero is zero everywhere; equal or unknown structures
+        pass through. Returns None when genuinely incomparable --
+        partial progress across differing structures."""
+        if not value:
+            return value or 0
+        if from_scale == to_scale or not from_scale or not to_scale:
+            return value
+        if cls._complete(value, from_scale):
+            return to_scale
+        return None
+
     def _settle_base(self, uid, provider, entry):
         """No merge base recorded but local and remote already agree:
         record the agreement. Without this, a later remote-only edit
@@ -86,10 +111,16 @@ class SyncEngine:
         policy would overwrite a legitimate website edit."""
         local = self.store.local_get(uid)
         base = self.store.base_get(uid, provider)
+        ent_total = (self.store.get_entity(uid) or {}).get('total')
         for field, value in entry.user.items():
             if field in base or field not in local:
                 continue
-            if eq(local[field][0], value):
+            agrees = eq(local[field][0], value)
+            if not agrees and field == 'progress':
+                # Complete is complete, whatever the episode structure.
+                agrees = (self._complete(local[field][0], ent_total)
+                          and self._complete(value, entry.total))
+            if agrees:
                 self.store.base_set(uid, provider, field, value)
 
     def _update_entity_meta(self, uid, entry):
@@ -145,21 +176,50 @@ class SyncEngine:
                 self.store.remote_get(provider, m['provider_id']),
                 self.store.base_get(uid, provider))
 
+        ent_total = ent.get('total')
         for field, policy in ownership.items():
             if policy.kind is PolicyKind.INDIVIDUAL:
                 continue
             l_val, l_ts = local.get(field, (None, 0))
+            progress_field = field == 'progress'
             states, pulls, divergent = {}, {}, {}
+            p_scales, mismatched = {}, {}
             for provider, (remote, base) in sides.items():
                 if field not in remote:
                     continue  # provider can't represent this field
                 r_val, r_ts = remote[field]
+                if progress_field:
+                    # Classify in the LOCAL episode structure: raw
+                    # numbers from a differing structure (1/1 movie vs
+                    # 4-episode listing) are not comparable -- exactly
+                    # the case that proposed 'update AniList to 1'.
+                    r_scale = (remote.get('_total') or (None, 0))[0]
+                    p_scales[provider] = (r_val, r_scale)
+                    converted = self._progress_convert(r_val, r_scale,
+                                                       ent_total)
+                    if converted is None:
+                        mismatched[provider] = (r_val, r_scale)
+                        continue
+                    r_val = converted
                 state = three_way(base.get(field, NO_BASE), l_val, r_val)
                 states[provider] = (state, r_val, r_ts)
                 if state == PULL:
                     pulls[provider] = (r_val, r_ts)
                 elif state == BOTH:
                     divergent[provider] = (r_val, r_ts)
+            if mismatched:
+                # Partial progress across differing structures: honest
+                # one-line conflict, field frozen this plan.
+                values = {'local': l_val}
+                values.update({p: rv for p, (rv, _) in mismatched.items()})
+                note = 'episode structures differ: local total %s vs %s' % (
+                    ent_total or '?', ', '.join(
+                        '%s total %s' % (p, sc or '?')
+                        for p, (_, sc) in mismatched.items()))
+                plan.conflicts.append(FieldConflict(
+                    uid, field, values, base=None, policy=policy,
+                    title=title, note=note))
+                continue
             if not states:
                 continue
 
@@ -188,13 +248,15 @@ class SyncEngine:
                 if intent is not None and not eq(l_val, orig_l):
                     plan.changes.append(FieldChange(
                         uid, field, orig_l, l_val, target='local',
-                        source=self.primary, title=title))
+                        source=self.primary, title=title,
+                        remote_raw=(p_scales[self.primary][0]
+                                    if progress_field
+                                    and self.primary in p_scales
+                                    else None)))
                 for provider, (state, r_val, _) in states.items():
-                    if not self.adapters[provider].values_equivalent(
-                            field, r_val, l_val):
-                        plan.changes.append(FieldChange(
-                            uid, field, r_val, l_val, target=provider,
-                            source='local', title=title))
+                    self._plan_push(plan, uid, title, field, policy,
+                                    provider, r_val, l_val, 'local',
+                                    progress_field, p_scales, ent_total)
                 continue
 
             resolution = self._resolve_field(
@@ -207,7 +269,11 @@ class SyncEngine:
                 if intent is not None and not eq(intent[0], orig_l):
                     plan.changes.append(FieldChange(
                         uid, field, orig_l, intent[0], target='local',
-                        source=self.primary, title=title))
+                        source=self.primary, title=title,
+                        remote_raw=(p_scales[self.primary][0]
+                                    if progress_field
+                                    and self.primary in p_scales
+                                    else None)))
                 continue
             if resolution is not None:
                 effective, eff_source = resolution
@@ -218,16 +284,48 @@ class SyncEngine:
             if not eq(effective, orig_l):
                 plan.changes.append(FieldChange(
                     uid, field, orig_l, effective, target='local',
-                    source=eff_source, title=title))
+                    source=eff_source, title=title,
+                    remote_raw=(p_scales[eff_source][0]
+                                if progress_field
+                                and eff_source in p_scales else None)))
 
             if mode is SyncMode.PULL:
                 continue  # providers update local; nothing pushes
             for provider, (state, r_val, _) in states.items():
-                if not self.adapters[provider].values_equivalent(
-                        field, r_val, effective):
-                    plan.changes.append(FieldChange(
-                        uid, field, r_val, effective, target=provider,
-                        source=eff_source, title=title))
+                self._plan_push(plan, uid, title, field, policy,
+                                provider, r_val, effective, eff_source,
+                                progress_field, p_scales, ent_total)
+
+    def _plan_push(self, plan, uid, title, field, policy, provider,
+                   state_val, effective, source, progress_field,
+                   p_scales, ent_total):
+        """Append the push of `effective` to one provider if needed.
+        Progress pushes convert into the provider's own episode
+        structure (completing a 4-episode listing pushes 1 to the
+        1-episode movie entry, and vice versa)."""
+        if progress_field and provider in p_scales:
+            raw_r, r_scale = p_scales[provider]
+            if eq(state_val, effective):
+                return
+            target_val = self._progress_convert(effective, ent_total,
+                                                r_scale)
+            if target_val is None:
+                plan.conflicts.append(FieldConflict(
+                    uid, field, {'local': effective, provider: raw_r},
+                    base=None, policy=policy, title=title,
+                    note='episode structures differ: local total %s vs'
+                         ' %s total %s' % (ent_total or '?', provider,
+                                           r_scale or '?')))
+                return
+            plan.changes.append(FieldChange(
+                uid, field, raw_r, target_val, target=provider,
+                source=source, title=title))
+            return
+        if not self.adapters[provider].values_equivalent(
+                field, state_val, effective):
+            plan.changes.append(FieldChange(
+                uid, field, state_val, effective, target=provider,
+                source=source, title=title))
 
     def _resolve_field(self, plan, uid, title, field, policy,
                        l_val, l_ts, pulls, divergent, mode):
@@ -305,7 +403,13 @@ class SyncEngine:
                                     c.source)
                 if c.source in self.adapters:
                     # Pulled from that provider: we now agree with it.
-                    self.store.base_set(c.uuid, c.source, c.field, c.new)
+                    # The base records the provider's RAW value -- for
+                    # structure-converted progress that differs from
+                    # the local-scale value we stored.
+                    self.store.base_set(
+                        c.uuid, c.source, c.field,
+                        c.remote_raw if c.remote_raw is not None
+                        else c.new)
 
         errors = {}
         pushed = 0

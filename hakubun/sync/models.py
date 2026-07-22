@@ -98,6 +98,10 @@ class FieldChange:
     source: str          # who caused the value ('local', provider, 'resolve')
     title: str = ''
     selected: bool = True
+    # For pulls whose value was converted between episode structures
+    # (e.g. a 1/1 movie completing a 4-episode listing): the provider's
+    # own raw value, which is what the merge base must record.
+    remote_raw: Any = None
 
     def describe(self) -> str:
         return '%s  %s %s -> %s' % (self.target, self.field,
@@ -113,11 +117,13 @@ class FieldConflict:
     base: Any
     policy: FieldPolicy
     title: str = ''
+    note: str = ''           # extra context (e.g. structure mismatch)
 
     def describe(self) -> str:
         vals = ', '.join('%s %s' % (s, _short(v))
                          for s, v in sorted(self.values.items()))
-        return '%s differs (%s)' % (self.field, vals)
+        text = '%s differs (%s)' % (self.field, vals)
+        return '%s -- %s' % (text, self.note) if self.note else text
 
 
 @dataclass
