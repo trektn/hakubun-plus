@@ -114,6 +114,15 @@ class TrackerBase(object):
         except KeyError:
             raise Exception("Call to undefined signal.")
 
+    def _effective_elapsed_s(self):
+        """Seconds of unpaused wall time since the countdown started
+        (last_time), i.e. the clock update_timer() measures wait_s
+        against. Single definition on purpose: wait computations that
+        pre-compensate for already-elapsed time (e.g. the MPRIS
+        percentage anchoring) must use this same accounting or they
+        silently drift from the countdown math."""
+        return (time.time() - self.last_time) - self.timer_offset
+
     def update_timer(self, state, show_tuple):
         if self.timer_paused:
             return
@@ -123,8 +132,7 @@ class TrackerBase(object):
         self.timer = int(
             1
             + (self.wait_s or self.config['tracker_update_wait_s'])
-            + self.timer_offset
-            - (time.time() - self.last_time)
+            - self._effective_elapsed_s()
         )
         self._emit_signal('state', self.get_status())
 

@@ -403,12 +403,11 @@ class MprisTracker(tracker.TrackerBase):
         if self.view_offset is not None:
             # Anchor to the actual playback position (view_offset, ms):
             # resuming an episode mid-way or seeking shouldn't restart
-            # the whole percentage wait from zero. wait_s is measured
-            # from last_time by update_timer(), so re-add the wall time
-            # already elapsed (and cancel out any pause offset).
+            # the whole percentage wait from zero. update_timer()
+            # measures wait_s against _effective_elapsed_s(), so re-add
+            # that same elapsed time on top of the playback remaining.
             remaining_s = max(0.0, target_s - self.view_offset / 1000)
-            return round(remaining_s + (time.time() - self.last_time)
-                         - self.timer_offset)
+            return round(remaining_s + self._effective_elapsed_s())
         return round(target_s)
 
     def _start_timer(self):
