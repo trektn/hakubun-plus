@@ -111,14 +111,20 @@ class SyncStore:
         self._lock = threading.RLock()
         self._txn_depth = 0
         self._txn_failed = False
+        # entities_with_aliases() snapshot; None = rebuild on demand.
+        self._entities_cache = None
         with self._lock:
             self._conn.execute('PRAGMA journal_mode=WAL')
             self._conn.execute('PRAGMA foreign_keys=ON')
             self._conn.executescript(_SCHEMA)
             # Migrations for databases created by earlier revisions.
-            self._ensure_column('entities', 'aliases', 'TEXT')
-            self._ensure_column('identity_conflicts', 'entry', 'TEXT')
-            self._ensure_column('mappings', 'via', 'TEXT')
+            self._migrate()
+
+    def _migrate(self):
+        self._ensure_column('entities', 'aliases', 'TEXT')
+        self._ensure_column('identity_conflicts', 'entry', 'TEXT')
+        self._ensure_column('mappings', 'via', 'TEXT')
+        self._ensure_column('local_state', 'source', 'TEXT')
 
     def _ensure_column(self, table, column, decl):
         cols = {r['name'] for r in
@@ -148,9 +154,8 @@ class SyncStore:
                         if not row['name'].startswith('sqlite_'):
                             self._exec('DROP TABLE %s' % row['name'])
                 self._conn.executescript(_SCHEMA)
-                self._ensure_column('entities', 'aliases', 'TEXT')
-                self._ensure_column('identity_conflicts', 'entry', 'TEXT')
-                self._ensure_column('mappings', 'via', 'TEXT')
+                self._migrate()
+                self._entities_cache = None
             finally:
                 self._conn.execute('PRAGMA foreign_keys=ON')
 
@@ -181,6 +186,9 @@ class SyncStore:
                 if s._txn_depth == 0:
                     if s._txn_failed:
                         s._conn.execute('ROLLBACK')
+                        # A snapshot built inside this transaction saw
+                        # now-rolled-back rows; never serve it.
+                        s._entities_cache = None
                     else:
                         s._conn.execute('COMMIT')
             finally:
@@ -198,6 +206,7 @@ class SyncStore:
 
     def create_entity(self, title, media_type='anime', year=None,
                       total=None, status=None, provider_only=None):
+        self._entities_cache = None
         uid = str(uuidlib.uuid4())
         self._exec(
             'INSERT INTO entities(uuid, media_type, title, year, total,'
@@ -215,12 +224,27 @@ class SyncStore:
         return [dict(r) for r in
                 self._exec('SELECT * FROM entities').fetchall()]
 
+    def entities_with_aliases(self):
+        """[(entity_row, parsed_alias_list)], cached until any entity
+        write invalidates it. Identity resolution scans every entity
+        for EVERY unmatched fetched entry; without the cache a first
+        sync of a large second provider re-reads and re-json-parses
+        the whole table quadratically (inside the fetch transaction,
+        holding the write lock the whole time). Treat rows as
+        read-only."""
+        if self._entities_cache is None:
+            self._entities_cache = [
+                (dict(r), _load(r['aliases']) or [])
+                for r in self._exec('SELECT * FROM entities').fetchall()]
+        return self._entities_cache
+
     def update_entity_meta(self, uid, **fields):
         allowed = {'title', 'year', 'total', 'status',
                    'media_type', 'provider_only'}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
+        self._entities_cache = None
         cols = ', '.join('%s=?' % k for k in sets)
         self._exec('UPDATE entities SET %s WHERE uuid=?' % cols,
                    (*sets.values(), uid))
@@ -237,10 +261,15 @@ class SyncStore:
         romaji Kitsu entry via the shared alias."""
         current = self.entity_aliases(uid)
         seen = set(current)
+        added = False
         for title in titles:
             if title and title not in seen:
                 current.append(title)
                 seen.add(title)
+                added = True
+        if not added:
+            return
+        self._entities_cache = None
         self._exec('UPDATE entities SET aliases=? WHERE uuid=?',
                    (_dump(current), uid))
 
@@ -295,11 +324,30 @@ class SyncStore:
         return {r['field']: (_load(r['value']), r['updated_at'])
                 for r in rows}
 
-    def local_set(self, uid, field, value, ts=None):
+    def local_set(self, uid, field, value, ts=None, source=None):
+        """`source` is the value's provenance ('local', a provider
+        name, 'resolve', ...), mirroring the event that records the
+        change. It is persisted so a later plan can still tell a
+        provider-fed value from a direct local edit -- the PROVIDER
+        ownership guard needs exactly that (engine._plan_push)."""
         self._exec(
             'INSERT OR REPLACE INTO local_state(uuid, field, value,'
-            ' updated_at) VALUES(?,?,?,?)',
-            (uid, field, _dump(value), ts if ts is not None else time.time()))
+            ' updated_at, source) VALUES(?,?,?,?,?)',
+            (uid, field, _dump(value),
+             ts if ts is not None else time.time(), source))
+
+    def local_sources_many(self, uids):
+        """{uid: {field: source}} -- the stored provenance of every
+        local value (None for rows from before provenance existed,
+        treated as direct local edits)."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, field, source FROM local_state'
+                    ' WHERE uuid IN (%s)' % marks, chunk).fetchall():
+                out.setdefault(r['uuid'], {})[r['field']] = r['source']
+        return out
 
     def local_get_many(self, uids):
         """{uid: {field: (value, updated_at)}} for many entities in a

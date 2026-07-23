@@ -9,6 +9,7 @@ advance, so the same changes re-plan next run).
 import json
 
 from hakubun.sync import conflicts as conflicts_mod
+from hakubun.sync import normalize
 from hakubun.sync.adapters import AdapterError
 from hakubun.sync.diff import BOTH, NO_BASE, PULL, eq, three_way
 from hakubun.sync.history import History
@@ -42,7 +43,7 @@ class SyncEngine:
 
     # -- fetch ---------------------------------------------------------
 
-    def fetch(self, providers=None):
+    def fetch(self, providers=None, should_cancel=None):
         """Download every provider's state (remote-tracking update).
         Returns {provider: error message} for providers that failed;
         the others complete regardless.
@@ -52,12 +53,22 @@ class SyncEngine:
         entries rolls back that provider's writes (one transaction per
         provider -- which also turns thousands of per-entry commits
         into one) and records the error, instead of killing the whole
-        fetch with half a provider's rows committed."""
+        fetch with half a provider's rows committed.
+
+        `should_cancel` (a `() -> bool`) stops the run between
+        providers and between entries -- a closing sync window must
+        not stay parked behind three providers' full list downloads.
+        The provider being ingested when the cancel lands is rolled
+        back whole (its next fetch re-derives it); completed providers
+        stay. The in-flight network call itself cannot be interrupted,
+        so the worst-case wait is one provider's download."""
         errors = {}
         seed_txn = None
         for name, adapter in self.adapters.items():
             if providers and name not in providers:
                 continue
+            if should_cancel is not None and should_cancel():
+                break
             try:
                 entries = adapter.fetch()
             except Exception as e:  # failure isolation, incl. bugs
@@ -67,14 +78,18 @@ class SyncEngine:
                 with self.store.transaction():
                     if seed_txn is None:
                         seed_txn = self.history.new_txn()
-                    self._ingest(name, entries, seed_txn)
+                    self._ingest(name, entries, seed_txn, should_cancel)
+            except SyncCancelled:
+                break   # this provider rolled back; stop cleanly
             except Exception as e:
                 errors[name] = '%s: %s' % (type(e).__name__, e)
         return errors
 
-    def _ingest(self, name, entries, seed_txn):
+    def _ingest(self, name, entries, seed_txn, should_cancel=None):
         """Store one provider's fetched entries (inside a transaction)."""
         for entry in entries:
+            if should_cancel is not None and should_cancel():
+                raise SyncCancelled()
             # Reserved '_'-prefixed fields are metadata, never
             # synced (never in ownership, so they never diff):
             # '_total' is the provider's own episode count (needed
@@ -132,35 +147,29 @@ class SyncEngine:
             mapping = self.store.mapping_for(name, pid)
             if mapping:
                 self.store.base_delete(mapping['uuid'], name)
+            row = self.store.identity_get(name, pid)
+            if row and row['status'] in ('open', 'deferred'):
+                # An unresolved entry the user deleted on the website
+                # answers its own question -- don't keep asking about
+                # an entry no provider lists. 'unlisted' (not
+                # 'ignored') so a future re-add reopens it normally.
+                self.store.identity_set_status(row['id'], 'unlisted')
 
     def _seed_entity(self, txn, uid, entry):
         """First sight of an entity: import this provider's state as the
         local state and set the merge base -- in sync at birth."""
         with self.store.transaction():
             for field, value in entry.user.items():
-                self.store.local_set(uid, field, value)
+                self.store.local_set(uid, field, value,
+                                     source=entry.provider)
                 self.history.record(txn, uid, field, None, value,
                                     entry.provider)
                 self.store.base_set(uid, entry.provider, field, value)
 
-    @staticmethod
-    def _complete(value, scale):
-        return bool(scale) and value is not None and value >= scale
-
-    @classmethod
-    def _progress_convert(cls, value, from_scale, to_scale):
-        """View a progress value through another episode structure.
-        Completion maps to the target's own total (1/1 movie == 4/4
-        listing); zero is zero everywhere; equal or unknown structures
-        pass through. Returns None when genuinely incomparable --
-        partial progress across differing structures."""
-        if not value:
-            return value or 0
-        if from_scale == to_scale or not from_scale or not to_scale:
-            return value
-        if cls._complete(value, from_scale):
-            return to_scale
-        return None
+    # Episode-structure translation lives in normalize (the overlay
+    # needs it too); kept as engine aliases for the call sites here.
+    _complete = staticmethod(normalize.progress_complete)
+    _progress_convert = staticmethod(normalize.progress_convert)
 
     def _settle_base(self, uid, provider, entry):
         """No merge base recorded but local and remote already agree:
@@ -203,7 +212,7 @@ class SyncEngine:
 
     # -- plan ----------------------------------------------------------
 
-    def plan(self, mode=SyncMode.MERGE):
+    def plan(self, mode=SyncMode.MERGE, should_cancel=None):
         ownership = self.store.ownership()
         plan = SyncPlan(mode)
         plan.identity = [IdentityIssue(id=r['id'], provider=r['provider'],
@@ -221,6 +230,7 @@ class SyncEngine:
             'mappings': self.store.mappings_many(uids),
             'local': self.store.local_get_many(uids),
             'base': self.store.base_get_many(uids),
+            'sources': self.store.local_sources_many(uids),
         }
         ids_by_provider = {}
         for maps in snapshot['mappings'].values():
@@ -232,6 +242,8 @@ class SyncEngine:
             provider: self.store.remote_get_many(provider, ids)
             for provider, ids in ids_by_provider.items()}
         for ent in ents:
+            if should_cancel is not None and should_cancel():
+                raise SyncCancelled()
             self._plan_entity(plan, ent, ownership, mode, snapshot)
         return plan
 
@@ -266,6 +278,7 @@ class SyncEngine:
                 if field not in remote:
                     continue  # provider can't represent this field
                 r_val, r_ts = remote[field]
+                b_val = base.get(field, NO_BASE)
                 if progress_field:
                     # Classify in the LOCAL episode structure: raw
                     # numbers from a differing structure (1/1 movie vs
@@ -279,7 +292,19 @@ class SyncEngine:
                         mismatched[provider] = (r_val, r_scale)
                         continue
                     r_val = converted
-                state = three_way(base.get(field, NO_BASE), l_val, r_val)
+                    # The merge base records the provider's RAW value
+                    # (its own structure); it must be viewed through
+                    # the same conversion as the remote or three_way
+                    # compares values in different units -- a movie
+                    # base of 1 against a local 4 would read as 'both
+                    # changed' when nothing moved. A base that no
+                    # longer converts (partial, structures changed) is
+                    # honestly no base at all.
+                    if b_val is not NO_BASE:
+                        b_conv = self._progress_convert(b_val, r_scale,
+                                                        ent_total)
+                        b_val = NO_BASE if b_conv is None else b_conv
+                state = three_way(b_val, l_val, r_val)
                 states[provider] = (state, r_val, r_ts)
                 if state == PULL:
                     pulls[provider] = (r_val, r_ts)
@@ -396,10 +421,17 @@ class SyncEngine:
 
             if mode is SyncMode.PULL:
                 continue  # providers update local; nothing pushes
+            # The stored provenance of the CURRENT local value: who a
+            # value that is 'just local now' originally came from --
+            # this plan's own resolution supersedes it when one exists.
+            provenance = (eff_source if resolution is not None
+                          or intent is not None
+                          else snapshot['sources'].get(uid, {}).get(field))
             for provider, (state, r_val, _) in states.items():
                 self._plan_push(plan, uid, title, field, policy,
                                 provider, r_val, effective, eff_source,
-                                progress_field, p_scales, ent_total)
+                                progress_field, p_scales, ent_total,
+                                provenance=provenance)
 
     def _collapse_precision_redundant(self, field, l_val, group):
         """Drop a provider's value from a same-field group (divergent
@@ -455,7 +487,7 @@ class SyncEngine:
 
     def _plan_push(self, plan, uid, title, field, policy, provider,
                    state_val, effective, source, progress_field,
-                   p_scales, ent_total):
+                   p_scales, ent_total, provenance=None):
         """Append the push of `effective` to one provider if needed.
         Progress pushes convert into the provider's own episode
         structure (completing a 4-episode listing pushes 1 to the
@@ -470,10 +502,23 @@ class SyncEngine:
         DIFFERENT provider (typically the signed-in primary's fetched
         change folded in as local intent, engine.py `_plan_entity`),
         that provider is not this field's authority and must not push
-        over -- silently overwriting -- the actual owner."""
-        if (policy.kind is PolicyKind.PROVIDER and policy.provider == provider
-                and source not in ('local', provider)):
-            return
+        over -- silently overwriting -- the actual owner.
+
+        `provenance` makes the guard DURABLE: `source` only knows this
+        plan's arbitration, but once a provider-fed value has been
+        COMMITTED to local state it reappears one plan later as a
+        plain local-side change (source 'local') and would sail
+        through. The stored provenance (local_state.source) still says
+        which provider fed it, so the owner stays protected until an
+        actually-authoritative write (a direct edit, a user
+        resolution, or the owner itself) supersedes the value. Mirror
+        mode passes provenance=None on purpose: mirror is the explicit
+        'local overwrites everyone' mode."""
+        if policy.kind is PolicyKind.PROVIDER and policy.provider == provider:
+            if source not in ('local', provider):
+                return
+            if provenance in self.adapters and provenance != provider:
+                return
         if progress_field and provider in p_scales:
             raw_r, r_scale = p_scales[provider]
             if eq(state_val, effective):
@@ -595,7 +640,8 @@ class SyncEngine:
 
         with self.store.transaction():
             for c in local_changes:
-                self.store.local_set(c.uuid, c.field, c.new)
+                self.store.local_set(c.uuid, c.field, c.new,
+                                     source=c.source)
                 self.history.record(txn, c.uuid, c.field, c.old, c.new,
                                     c.source)
                 if c.source in self.adapters:
@@ -694,7 +740,7 @@ class SyncEngine:
         old = self.store.local_get(uid).get(field, (None, 0))[0]
         txn = self.history.new_txn()
         with self.store.transaction():
-            self.store.local_set(uid, field, value)
+            self.store.local_set(uid, field, value, source=source)
             self.history.record(txn, uid, field, old, value, source)
         return txn
 
@@ -717,7 +763,7 @@ class SyncEngine:
         old = self.store.local_get(uid).get(field, (None, 0))[0]
         txn = self.history.new_txn()
         with self.store.transaction():
-            self.store.local_set(uid, field, value)
+            self.store.local_set(uid, field, value, source=source)
             self.history.record(txn, uid, field, old, value, source)
             for m in self.store.mappings_of(uid):
                 remote = self.store.remote_get(m['provider'],
@@ -758,7 +804,8 @@ class SyncEngine:
         txn = self.history.new_txn()
         old = conflict.values.get('local')
         with self.store.transaction():
-            self.store.local_set(conflict.uuid, conflict.field, chosen)
+            self.store.local_set(conflict.uuid, conflict.field, chosen,
+                                 source='resolve')
             self.history.record(txn, conflict.uuid, conflict.field,
                                 old, chosen, 'resolve')
             for provider in conflict.values:

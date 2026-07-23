@@ -42,7 +42,8 @@ class History:
         undo_txn = self.new_txn()
         with self._store.transaction():
             for e in reversed(sets):
-                self._store.local_set(e['uuid'], e['field'], e['old_value'])
+                self._store.local_set(e['uuid'], e['field'],
+                                      e['old_value'], source='undo')
                 # source of an undo event = the txn it reverts, so
                 # double-undo is detectable and history self-describes.
                 self._store.event_append(undo_txn, e['uuid'], e['field'],

@@ -38,8 +38,8 @@ from hakubun.sync import adapters, normalize
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.models import (FieldChange, FieldConflict, FieldPolicy,
-                                 NormalizedEntry, PolicyKind, SyncMode,
-                                 USER_FIELDS)
+                                 NormalizedEntry, PolicyKind, SyncCancelled,
+                                 SyncMode, USER_FIELDS)
 from hakubun.sync.store import SyncStore
 
 _FIELD_LABELS = {
@@ -93,9 +93,12 @@ class SyncWindow(QDialog):
             # table keyed only on (provider, provider_id) would
             # collide between them the moment an account switches
             # media type -- exactly the breakage this separates away,
-            # rather than only detecting it after the fact.
-            self.store = SyncStore(utils.to_data_path(
-                'multisync-%s.db' % media_type))
+            # rather than only detecting it after the fact. The path
+            # scheme lives in uibridge.store_path, shared with the
+            # list overlay -- one definition, or they could drift onto
+            # different files.
+            from hakubun.sync import uibridge
+            self.store = SyncStore(uibridge.store_path(media_type))
             self.engine, self._adapter_errors = \
                 self._build_engine(accountman, media_type)
         # The signed-in account is the app's editing surface (the
@@ -562,16 +565,24 @@ class SyncWindow(QDialog):
                     yield child, data
 
     def s_fetch(self):
+        self._cancel.clear()
         self._run(self._fetch_and_plan, self.r_planned,
                   'Fetching provider lists...')
 
     def _fetch_and_plan(self):
-        errors = self.engine.fetch()
-        plan = self.engine.plan(self.mode_combo.currentData())
+        # Cancellable (window close sets _cancel): the engine checks
+        # between providers/entries, so a close never stays parked
+        # behind three full list downloads.
+        errors = self.engine.fetch(should_cancel=self._cancel.is_set)
+        plan = self.engine.plan(self.mode_combo.currentData(),
+                                should_cancel=self._cancel.is_set)
         plan.errors.update(errors)
         return plan
 
     def r_planned(self, plan, error):
+        if isinstance(error, SyncCancelled):
+            self._status('Sync cancelled.')
+            return
         if error is not None:
             self._status('Sync failed: %s' % error)
             return

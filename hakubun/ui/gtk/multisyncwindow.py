@@ -35,7 +35,8 @@ from hakubun.sync import adapters, normalize
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.models import (FieldConflict, FieldPolicy, NormalizedEntry,
-                                 PolicyKind, SyncMode, USER_FIELDS)
+                                 PolicyKind, SyncCancelled, SyncMode,
+                                 USER_FIELDS)
 from hakubun.sync.store import SyncStore
 
 _FIELD_LABELS = {
@@ -77,8 +78,11 @@ class MultiSyncWindow(Gtk.Window):
             self.store = engine.store
             self.engine, self._adapter_errors = engine, []
         else:
-            self.store = SyncStore(utils.to_data_path(
-                'multisync-%s.db' % media_type))
+            # Path scheme shared with the list overlay via
+            # uibridge.store_path -- one definition, or they could
+            # drift onto different files.
+            from hakubun.sync import uibridge
+            self.store = SyncStore(uibridge.store_path(media_type))
             self.engine, self._adapter_errors = \
                 self._build_engine(accountman, media_type)
         # The signed-in account is the working tree: its changes fold in
@@ -502,16 +506,24 @@ class MultiSyncWindow(Gtk.Window):
     # -- fetch / plan / apply -----------------------------------------
 
     def s_fetch(self):
+        self._cancel.clear()
         self._run(self._fetch_and_plan, self.r_planned,
                   'Fetching provider lists...')
 
     def _fetch_and_plan(self):
-        errors = self.engine.fetch()
-        plan = self.engine.plan(self._current_mode())
+        # Cancellable (window close sets _cancel): the engine checks
+        # between providers/entries, so a close never stays parked
+        # behind three full list downloads.
+        errors = self.engine.fetch(should_cancel=self._cancel.is_set)
+        plan = self.engine.plan(self._current_mode(),
+                                should_cancel=self._cancel.is_set)
         plan.errors.update(errors)
         return plan
 
     def r_planned(self, plan, error):
+        if isinstance(error, SyncCancelled):
+            self._status('Sync cancelled.')
+            return
         if error is not None:
             self._status('Sync failed: %s' % error)
             return
@@ -1029,7 +1041,14 @@ class MultiSyncWindow(Gtk.Window):
 
     def _done(self, callback, result, error):
         if self._closed:
-            self._maybe_close_store()
+            # This idle fires AFTER the worker's engine call returned
+            # (queueing it is the worker's last statement), so nothing
+            # touches the store anymore -- close it unconditionally.
+            # Gating on _thread.is_alive() here would race: the main
+            # loop can run this callback while the worker is still
+            # unwinding, and with no later retry the connection (and
+            # its WAL files) would leak for the life of the process.
+            self._close_store()
             return False
         self.fetch_button.set_sensitive(True)
         try:
@@ -1042,15 +1061,20 @@ class MultiSyncWindow(Gtk.Window):
     def _status(self, text):
         self._status_label.set_text(text)
 
+    def _close_store(self):
+        if not self._store_closed:
+            self._store_closed = True
+            self.store.close()
+
     def _maybe_close_store(self):
         # Close the store exactly once, only when no worker is still using
-        # it -- closing it under a running fetch/apply would crash.
+        # it -- closing it under a running fetch/apply would crash. (The
+        # running worker's own _done closes it instead; see _done.)
         if self._store_closed:
             return
         if self._thread is not None and self._thread.is_alive():
             return
-        self._store_closed = True
-        self.store.close()
+        self._close_store()
 
     def _on_destroy(self, *_a):
         if self._closed:

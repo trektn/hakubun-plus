@@ -106,6 +106,26 @@ def provider_date(value):
         return None
 
 
+def progress_complete(value, scale):
+    """True when `value` completes a `scale`-episode structure."""
+    return bool(scale) and value is not None and value >= scale
+
+
+def progress_convert(value, from_scale, to_scale):
+    """View a progress value through another episode structure.
+    Completion maps to the target's own total (1/1 movie == 4/4
+    listing); zero is zero everywhere; equal or unknown structures
+    pass through. Returns None when genuinely incomparable --
+    partial progress across differing structures."""
+    if not value:
+        return value or 0
+    if from_scale == to_scale or not from_scale or not to_scale:
+        return value
+    if progress_complete(value, from_scale):
+        return to_scale
+    return None
+
+
 def normalize_show(provider, show, mediainfo, external_ids=None):
     """Build a NormalizedEntry from a trackma show dict.
 

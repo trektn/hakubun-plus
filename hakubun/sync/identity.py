@@ -12,7 +12,6 @@ Three tiers (docs/multisync.md §3):
    auto-merged.
 """
 
-import json
 
 from hakubun.sync.normalize import normalize_title
 
@@ -24,6 +23,14 @@ class IdentityResolver:
         # community-verified cross-provider ids, trusted like
         # provider-published ones.
         self._atlas = atlas
+        # uuid -> ((title, alias_count), normalized-name set): the
+        # candidate scan compares every fetched entry against every
+        # entity's names; rebuilding each entity's set per entry is
+        # the quadratic half normalize_title's memoization doesn't
+        # cover. Aliases only ever append and a title is only set
+        # once, so (title, len(aliases)) is a sufficient freshness
+        # signature.
+        self._names_cache = {}
 
     @property
     def atlas(self):
@@ -238,6 +245,17 @@ class IdentityResolver:
             return False
         return a == b or a.startswith(b + ' ') or b.startswith(a + ' ')
 
+    def _entity_names(self, ent, aliases):
+        sig = (ent.get('title'), len(aliases))
+        cached = self._names_cache.get(ent['uuid'])
+        if cached is None or cached[0] != sig:
+            names = {normalize_title(ent.get('title'))} | {
+                normalize_title(a) for a in aliases}
+            names.discard('')
+            cached = (sig, names)
+            self._names_cache[ent['uuid']] = cached
+        return cached[1]
+
     def _candidates(self, entry):
         entry_names = {normalize_title(entry.title)} | {
             normalize_title(a) for a in entry.aliases}
@@ -245,14 +263,10 @@ class IdentityResolver:
         if not entry_names:
             return []
         found = []
-        for ent in self._store.entities():
+        for ent, aliases in self._store.entities_with_aliases():
             if ent['media_type'] != entry.media_type:
                 continue
-            aliases = json.loads(ent['aliases']) if ent.get('aliases') \
-                else []
-            ent_names = {normalize_title(ent['title'])} | {
-                normalize_title(a) for a in aliases}
-            ent_names.discard('')
+            ent_names = self._entity_names(ent, aliases)
             exact = bool(entry_names & ent_names)
             if not exact and not any(self._titles_match(a, b)
                                      for a in ent_names

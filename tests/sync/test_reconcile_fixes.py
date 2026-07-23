@@ -220,6 +220,76 @@ def test_local_tags_survive_tagless_providers(store):
     assert store.local_get(uid)['tags'][0] == ['fantasy']
 
 
+# -- overlay: provider-structure display ------------------------------
+
+def test_overlay_converts_progress_and_skips_precision_noise(store):
+    from hakubun.sync.overlay import build_overlay
+    from conftest import MEDIAINFO
+
+    mal = FakeLib('mal', [show('mal', 1, 'Kaguya First Kiss',
+                               progress=4, total=4, score=8,
+                               status='completed')])
+    kitsu = FakeLib('kitsu', [show('kitsu', 'k1', 'Kaguya First Kiss',
+                                   progress=1, total=1, mal_id=1,
+                                   status='completed')])
+    engine = make_engine(store, {'mal': mal, 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '1')['uuid']
+
+    # Signed into Kitsu (the 1-episode movie): the reconciled local
+    # 4/4 must render as Kitsu's own 1, never an impossible '4 / 1'.
+    overlay = build_overlay(store, 'kitsu', MEDIAINFO['kitsu'],
+                            provider_mediainfo={'kitsu':
+                                                MEDIAINFO['kitsu']})
+    assert overlay.get('k1', {}).get('my_progress') in (None, 1)
+
+    # Precision noise: canonical 8.4 displays as MAL's own 8 -- no
+    # override cue for a difference the account cannot even show.
+    store.local_set(uid, 'score', 8.4, source='local')
+    overlay = build_overlay(store, 'mal', MEDIAINFO['mal'],
+                            provider_mediainfo={'mal': MEDIAINFO['mal']})
+    assert 'my_score' not in overlay.get('1', {})
+
+
+# -- identity issues for entries deleted on the provider --------------
+
+def test_unlisted_entry_closes_its_identity_conflict(store):
+    from hakubun.sync.models import NormalizedEntry as NE
+
+    mal = FakeLib('mal', [show('mal', 1, 'Frieren'),
+                          show('mal', 2, 'Frieren S2')])
+    engine = make_engine(store, {'mal': mal})
+    assert engine.fetch() == {}
+    # Manufacture an open conflict for entry 2, as if it were
+    # ambiguous, then delete the entry on the website.
+    row_uid = store.mapping_for('mal', '2')['uuid']
+    store.remove_mapping('mal', '2')
+    store.identity_upsert('mal', '2', 'Frieren S2',
+                          [{'uuid': row_uid, 'via': 'title (similar)'}])
+    assert store.identity_open()
+
+    del mal.shows['2']
+    assert engine.fetch() == {}
+    assert store.identity_open() == []
+    assert store.identity_get('mal', '2')['status'] == 'unlisted'
+
+
+# -- cancellable fetch/plan -------------------------------------------
+
+def test_fetch_and_plan_honor_cancellation(store):
+    import pytest as _pytest
+    from hakubun.sync.models import SyncCancelled
+
+    mal = FakeLib('mal', [show('mal', 1, 'Frieren')])
+    engine = make_engine(store, {'mal': mal})
+    assert engine.fetch(should_cancel=lambda: True) == {}
+    assert store.remote_get('mal', '1') == {}   # nothing ingested
+
+    assert engine.fetch() == {}
+    with _pytest.raises(SyncCancelled):
+        engine.plan(should_cancel=lambda: True)
+
+
 # -- N+1 regression guard ---------------------------------------------
 
 def _query_count(store, fn):
@@ -258,6 +328,74 @@ def test_overlay_and_plan_issue_constant_queries(store):
 
     n = _query_count(store, engine.plan)
     assert n <= 10, 'plan ran %d queries for 50 shows' % n
+
+
+# -- structure-mismatch: the base converts like the remote ------------
+
+def test_unchanged_movie_side_is_not_a_phantom_remote_change(store):
+    """Merge bases for progress are stored in the provider's RAW
+    structure; the diff must view them through the same conversion as
+    the remote. A completed 1/1 movie base against a 4-episode local
+    listing must not read as 'the remote changed' when the movie side
+    never moved -- in PULL mode that phantom change would overwrite a
+    deliberate local rewind."""
+    mal = FakeLib('mal', [show('mal', 1, 'Kaguya First Kiss',
+                               progress=4, total=4,
+                               status='completed')])
+    kitsu = FakeLib('kitsu', [show('kitsu', 'k1', 'Kaguya First Kiss',
+                                   progress=1, total=1, mal_id=1,
+                                   status='completed')])
+    engine = make_engine(store, {'mal': mal, 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '1')['uuid']
+    # Settled: kitsu's base is its RAW 1 (movie complete == 4/4).
+    assert store.base_get(uid, 'kitsu')['progress'] == 1
+
+    engine.edit_local(uid, 'progress', 3)   # deliberate local rewind
+
+    from hakubun.sync.models import SyncMode
+    plan = engine.plan(SyncMode.PULL)
+    pulled = [c for c in plan.changes
+              if c.field == 'progress' and c.target == 'local']
+    assert pulled == [], 'phantom remote change pulled: %s' % pulled
+    assert store.local_get(uid)['progress'][0] == 3
+
+
+# -- PROVIDER ownership survives past the folding plan ----------------
+
+def test_owner_guard_holds_after_the_folded_value_commits(store):
+    """A primary-side edit folds into local state but must not reach
+    the field's PROVIDER owner -- not in the plan that folds it (the
+    one-cycle source check) and not in ANY later plan, where the
+    committed value would otherwise reappear as a plain local-side
+    change. Stored provenance keeps the guard durable. A direct local
+    edit (set_local_field) stays authoritative and does push."""
+    from hakubun.sync.models import FieldPolicy, PolicyKind
+
+    mal = FakeLib('mal', [show('mal', 1, 'Bebop', score=7)])
+    anilist = FakeLib('anilist', [show('anilist', 9, 'Bebop',
+                                       mal_id=1, score=70)])
+    engine = make_engine(store, {'mal': mal, 'anilist': anilist})
+    engine.primary = 'mal'
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER,
+                                             'anilist'))
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '1')['uuid']
+
+    mal.shows['1']['my_score'] = 9      # app-side edit on the primary
+    for _cycle in range(2):             # fold cycle, then re-plan cycle
+        assert engine.fetch() == {}
+        plan = engine.plan()
+        assert [c for c in plan.changes
+                if c.field == 'score' and c.target == 'anilist'] == []
+        engine.apply(plan)
+    assert anilist.shows['9']['my_score'] == 70   # owner never touched
+    assert store.local_get(uid)['score'][0] == 9.0
+
+    engine.set_local_field(uid, 'score', 8.0)     # authoritative edit
+    plan = engine.plan()
+    engine.apply(plan)
+    assert anilist.shows['9']['my_score'] == 80
 
 
 # -- identity: a quarantined mapping reopens its conflict -------------

@@ -172,6 +172,16 @@ they never conflict against the reconciled DB's stale value, even under
 and `ask` still surfaces genuine cross-provider divergence. The
 ownership matrix marks the active provider's column.
 
+A `provider:<name>` owner is protected from every other provider
+**durably**: local values carry their provenance
+(`local_state.source`), so a primary-folded (or pulled) value from a
+non-owner never pushes over the owner — not in the plan that folds it,
+and not in any later plan where the committed value would otherwise
+look like a plain local edit. Only an authoritative write reaches the
+owner: a direct local edit (`set_local_field`, the owner-system score
+editor), a user conflict resolution, or the owner's own value. Mirror
+mode is the deliberate exception (local overwrites everyone).
+
 Score scales: canonical score is a 0–10 float. Adapter conversion:
 MAL 0–10 int (round), AniList 0–100 (POINT_100; ×10), Kitsu 0–20
 (×2, round). Conversions are lossy by design; the canonical value is
@@ -195,6 +205,10 @@ mappings(uuid TEXT NOT NULL REFERENCES entities(uuid),
 local_state(uuid TEXT NOT NULL, field TEXT NOT NULL,
             value TEXT,                                     -- JSON
             updated_at REAL NOT NULL,
+            source TEXT,     -- provenance: 'local' | provider | 'resolve' | ...
+                             -- lets a plan still tell a provider-fed value
+                             -- from a direct edit after it has committed;
+                             -- the PROVIDER-ownership guard depends on it
             PRIMARY KEY(uuid, field))
 
 remote_state(provider TEXT NOT NULL, provider_id TEXT NOT NULL,
@@ -221,7 +235,10 @@ events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
 identity_conflicts(id INTEGER PRIMARY KEY AUTOINCREMENT,
                    provider TEXT NOT NULL, provider_id TEXT NOT NULL,
                    title TEXT, candidates TEXT,             -- JSON list
-                   status TEXT NOT NULL DEFAULT 'open',     -- open|resolved|ignored|provider_only|deferred
+                   status TEXT NOT NULL DEFAULT 'open',
+                   -- open|resolved|ignored|provider_only|deferred|unlisted
+                   -- ('unlisted': the entry disappeared from the provider
+                   --  before being resolved; reopens if it ever returns)
                    created_at REAL NOT NULL,
                    UNIQUE(provider, provider_id))
 

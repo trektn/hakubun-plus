@@ -81,6 +81,9 @@ def build_overlay(store, active_provider, active_mediainfo,
     remotes_many = store.remote_get_many(
         active_provider, [m['provider_id'] for m in mappings])
     mappings_many = store.mappings_many(uids)
+    wanted_uids = set(uids)
+    entities = {e['uuid']: e for e, _aliases in
+                store.entities_with_aliases() if e['uuid'] in wanted_uids}
     overlay = {}
     for mapping in mappings:
         pid = mapping['provider_id']
@@ -97,7 +100,31 @@ def build_overlay(store, active_provider, active_mediainfo,
             # nothing to override, nothing to flag.
             if field in remote and _eqish(remote[field][0], canonical):
                 continue
-            value = _to_provider_value(field, canonical, active_mediainfo)
+            if field == 'progress':
+                # The reconciled progress is in the LOCAL episode
+                # structure; this account may list the work differently
+                # (a 1-episode movie vs the local 4-episode listing).
+                # Convert, or the cell renders impossible fractions
+                # like '4 / 1'. Incomparable partials show the
+                # account's own value (no override).
+                r_scale = (remote.get('_total') or (None, 0))[0]
+                ent_total = (entities.get(uid) or {}).get('total')
+                value = normalize.progress_convert(canonical, ent_total,
+                                                   r_scale)
+            else:
+                value = _to_provider_value(field, canonical,
+                                           active_mediainfo)
+            # Also skip when the value only differs BELOW this
+            # account's own precision -- local 8.4 and the account's 8
+            # both display as 8 on a 10/1 scale; an override there is
+            # pure noise (an italic cue with nothing behind it).
+            if field in remote:
+                shown_remote = (remote[field][0] if field == 'progress'
+                                else _to_provider_value(
+                                    field, remote[field][0],
+                                    active_mediainfo))
+                if value == shown_remote:
+                    continue
             if value is not None:
                 fields[my_key] = value
 
