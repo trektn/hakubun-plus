@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 # User-state fields that participate in synchronization. Metadata
 # (title, total, airing status, dates of the *show*) is tracked per
 # provider in remote_state and reconciled into the entity separately.
-USER_FIELDS = ('score', 'progress', 'status', 'notes',
+USER_FIELDS = ('score', 'progress', 'rewatches', 'status', 'notes',
                'start_date', 'finish_date', 'tags', 'favorite')
 
 # Fields whose values are sets (merge policy = union).
@@ -63,6 +63,7 @@ class FieldPolicy:
 DEFAULT_OWNERSHIP = {
     'score': FieldPolicy(PolicyKind.LOCAL),
     'progress': FieldPolicy(PolicyKind.LOCAL),
+    'rewatches': FieldPolicy(PolicyKind.LOCAL),
     'status': FieldPolicy(PolicyKind.LOCAL),
     'notes': FieldPolicy(PolicyKind.INDIVIDUAL),
     'start_date': FieldPolicy(PolicyKind.LOCAL),

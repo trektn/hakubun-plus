@@ -118,6 +118,7 @@ def show(provider, sid, title, progress=0, score=0, status=None,
     return {'id': sid, 'title': title, 'my_id': 'entry-%s' % sid,
             'my_progress': progress,
             'my_score': score, 'my_status': status or defaults[provider],
+            'my_rewatched_times': 0,
             'my_start_date': None, 'my_finish_date': None,
             'total': total, 'status': airing, **extra}
 

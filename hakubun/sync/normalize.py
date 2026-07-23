@@ -121,6 +121,7 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
     user = {
         'score': canonical_score(show.get('my_score'), score_max),
         'progress': show.get('my_progress') or 0,
+        'rewatches': show.get('my_rewatched_times') or 0,
         'status': canonical_status(show.get('my_status'), statuses_dict),
         'notes': show.get('my_notes') or None,
         'start_date': canonical_date(show.get('my_start_date')),

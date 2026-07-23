@@ -643,3 +643,33 @@ def test_push_pacing_spaces_out_requests(monkeypatch):
     assert slept == [] or slept[0] <= 0
     adapter.push('2', {'progress': 5}, title='B')   # second: paced
     assert any(s > 0 for s in slept)
+
+
+def test_rewatch_count_is_a_synced_field(store):
+    """Rewatch count (MAL num_times_rewatched / AniList repeat / Kitsu
+    reconsumeCount) is tracked like progress: normalized in, owned, and
+    pushed out."""
+    from hakubun.sync.models import USER_FIELDS, DEFAULT_OWNERSHIP
+    assert 'rewatches' in USER_FIELDS
+    assert 'rewatches' in DEFAULT_OWNERSHIP
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', progress=26),
+                       show('anilist', 9, 'Bebop', mal_id=1, progress=26))
+    uid = _uid(store)
+    # Rewatched it twice; sync pushes that everywhere.
+    eng.edit_local(uid, 'rewatches', 2)
+    result = eng.apply(eng.plan())
+    assert result['errors'] == {}
+    assert libs['mal'].updates[-1]['my_rewatched_times'] == 2
+    assert libs['anilist'].updates[-1]['my_rewatched_times'] == 2
+    # Converges.
+    assert eng.fetch() == {}
+    assert [c for c in eng.plan().changes if c.field == 'rewatches'] == []
+
+
+def test_rewatch_count_normalizes_from_provider(store):
+    from hakubun.sync import normalize
+    from conftest import MEDIAINFO
+    s = show('anilist', 9, 'Bebop', my_rewatched_times=3)
+    entry = normalize.normalize_show('anilist', s, MEDIAINFO['anilist'])
+    assert entry.user['rewatches'] == 3

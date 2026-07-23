@@ -371,6 +371,7 @@ class libkitsu_graphql(lib):
                   rating
                   status
                   progress
+                  reconsumeCount
                   startedAt
                   finishedAt
                   updatedAt
@@ -407,6 +408,7 @@ class libkitsu_graphql(lib):
                     'my_id': entry['id'],
                     'my_progress': entry['progress'] or 0,
                     'my_score': float(rating) / 4.0 if rating else 0.0,
+                    'my_rewatched_times': entry.get('reconsumeCount') or 0,
                     'my_status': self._status_from_gql(entry['status']),
                     'my_start_date': self._iso2date(entry['startedAt']),
                     'my_finish_date': self._iso2date(entry['finishedAt']),
@@ -569,6 +571,8 @@ class libkitsu_graphql(lib):
         of only syncing progress/status/rating."""
         if 'my_progress' in item:
             input_fields['progress'] = item['my_progress']
+        if 'my_rewatched_times' in item:
+            input_fields['reconsumeCount'] = item['my_rewatched_times']
         if 'my_status' in item:
             input_fields['status'] = self._status_to_gql(item['my_status'])
         if 'my_score' in item:

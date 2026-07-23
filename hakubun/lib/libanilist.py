@@ -265,6 +265,7 @@ fragment mediaListEntry on MediaList {
   id
   score
   progress
+  repeat
   startedAt { year month day }
   updatedAt
   completedAt { year month day }
@@ -322,6 +323,7 @@ fragment mediaListEntry on MediaList {
                         '%d%%' % media['averageScore'] if media.get('averageScore') else None),
                     'mal_id': media.get('idMal'),
                     'my_progress': self._c(item['progress']),
+                    'my_rewatched_times': item.get('repeat') or 0,
                     'my_status': my_status,
                     'my_score': self._c(item['score']),
                     'total': self._c(media[self.total_str]),
@@ -350,6 +352,7 @@ fragment mediaListEntry on MediaList {
         'scoreRaw': 'Int',                   # The score of the media in 100 point
         # The amount of episodes/chapters consumed by the user
         'progress': 'Int',
+        'repeat': 'Int',                     # Times rewatched/reread
         'startedAt': 'FuzzyDateInput',       # When the entry was started by the user
         'completedAt': 'FuzzyDateInput',     # When the entry was completed by the user
     }
@@ -364,6 +367,8 @@ fragment mediaListEntry on MediaList {
             values['id'] = item['my_id']
         if 'my_progress' in item:
             values['progress'] = item['my_progress']
+        if 'my_rewatched_times' in item:
+            values['repeat'] = item['my_rewatched_times']
         if 'my_status' in item:
             values['status'] = item['my_status']
         if 'my_score' in item:

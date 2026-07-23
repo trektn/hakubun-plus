@@ -302,6 +302,7 @@ class libkitsu(lib):
                 'my_id': entry['id'],
                 'my_progress': entry['attributes']['progress'],
                 'my_score': float(rating)/4.00 if rating is not None else 0.0,
+                'my_rewatched_times': entry['attributes'].get('reconsumeCount', 0),
                 'my_status': entry['attributes']['status'],
                 'my_start_date': self._iso2date(entry['attributes']['startedAt']),
                 'my_finish_date': self._iso2date(entry['attributes']['finishedAt']),
@@ -548,6 +549,9 @@ class libkitsu(lib):
             values['data']['id'] = str(item['my_id'])
         if 'my_progress' in item:
             values['data']['attributes']['progress'] = item['my_progress']
+        if 'my_rewatched_times' in item:
+            values['data']['attributes']['reconsumeCount'] = \
+                item['my_rewatched_times']
         if 'my_status' in item:
             values['data']['attributes']['status'] = item['my_status']
         if 'my_score' in item:

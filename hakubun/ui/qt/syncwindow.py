@@ -43,7 +43,8 @@ from hakubun.sync.models import (FieldChange, FieldConflict, FieldPolicy,
 from hakubun.sync.store import SyncStore
 
 _FIELD_LABELS = {
-    'score': 'Score', 'progress': 'Watched Episodes', 'status': 'Status',
+    'score': 'Score', 'progress': 'Watched Episodes',
+    'rewatches': 'Rewatches', 'status': 'Status',
     'notes': 'Notes', 'start_date': 'Start Date',
     'finish_date': 'Finish Date', 'tags': 'Tags', 'favorite': 'Favorites',
 }

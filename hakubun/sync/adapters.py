@@ -222,6 +222,10 @@ class ProviderAdapter:
                                                             True):
                 item['my_progress'] = int(value or 0)
                 sent['progress'] = int(value or 0)
+            elif field == 'rewatches' and self.mediainfo.get('can_update',
+                                                            True):
+                item['my_rewatched_times'] = int(value or 0)
+                sent['rewatches'] = int(value or 0)
             elif field == 'status' and self.mediainfo.get('can_status',
                                                           True):
                 converted = normalize.provider_status(value, statuses_dict)
