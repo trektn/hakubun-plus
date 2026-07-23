@@ -71,14 +71,22 @@ def build_overlay(store, active_provider, active_mediainfo,
     ownership = store.ownership()
     score_owner = _score_owner_provider(ownership.get('score'),
                                         active_provider, provider_mediainfo)
+    # Bulk-load everything up front: this runs on the UI thread on
+    # every list repaint, so per-show queries (an N+1 pattern over the
+    # entire visible list) are exactly what it cannot afford.
+    mappings = [m for m in store.mappings_of_provider(active_provider)
+                if wanted is None or m['provider_id'] in wanted]
+    uids = [m['uuid'] for m in mappings]
+    locals_many = store.local_get_many(uids)
+    remotes_many = store.remote_get_many(
+        active_provider, [m['provider_id'] for m in mappings])
+    mappings_many = store.mappings_many(uids)
     overlay = {}
-    for mapping in store.mappings_of_provider(active_provider):
+    for mapping in mappings:
         pid = mapping['provider_id']
-        if wanted is not None and pid not in wanted:
-            continue
         uid = mapping['uuid']
-        local = store.local_get(uid)
-        remote = store.remote_get(active_provider, pid)
+        local = locals_many.get(uid, {})
+        remote = remotes_many.get(pid, {})
         fields = {}
         for field in USER_FIELDS:
             my_key = _MY_KEY.get(field)
@@ -107,7 +115,8 @@ def build_overlay(store, active_provider, active_mediainfo,
         #   _score_owner_raw  reconciled score in the owner's raw scale,
         #                     to seed the score editor (0 when unrated)
         #   _uuid           so an edit can address this entity in local
-        if score_owner and _is_shared(store, uid, active_provider):
+        if score_owner and _is_shared(mappings_many.get(uid, ()),
+                                      active_provider):
             owner_mi = provider_mediainfo[score_owner]
             canonical = local.get('score', (None,))[0]
             owner_raw = (normalize.provider_score(
@@ -136,14 +145,14 @@ def _eqish(a, b):
     return eq(a, b)
 
 
-def _is_shared(store, uid, active_provider):
+def _is_shared(entity_mappings, active_provider):
     """True when this entity is tracked on a provider OTHER than the
     active account -- i.e. genuinely cross-tracker. Only then does an
     owner other than the signed-in account get to dictate the rating
     system; a purely platform-specific entry (only the active account
     has it) keeps the active account's own system."""
     return any(m['provider'] != active_provider
-               for m in store.mappings_of(uid))
+               for m in entity_mappings)
 
 
 def _score_owner_provider(policy, active_provider, provider_mediainfo):

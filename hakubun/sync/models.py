@@ -128,6 +128,14 @@ class FieldConflict:
     policy: FieldPolicy
     title: str = ''
     note: str = ''           # extra context (e.g. structure mismatch)
+    # Progress across DIFFERING episode structures (1/1 movie vs a
+    # 4-episode listing): the provider values in `values` are raw
+    # numbers in each provider's own structure and canNOT be adopted
+    # into local state as-is -- resolution only accepts 'local' or an
+    # explicit 'value' in the local structure (engine.resolve_conflict
+    # enforces it; the UIs render the provider sides as information,
+    # not buttons).
+    structural: bool = False
 
     def describe(self) -> str:
         vals = ', '.join('%s %s' % (s, _short(v))

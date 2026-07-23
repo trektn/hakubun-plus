@@ -124,14 +124,22 @@ def show(provider, sid, title, progress=0, score=0, status=None,
 
 
 @pytest.fixture(autouse=True)
-def _clear_uibridge_adapter_cache():
-    """uibridge caches constructed adapters (display-overlay hot path);
-    tests monkeypatch adapter_from_account with per-test fakes, so the
-    cache must never carry an adapter across tests."""
+def _clear_uibridge_caches():
+    """uibridge caches constructed adapters and open stores (display-
+    overlay hot path); tests monkeypatch adapter_from_account and use
+    per-test database paths, so the caches must never carry anything
+    across tests."""
     from hakubun.sync import uibridge
-    uibridge._adapter_cache.clear()
+
+    def clear():
+        uibridge._adapter_cache.clear()
+        for store in uibridge._store_cache.values():
+            store.close()
+        uibridge._store_cache.clear()
+
+    clear()
     yield
-    uibridge._adapter_cache.clear()
+    clear()
 
 
 @pytest.fixture

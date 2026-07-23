@@ -26,8 +26,8 @@ import traceback
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
-                             QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                             QMenu, QMessageBox, QPlainTextEdit,
+                             QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+                             QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
                              QProgressBar, QPushButton, QRadioButton,
                              QScrollArea, QSplitter, QTabWidget, QTextBrowser,
                              QToolButton, QTreeWidget, QTreeWidgetItem,
@@ -463,12 +463,28 @@ class SyncWindow(QDialog):
                 text = ('Use %s: %s' % (self._local_label(), shown)
                         if self.engine.primary else
                         'Keep yours: %s' % shown)
+            elif conflict.structural:
+                # The provider's number is in ITS OWN episode
+                # structure -- adopting it raw would record a
+                # different amount as watched, so it is information
+                # here, never a button (engine.resolve_conflict
+                # refuses it too).
+                info = QLabel('%s is at %s (its own structure)'
+                              % (source.capitalize(), shown))
+                row.addWidget(info)
+                continue
             else:
                 text = 'Use %s: %s' % (source.capitalize(), shown)
             button = QPushButton(text)
             button.clicked.connect(
                 lambda _checked=False, c=conflict, s=source:
                 self._resolve_inline(c, s))
+            row.addWidget(button)
+        if conflict.structural:
+            button = QPushButton('Set episodes…')
+            button.clicked.connect(
+                lambda _checked=False, c=conflict:
+                self._resolve_structural(c))
             row.addWidget(button)
         row.addStretch()
         card.addLayout(row)
@@ -503,6 +519,22 @@ class SyncWindow(QDialog):
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
+        self._status('Resolved %s for %s — replanning...' % (
+            _FIELD_LABELS.get(conflict.field, conflict.field),
+            conflict.title))
+        self._replan()
+
+    def _resolve_structural(self, conflict):
+        """Resolve a differing-episode-structures conflict with an
+        explicit episode count in the LOCAL structure."""
+        current = conflict.values.get('local') or 0
+        value, ok = QInputDialog.getInt(
+            self, 'Set episodes',
+            '%s\nEpisodes watched, in the local structure:'
+            % conflict.title, int(current), 0, 100000)
+        if not ok:
+            return
+        self.engine.resolve_conflict(conflict, 'value', value=value)
         self._status('Resolved %s for %s — replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field),
             conflict.title))

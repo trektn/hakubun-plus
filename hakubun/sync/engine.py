@@ -45,7 +45,14 @@ class SyncEngine:
     def fetch(self, providers=None):
         """Download every provider's state (remote-tracking update).
         Returns {provider: error message} for providers that failed;
-        the others complete regardless."""
+        the others complete regardless.
+
+        Failure isolation covers PROCESSING too, not just the network
+        call: a bug normalizing or identity-resolving one provider's
+        entries rolls back that provider's writes (one transaction per
+        provider -- which also turns thousands of per-entry commits
+        into one) and records the error, instead of killing the whole
+        fetch with half a provider's rows committed."""
         errors = {}
         seed_txn = None
         for name, adapter in self.adapters.items():
@@ -56,30 +63,68 @@ class SyncEngine:
             except Exception as e:  # failure isolation, incl. bugs
                 errors[name] = str(e)
                 continue
-            for entry in entries:
-                # Reserved '_'-prefixed fields are metadata, never
-                # synced (never in ownership, so they never diff):
-                # '_total' is the provider's own episode count (needed
-                # to translate progress between differing structures);
-                # '_my_id' is the provider's library-entry id, which
-                # Kitsu (both backends) requires to address an update
-                # -- distinct from the media id and only learnable
-                # from a fetch, so it must be persisted for pushes.
-                self.store.remote_set_all(
-                    name, entry.provider_id,
-                    {**entry.user, '_total': entry.total,
-                     '_my_id': entry.my_id})
-                uid = self.identity.resolve_entry(entry)
-                if uid is None:
-                    continue
-                self._update_entity_meta(uid, entry)
-                if not self.store.local_get(uid):
+            try:
+                with self.store.transaction():
                     if seed_txn is None:
                         seed_txn = self.history.new_txn()
-                    self._seed_entity(seed_txn, uid, entry)
-                else:
-                    self._settle_base(uid, name, entry)
+                    self._ingest(name, entries, seed_txn)
+            except Exception as e:
+                errors[name] = '%s: %s' % (type(e).__name__, e)
         return errors
+
+    def _ingest(self, name, entries, seed_txn):
+        """Store one provider's fetched entries (inside a transaction)."""
+        for entry in entries:
+            # Reserved '_'-prefixed fields are metadata, never
+            # synced (never in ownership, so they never diff):
+            # '_total' is the provider's own episode count (needed
+            # to translate progress between differing structures);
+            # '_my_id' is the provider's library-entry id, which
+            # Kitsu (both backends) requires to address an update
+            # -- distinct from the media id and only learnable
+            # from a fetch, so it must be persisted for pushes.
+            self.store.remote_set_all(
+                name, entry.provider_id,
+                {**entry.user, '_total': entry.total,
+                 '_my_id': entry.my_id})
+            uid = self.identity.resolve_entry(entry)
+            if uid is None:
+                continue
+            self._update_entity_meta(uid, entry)
+            if not self.store.local_get(uid):
+                self._seed_entity(seed_txn, uid, entry)
+            else:
+                self._settle_base(uid, name, entry)
+        self._forget_unlisted(name, entries)
+
+    def _forget_unlisted(self, name, entries):
+        """Remote-tracking rows for entries the provider no longer
+        returned (deleted on the website since the last fetch) are
+        dropped, and their merge bases with it: the snapshot must
+        mirror what the provider actually holds, or the planner keeps
+        diffing -- and pushing -- against a phantom. With no remote row
+        the provider simply contributes nothing for that entity; if
+        the entry ever reappears it re-plans as a first sync (NO_BASE:
+        equal values settle, differing ones surface to policy/user)
+        instead of being diffed against a base from before the
+        deletion. Local state is untouched -- a remote delete is never
+        propagated as a local one.
+
+        A fetch that returns an EMPTY list while we track entries for
+        this provider is left alone: indistinguishable from an API
+        quietly returning nothing, and wiping every base over a hiccup
+        is far worse than keeping a stale snapshot one run longer."""
+        fetched = {str(e.provider_id) for e in entries}
+        if not fetched:
+            return
+        stale = self.store.remote_provider_ids(name) - fetched
+        for pid in stale:
+            self._debug('%s no longer lists entry %s; dropping its '
+                        'remote snapshot' % (name, pid))
+            self.store.remote_delete(name, pid)
+            mapping = self.store.mapping_for(name, pid)
+            if mapping:
+                self.store.base_delete(mapping['uuid'], name)
 
     def _seed_entity(self, txn, uid, entry):
         """First sight of an entity: import this provider's state as the
@@ -160,27 +205,47 @@ class SyncEngine:
                                        candidates=r['candidates'],
                                        status=r['status'])
                          for r in self.store.identity_open()]
-        for ent in self.store.entities():
-            self._plan_entity(plan, ent, ownership, mode)
+        # Bulk-load every table the per-entity planner reads: per-uid
+        # queries in this loop are an N+1 pattern that scales as
+        # entities x providers x 3 round-trips.
+        ents = self.store.entities()
+        uids = [e['uuid'] for e in ents]
+        snapshot = {
+            'mappings': self.store.mappings_many(uids),
+            'local': self.store.local_get_many(uids),
+            'base': self.store.base_get_many(uids),
+        }
+        ids_by_provider = {}
+        for maps in snapshot['mappings'].values():
+            for m in maps:
+                if m['provider'] in self.adapters:
+                    ids_by_provider.setdefault(m['provider'], []).append(
+                        m['provider_id'])
+        snapshot['remote'] = {
+            provider: self.store.remote_get_many(provider, ids)
+            for provider, ids in ids_by_provider.items()}
+        for ent in ents:
+            self._plan_entity(plan, ent, ownership, mode, snapshot)
         return plan
 
-    def _plan_entity(self, plan, ent, ownership, mode):
+    def _plan_entity(self, plan, ent, ownership, mode, snapshot):
         uid = ent['uuid']
         title = ent.get('title') or uid[:8]
-        mappings = [m for m in self.store.mappings_of(uid)
+        mappings = [m for m in snapshot['mappings'].get(uid, [])
                     if m['provider'] in self.adapters]
         if ent.get('provider_only'):
             mappings = [m for m in mappings
                         if m['provider'] == ent['provider_only']]
         if not mappings:
             return
-        local = self.store.local_get(uid)
+        local = snapshot['local'].get(uid, {})
         sides = {}
         for m in mappings:
             provider = m['provider']
             sides[provider] = (
-                self.store.remote_get(provider, m['provider_id']),
-                self.store.base_get(uid, provider))
+                snapshot['remote'].get(provider, {}).get(
+                    m['provider_id'], {}),
+                snapshot['base'].get((uid, provider), {}))
 
         ent_total = ent.get('total')
         for field, policy in ownership.items():
@@ -224,7 +289,7 @@ class SyncEngine:
                         for p, (_, sc) in mismatched.items()))
                 plan.conflicts.append(FieldConflict(
                     uid, field, values, base=None, policy=policy,
-                    title=title, note=note))
+                    title=title, note=note, structural=True))
                 continue
             if not states:
                 continue
@@ -414,7 +479,8 @@ class SyncEngine:
                     base=None, policy=policy, title=title,
                     note='episode structures differ: local total %s vs'
                          ' %s total %s' % (ent_total or '?', provider,
-                                           r_scale or '?')))
+                                           r_scale or '?'),
+                    structural=True))
                 return
             plan.changes.append(FieldChange(
                 uid, field, raw_r, target_val, target=provider,
@@ -645,7 +711,21 @@ class SyncEngine:
         """Resolve a FieldConflict: choice is a source key from
         conflict.values ('local', a provider) or 'value' with an
         explicit value. Writes local state; divergent providers re-plan
-        as pushes of the resolved value."""
+        as pushes of the resolved value.
+
+        A STRUCTURAL conflict (progress across differing episode
+        structures) only accepts 'local' or 'value': the provider-side
+        numbers are in each provider's OWN structure, and writing one
+        raw into local state would record a different amount of the
+        work as watched (Kitsu's 1 of a 1-episode movie is not 1 of
+        the local 4-episode listing)."""
+        if getattr(conflict, 'structural', False) \
+                and choice not in ('local', 'value'):
+            raise ValueError(
+                "episode structures differ: %s's value is in its own "
+                'structure and cannot be adopted as-is -- choose '
+                "'local' or supply an explicit value in the local "
+                'structure' % choice)
         if choice == 'value':
             if value is _UNSET:
                 raise ValueError("choice 'value' needs value=")

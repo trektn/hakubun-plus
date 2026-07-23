@@ -200,6 +200,12 @@ local_state(uuid TEXT NOT NULL, field TEXT NOT NULL,
 remote_state(provider TEXT NOT NULL, provider_id TEXT NOT NULL,
              field TEXT NOT NULL, value TEXT, fetched_at REAL NOT NULL,
              PRIMARY KEY(provider, provider_id, field))     -- remote-tracking
+             -- fetched_at advances only when the VALUE changes: it means
+             -- "when this value was first seen", the closest available
+             -- approximation of when the remote actually changed, which
+             -- is what newest-wins arbitration compares to local edit
+             -- times (a plain fetch timestamp would make the remote side
+             -- look freshly changed on every fetch and always win ties)
 
 base_state(uuid TEXT NOT NULL, provider TEXT NOT NULL, field TEXT NOT NULL,
            value TEXT, synced_at REAL NOT NULL,
@@ -289,8 +295,25 @@ remote state) and progress is classified through the local structure:
 on push/pull (each provider receives its own total, never a raw copy),
 and *partial* progress across differing structures is incomparable — it
 surfaces once as a structure-mismatch conflict and is never guessed.
-(anime-relations' episode ranges are the future path for translating
-partials.)
+Such a conflict is *structural* (`FieldConflict.structural`): the
+provider-side numbers are in each provider's own structure, so
+resolution only accepts "keep local" or an explicit value in the local
+structure — adopting a raw provider number would record a different
+amount of the work as watched, and both the engine and the UIs refuse
+it. (anime-relations' episode ranges are the future path for
+translating partials.)
+
+**Deletions on a provider**: entries a fetch no longer returns
+(deleted on the website since the last sync) have their remote-tracking
+rows and merge bases dropped — the snapshot must mirror what the
+provider actually holds, or the planner keeps diffing (and pushing)
+against a phantom. The provider then simply contributes nothing for
+that entity; local state is untouched (a remote delete never propagates
+as a local one), and a reappearing entry re-plans as a first sync
+(NO_BASE). A fetch that returns an *empty* list while entries are still
+tracked is left alone: it is indistinguishable from an API quietly
+failing, and wiping every merge base over a hiccup is worse than
+keeping a stale snapshot one run longer.
 
 ### Apply, failure, rollback
 
@@ -302,7 +325,11 @@ Apply runs as one transaction id (`txn`, a UUID):
    isolation**: one provider erroring skips only its pushes; its
    base_state is *not* advanced (so the same changes re-plan next sync),
    other providers proceed. The plan result records per-provider
-   success/failure.
+   success/failure. Fetch isolates the same way, and not just around
+   the network call: each provider's entries are ingested in one
+   transaction, so a bug processing them (normalize/identity) rolls
+   that provider back cleanly and records the error instead of killing
+   the whole fetch with half its rows committed.
 4. `rollback(txn)` (user-facing undo): appends inverse events, restores
    local_state, rewinds base_state for that txn — and re-plans so
    already-pushed values show up as pending pushes of the restored

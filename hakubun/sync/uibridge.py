@@ -36,6 +36,25 @@ def store_path(media_type):
 # Bounded by accounts x media types, i.e. tiny.
 _adapter_cache = {}
 
+# One SyncStore per database path, for the same reason: opening a
+# store runs the whole schema script plus migration checks, which is
+# real work to redo on every repaint. Safe to keep open: the sync
+# window uses its OWN store instance and WAL mode lets this reader
+# coexist with its writes (each autocommit read sees a fresh
+# snapshot), the connection is created with check_same_thread=False
+# and locked internally, and even the window's 'reset database' action
+# recreates the tables in the same file, which a cached connection
+# follows naturally.
+_store_cache = {}
+
+
+def _get_store(db):
+    store = _store_cache.get(db)
+    if store is None:
+        from hakubun.sync.store import SyncStore
+        store = _store_cache[db] = SyncStore(db)
+    return store
+
 
 def provider_mediainfo(accounts, media_type, msg):
     """{provider: mediainfo} for every configured account.
@@ -74,17 +93,12 @@ def build_list_overlay(accounts, active_api, active_mediainfo, media_type,
     ever been synced, so the list shows exactly the account's own values.
     Read-only: it never writes to the store.
     """
-    from hakubun.sync.store import SyncStore
     db = store_path(media_type)
     if not utils.file_exists(db):
         return {}, {}
     pmi = provider_mediainfo(accounts, media_type, msg)
-    store = SyncStore(db)
-    try:
-        overlay = build_overlay(store, active_api, active_mediainfo,
-                                provider_mediainfo=pmi, show_ids=show_ids)
-    finally:
-        store.close()
+    overlay = build_overlay(_get_store(db), active_api, active_mediainfo,
+                            provider_mediainfo=pmi, show_ids=show_ids)
     return overlay, pmi
 
 
@@ -99,19 +113,15 @@ def write_owned_score(media_type, active_api, showid, owner_raw,
     score was written; False to fall back to the active-account path
     (no database, or this account has no mapping for the show).
     """
-    from hakubun.sync.store import SyncStore
     from hakubun.sync.engine import SyncEngine
     db = store_path(media_type)
     if not owner_mediainfo or not utils.file_exists(db):
         return False
-    store = SyncStore(db)
-    try:
-        mapping = store.mapping_for(active_api, str(showid))
-        if not mapping:
-            return False
-        canonical = normalize.canonical_score(
-            owner_raw, owner_mediainfo.get('score_max', 10))
-        SyncEngine(store).set_local_field(mapping['uuid'], 'score', canonical)
-    finally:
-        store.close()
+    store = _get_store(db)
+    mapping = store.mapping_for(active_api, str(showid))
+    if not mapping:
+        return False
+    canonical = normalize.canonical_score(
+        owner_raw, owner_mediainfo.get('score_max', 10))
+    SyncEngine(store).set_local_field(mapping['uuid'], 'score', canonical)
     return True

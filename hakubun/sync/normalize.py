@@ -16,6 +16,7 @@ quarter-star -- "MAL and Kitsu will be rounded".
 """
 
 import datetime
+import functools
 import re
 import unicodedata
 
@@ -152,11 +153,19 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
 _TITLE_JUNK = re.compile(r'[\W_]+', re.UNICODE)
 
 
+@functools.lru_cache(maxsize=16384)
 def normalize_title(title):
     """NFKC + casefold + strip punctuation, keeping word characters of
     every script -- a native title like 葬送のフリーレン must survive
     normalization (an earlier latin-only regex reduced CJK titles to
     empty strings, breaking matching entirely for users whose AniList
-    title language is Native). NFKC also unifies full-width forms."""
+    title language is Native). NFKC also unifies full-width forms.
+
+    Memoized: identity resolution normalizes every entity's title and
+    aliases again for EVERY unmatched fetched entry (candidate scan),
+    which is quadratic in list size -- a first sync of a large list
+    re-normalizes the same few thousand strings millions of times.
+    Titles recur constantly and the cache is bounded, so this turns
+    the whole scan into dict lookups."""
     text = unicodedata.normalize('NFKC', title or '')
     return _TITLE_JUNK.sub(' ', text.casefold()).strip()

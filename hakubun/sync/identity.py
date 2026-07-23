@@ -135,12 +135,25 @@ class IdentityResolver:
         askable = [c for c in candidates
                    if entry.provider not in c['providers']]
         if askable:
-            status = previous['status'] if previous else 'open'
+            # Preserve ONLY a live 'deferred' (the user asked to keep
+            # watching); any other previous status ('resolved' whose
+            # mapping has since been quarantined away, ...) must reopen
+            # -- carrying it over would leave a real unresolved entry
+            # invisibly marked resolved forever.
+            status = ('deferred' if previous
+                      and previous['status'] == 'deferred' else 'open')
             store.identity_upsert(entry.provider, entry.provider_id,
                                   entry.title, askable, status=status,
                                   entry=self._entry_payload(entry))
             return None
         return self._create_entity(entry)
+
+    def _reopen_status(self, provider, provider_id):
+        """Status for re-recording a conflict: keep a live 'deferred'
+        (a user choice), reopen anything else (see resolve_entry)."""
+        row = self._store.identity_get(provider, provider_id)
+        return ('deferred' if row and row['status'] == 'deferred'
+                else 'open')
 
     def _exact_link(self, entry):
         """Link via ids the provider itself publishes (or the
@@ -189,6 +202,8 @@ class IdentityResolver:
                 for uid, src, prov, pid, mt in mismatched]
             store.identity_upsert(entry.provider, entry.provider_id,
                                   entry.title, candidates,
+                                  status=self._reopen_status(
+                                      entry.provider, entry.provider_id),
                                   entry=self._entry_payload(entry))
             return 'ambiguous'
         if targets:
@@ -201,6 +216,9 @@ class IdentityResolver:
                                                  via='provider-duplicate')]
                 store.identity_upsert(entry.provider, entry.provider_id,
                                       entry.title, candidates,
+                                      status=self._reopen_status(
+                                          entry.provider,
+                                          entry.provider_id),
                                       entry=self._entry_payload(entry))
                 return 'ambiguous'
             store.add_mapping(uid, entry.provider, entry.provider_id,

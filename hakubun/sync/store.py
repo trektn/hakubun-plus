@@ -85,6 +85,15 @@ def _load(text):
     return None if text is None else json.loads(text)
 
 
+def _chunked(seq, size=500):
+    """Split a sequence for SQL IN() lists (SQLite caps bound
+    parameters per statement; 500 stays far under every build's
+    limit)."""
+    seq = list(seq)
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
 class SyncStore:
     """All multisync persistence. Values are JSON-encoded.
 
@@ -266,6 +275,18 @@ class SyncStore:
             'SELECT * FROM mappings WHERE provider=?',
             (provider,)).fetchall()]
 
+    def mappings_many(self, uids):
+        """{uid: [mapping, ...]} for many entities in a few queries.
+        The per-uid mappings_of() in a loop is an N+1 pattern neither
+        the planner nor the display overlay can afford."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec('SELECT * FROM mappings WHERE uuid IN'
+                                ' (%s)' % marks, chunk).fetchall():
+                out.setdefault(r['uuid'], []).append(dict(r))
+        return out
+
     # -- state tables --------------------------------------------------
 
     def local_get(self, uid):
@@ -280,6 +301,20 @@ class SyncStore:
             ' updated_at) VALUES(?,?,?,?)',
             (uid, field, _dump(value), ts if ts is not None else time.time()))
 
+    def local_get_many(self, uids):
+        """{uid: {field: (value, updated_at)}} for many entities in a
+        few queries (see mappings_many on why)."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, field, value, updated_at FROM'
+                    ' local_state WHERE uuid IN (%s)' % marks,
+                    chunk).fetchall():
+                out.setdefault(r['uuid'], {})[r['field']] = (
+                    _load(r['value']), r['updated_at'])
+        return out
+
     def remote_get(self, provider, provider_id):
         rows = self._exec(
             'SELECT field, value, fetched_at FROM remote_state'
@@ -288,15 +323,54 @@ class SyncStore:
         return {r['field']: (_load(r['value']), r['fetched_at'])
                 for r in rows}
 
+    def remote_get_many(self, provider, provider_ids):
+        """{provider_id: {field: (value, fetched_at)}} for many entries
+        of one provider in a few queries (see mappings_many on why)."""
+        out = {}
+        for chunk in _chunked(str(p) for p in provider_ids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT provider_id, field, value, fetched_at FROM'
+                    ' remote_state WHERE provider=? AND provider_id IN'
+                    ' (%s)' % marks, [provider, *chunk]).fetchall():
+                out.setdefault(r['provider_id'], {})[r['field']] = (
+                    _load(r['value']), r['fetched_at'])
+        return out
+
     def remote_set_all(self, provider, provider_id, values, ts=None):
+        """Write a remote-tracking snapshot. fetched_at advances ONLY
+        when the stored value actually changes, so it means 'when this
+        value was first seen' -- the closest available approximation of
+        when the remote really changed, which is what newest-wins merge
+        arbitration compares against local edit times. (Advancing it on
+        every fetch would make the remote side of every divergence look
+        freshly changed and always win the tie.) Unchanged values are
+        not rewritten at all, which also keeps a full-list fetch from
+        churning thousands of no-op row writes."""
         ts = ts if ts is not None else time.time()
         with self.transaction():
             for field, value in values.items():
                 self._exec(
-                    'INSERT OR REPLACE INTO remote_state(provider,'
-                    ' provider_id, field, value, fetched_at)'
-                    ' VALUES(?,?,?,?,?)',
+                    'INSERT INTO remote_state(provider, provider_id,'
+                    ' field, value, fetched_at) VALUES(?,?,?,?,?)'
+                    ' ON CONFLICT(provider, provider_id, field)'
+                    ' DO UPDATE SET value=excluded.value,'
+                    ' fetched_at=excluded.fetched_at'
+                    ' WHERE excluded.value IS NOT remote_state.value',
                     (provider, str(provider_id), field, _dump(value), ts))
+
+    def remote_provider_ids(self, provider):
+        """Every provider_id currently remote-tracked for a provider."""
+        return {r['provider_id'] for r in self._exec(
+            'SELECT DISTINCT provider_id FROM remote_state'
+            ' WHERE provider=?', (provider,)).fetchall()}
+
+    def remote_delete(self, provider, provider_id):
+        """Drop an entry's remote-tracking rows -- the provider no
+        longer lists it, so there is no remote snapshot to diff
+        against."""
+        self._exec('DELETE FROM remote_state WHERE provider=? AND'
+                   ' provider_id=?', (provider, str(provider_id)))
 
     def base_get(self, uid, provider):
         rows = self._exec(
@@ -304,15 +378,36 @@ class SyncStore:
             (uid, provider)).fetchall()
         return {r['field']: _load(r['value']) for r in rows}
 
+    def base_get_many(self, uids):
+        """{(uid, provider): {field: value}} for many entities in a few
+        queries (see mappings_many on why)."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, provider, field, value FROM base_state'
+                    ' WHERE uuid IN (%s)' % marks, chunk).fetchall():
+                out.setdefault((r['uuid'], r['provider']), {})[
+                    r['field']] = _load(r['value'])
+        return out
+
     def base_set(self, uid, provider, field, value):
         self._exec(
             'INSERT OR REPLACE INTO base_state(uuid, provider, field,'
             ' value, synced_at) VALUES(?,?,?,?,?)',
             (uid, provider, field, _dump(value), time.time()))
 
-    def base_delete(self, uid, provider, field):
-        self._exec('DELETE FROM base_state WHERE uuid=? AND provider=?'
-                   ' AND field=?', (uid, provider, field))
+    def base_delete(self, uid, provider, field=None):
+        """Forget the merge base -- for one field, or (field=None) for
+        every field of the (entity, provider) pair, e.g. when the
+        provider no longer lists the entry and any future reappearance
+        must be treated as a first sync."""
+        if field is None:
+            self._exec('DELETE FROM base_state WHERE uuid=? AND'
+                       ' provider=?', (uid, provider))
+        else:
+            self._exec('DELETE FROM base_state WHERE uuid=? AND provider=?'
+                       ' AND field=?', (uid, provider, field))
 
     # -- ownership -----------------------------------------------------
 
@@ -331,12 +426,19 @@ class SyncStore:
 
     def identity_upsert(self, provider, provider_id, title, candidates,
                         status='open', entry=None):
+        """Record (or refresh) an identity conflict. The status is
+        written on update too: a row that was once 'resolved' can
+        genuinely become unresolved again (its mapping quarantined by
+        identity.py's type-mismatch guard) and must reappear in
+        identity_open() rather than staying invisibly 'resolved'
+        forever. Callers that want to preserve a previous status
+        (e.g. keep a 'deferred' row deferred) pass it explicitly."""
         self._exec(
             'INSERT INTO identity_conflicts(provider, provider_id, title,'
             ' candidates, status, created_at, entry) VALUES(?,?,?,?,?,?,?)'
             ' ON CONFLICT(provider, provider_id) DO UPDATE SET'
             ' title=excluded.title, candidates=excluded.candidates,'
-            ' entry=excluded.entry',
+            ' status=excluded.status, entry=excluded.entry',
             (provider, str(provider_id), title, _dump(candidates),
              status, time.time(), _dump(entry)))
 

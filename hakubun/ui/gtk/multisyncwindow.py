@@ -425,11 +425,25 @@ class MultiSyncWindow(Gtk.Window):
             if source == 'local':
                 text = ('Use %s: %s' % (self._local_label(), shown)
                         if self.engine.primary else 'Keep yours: %s' % shown)
+            elif conflict.structural:
+                # The provider's number is in ITS OWN episode structure
+                # -- adopting it raw would record a different amount as
+                # watched, so it is information here, never a button
+                # (engine.resolve_conflict refuses it too).
+                info = Gtk.Label(label='%s is at %s (its own structure)'
+                                 % (source.capitalize(), shown))
+                row.pack_start(info, False, False, 0)
+                continue
             else:
                 text = 'Use %s: %s' % (source.capitalize(), shown)
             button = Gtk.Button(label=text)
             button.connect('clicked', lambda _b, c=conflict, s=source:
                            self._resolve_inline(c, s))
+            row.pack_start(button, False, False, 0)
+        if conflict.structural:
+            button = Gtk.Button(label='Set episodes…')
+            button.connect('clicked', lambda _b, c=conflict:
+                           self._resolve_structural(c))
             row.pack_start(button, False, False, 0)
         box.pack_start(row, False, False, 0)
         frame.add(box)
@@ -452,6 +466,34 @@ class MultiSyncWindow(Gtk.Window):
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
+        self._status('Resolved %s for %s -- replanning...' % (
+            _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
+        self._run(self.engine.plan, self.r_planned, 'Planning...',
+                  self._current_mode())
+
+    def _resolve_structural(self, conflict):
+        """Resolve a differing-episode-structures conflict with an
+        explicit episode count in the LOCAL structure."""
+        dialog = Gtk.Dialog(title='Set episodes', transient_for=self,
+                            modal=True)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        content = dialog.get_content_area()
+        content.set_border_width(8)
+        content.set_spacing(6)
+        content.pack_start(Gtk.Label(
+            label='%s\nEpisodes watched, in the local structure:'
+            % conflict.title, xalign=0, wrap=True), False, False, 0)
+        spin = Gtk.SpinButton.new_with_range(0, 100000, 1)
+        spin.set_value(int(conflict.values.get('local') or 0))
+        content.pack_start(spin, False, False, 0)
+        content.show_all()
+        response = dialog.run()
+        value = spin.get_value_as_int()
+        dialog.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+        self.engine.resolve_conflict(conflict, 'value', value=value)
         self._status('Resolved %s for %s -- replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
         self._run(self.engine.plan, self.r_planned, 'Planning...',
