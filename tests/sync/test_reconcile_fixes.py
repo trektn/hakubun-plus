@@ -145,6 +145,81 @@ def test_structural_conflict_rejects_provider_choice(store):
     assert store.local_get(uid)['progress'][0] == 3
 
 
+# -- fields a provider cannot represent are absent, not empty ---------
+
+def test_normalize_omits_unrepresentable_fields():
+    from hakubun.sync import normalize
+    from conftest import MEDIAINFO
+
+    # MAL has no tags feature (no can_tag): the field must be ABSENT,
+    # not fabricated as []. No lib reports notes/favorites at all.
+    entry = normalize.normalize_show(
+        'mal', show('mal', 1, 'Frieren'), MEDIAINFO['mal'])
+    assert 'tags' not in entry.user
+    assert 'notes' not in entry.user
+    assert 'favorite' not in entry.user
+    # AniList (can_tag) keeps tags, parsed from the my_tags string.
+    entry = normalize.normalize_show(
+        'anilist', show('anilist', 1, 'Frieren', my_tags='b, a'),
+        MEDIAINFO['anilist'])
+    assert entry.user['tags'] == ['a', 'b']
+
+
+def test_unsent_push_never_advances_base_or_remote(store):
+    """A push the adapter could not deliver (capability gap) must not
+    be recorded as delivered: doing so poisons the merge base with a
+    value the remote never held, and the provider's real value later
+    reads as a fresh remote edit that pulls local's value away."""
+    from hakubun.sync.models import FieldChange, SyncPlan, SyncMode
+
+    mal = FakeLib('mal', [show('mal', 1, 'Frieren')])
+    engine = make_engine(store, {'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '1')['uuid']
+
+    plan = SyncPlan(SyncMode.MERGE)
+    plan.changes.append(FieldChange(uid, 'tags', None, ['a'],
+                                    target='mal', source='local',
+                                    title='Frieren'))
+    result = engine.apply(plan)
+
+    assert result['pushed'] == 0 and result['errors'] == {}
+    assert 'tags' not in store.base_get(uid, 'mal')
+    assert 'tags' not in store.remote_get('mal', '1')
+
+
+def test_fetch_prunes_fabricated_remote_fields(store):
+    """Rows earlier revisions fabricated (tags=[] for a tagless
+    provider) are dropped by the next fetch."""
+    mal = FakeLib('mal', [show('mal', 1, 'Frieren')])
+    engine = make_engine(store, {'mal': mal})
+    store.remote_set_all('mal', '1', {'tags': [], 'favorite': False})
+    assert engine.fetch() == {}
+    remote = store.remote_get('mal', '1')
+    assert 'tags' not in remote and 'favorite' not in remote
+    assert 'progress' in remote          # real fields intact
+
+
+def test_local_tags_survive_tagless_providers(store):
+    """End-to-end: tags live on AniList, MAL cannot store them; local
+    tags must persist across repeated fetch+plan cycles instead of
+    being erased by MAL's inability to hold them."""
+    mal = FakeLib('mal', [show('mal', 1, 'Frieren', progress=3)])
+    anilist = FakeLib('anilist', [show('anilist', 11, 'Frieren',
+                                       progress=3, my_tags='fantasy',
+                                       mal_id=1)])
+    engine = make_engine(store, {'mal': mal, 'anilist': anilist})
+
+    for _ in range(3):
+        assert engine.fetch() == {}
+        plan = engine.plan()
+        assert not plan.conflicts
+        engine.apply(plan)
+
+    uid = store.mapping_for('mal', '1')['uuid']
+    assert store.local_get(uid)['tags'][0] == ['fantasy']
+
+
 # -- identity: a quarantined mapping reopens its conflict -------------
 
 def test_quarantined_mapping_reopens_resolved_conflict(store):

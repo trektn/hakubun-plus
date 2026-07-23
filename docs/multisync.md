@@ -287,6 +287,16 @@ is never clamped against an unknown total, and a provider reporting
 `total=None` for an airing show never produces a metadata conflict
 (missing values never "win" over known values, and never conflict).
 
+**Unrepresentable fields**: a field a provider cannot represent (tags
+on MAL/Kitsu; notes and favorites everywhere until a lib exposes them)
+is *absent* from its normalized entries and remote snapshot, never
+fabricated as empty — the diff simply skips it for that provider. The
+apply side matches: a push the adapter could not actually deliver is
+never recorded as delivered (no base/remote advance), because a merge
+base claiming the remote holds a value it never received turns the
+provider's real value into a phantom "remote edit" on the next fetch —
+one that would pull the local value away.
+
 **Differing episode structures**: the same work can be a 1-episode
 movie on one provider and a 4-episode listing on another (Kaguya-sama:
 First Kiss). Each provider's own total is snapshotted (`_total` in

@@ -117,6 +117,13 @@ class SyncEngine:
         fetched = {str(e.provider_id) for e in entries}
         if not fetched:
             return
+        # Fields no fetched entry reports (normalize omits the ones
+        # this provider cannot represent) have no business staying in
+        # its snapshot -- earlier revisions fabricated e.g. tags=[]
+        # for tagless providers, and those rows would diff forever.
+        reported = {f for e in entries for f in e.user}
+        self.store.remote_prune_fields(
+            name, reported | {'_total', '_my_id'})
         stale = self.store.remote_provider_ids(name) - fetched
         for pid in stale:
             self._debug('%s no longer lists entry %s; dropping its '
@@ -646,7 +653,18 @@ class SyncEngine:
                     break  # isolate: skip the rest of this provider
                 with self.store.transaction():
                     for c in chs:
-                        value = sent.get(c.field, c.new)
+                        if c.field not in sent:
+                            # The adapter could not represent this
+                            # field (capability gap, or a value that
+                            # failed conversion): nothing reached the
+                            # provider, so recording it as pushed
+                            # would poison the merge base with a value
+                            # the remote never held -- and the next
+                            # fetch would read the provider's real
+                            # value as a fresh remote edit and pull it
+                            # back OVER local. Record nothing.
+                            continue
+                        value = sent[c.field]
                         self.history.record(txn, uid, c.field, c.old,
                                             value, provider, op='push')
                         self.store.base_set(uid, provider, c.field, value)

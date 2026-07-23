@@ -113,8 +113,9 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
     Missing fields normalize to None/empty -- unknown, never zero-ish:
     an unknown episode count must not read as "0 episodes".
     """
-    statuses_dict = (mediainfo or {}).get('statuses_dict') or {}
-    score_max = (mediainfo or {}).get('score_max')
+    mi = mediainfo or {}
+    statuses_dict = mi.get('statuses_dict') or {}
+    score_max = mi.get('score_max')
     start = show.get('start_date')
     year = None
     if isinstance(start, (datetime.datetime, datetime.date)):
@@ -132,6 +133,30 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
                 else sorted(show.get('my_tags') or []),
         'favorite': bool(show.get('my_favorite', False)),
     }
+    # A field the provider cannot represent is OMITTED, never
+    # fabricated as empty. A fetched entry claiming tags=[] from a
+    # provider with no tags feature would enter remote_state as a real
+    # (empty) remote value and diff against local -- and since a push
+    # of the field can never actually be sent there, the provider's
+    # nothingness would eventually read back as a phantom 'remote
+    # edit' and pull local's real value away. Absence means absence
+    # (the engine's 'provider can't represent this field' skip).
+    # Capability defaults mirror ProviderAdapter.push's exactly; notes
+    # and favorites additionally require the lib to actually report
+    # them (none does yet -- the model keeps the fields for future
+    # adapters).
+    representable = {
+        'score': mi.get('can_score', True),
+        'status': mi.get('can_status', True),
+        'progress': mi.get('can_update', True),
+        'rewatches': mi.get('can_update', True),
+        'start_date': mi.get('can_date', True),
+        'finish_date': mi.get('can_date', True),
+        'tags': mi.get('can_tag', False),
+        'notes': 'my_notes' in show,
+        'favorite': 'my_favorite' in show,
+    }
+    user = {f: v for f, v in user.items() if representable.get(f, True)}
     return NormalizedEntry(
         provider=provider,
         provider_id=str(show['id']),

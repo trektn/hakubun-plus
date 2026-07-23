@@ -372,6 +372,18 @@ class SyncStore:
         self._exec('DELETE FROM remote_state WHERE provider=? AND'
                    ' provider_id=?', (provider, str(provider_id)))
 
+    def remote_prune_fields(self, provider, keep_fields):
+        """Drop a provider's remote-state rows for fields a fetch no
+        longer reports -- e.g. fields earlier revisions fabricated as
+        empty for providers that cannot represent them at all. Absent
+        must mean absent, or the stale row keeps diffing forever."""
+        keep = list(keep_fields)
+        if not keep:
+            return
+        marks = ','.join('?' * len(keep))
+        self._exec('DELETE FROM remote_state WHERE provider=? AND field'
+                   ' NOT IN (%s)' % marks, [provider, *keep])
+
     def base_get(self, uid, provider):
         rows = self._exec(
             'SELECT field, value FROM base_state WHERE uuid=? AND provider=?',
