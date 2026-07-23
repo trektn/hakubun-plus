@@ -93,18 +93,33 @@ def build_overlay(store, active_provider, active_mediainfo,
             if value is not None:
                 fields[my_key] = value
 
-        # Ownership-dependent score display: shown in the owner's system
-        # whenever score is owned elsewhere, even if the numeric value
-        # matches the account (the FORMAT is the point -- 8.4 vs 8).
-        if score_owner and 'score' in local \
-                and local['score'][0] is not None:
+        # Ownership-dependent score, expressed in the OWNER's own rating
+        # system, for SHARED entries -- those that also exist on another
+        # tracker, so an owner other than the active account legitimately
+        # dictates the scale. Emitted even with no score yet, so you can
+        # *rate* a shared-but-unrated entry in the owner's system (slide
+        # to AniList's 8.4 while signed into Kitsu) rather than being
+        # limited to the signed-in account's coarser steps. A platform-
+        # specific entry (only the active tracker has it) is deliberately
+        # excluded: nothing else owns it, so it keeps the active system.
+        #   _score_display  friendly string for the cell (only when rated)
+        #   _score_owner    the owning provider (drives editor + tooltip)
+        #   _score_owner_raw  reconciled score in the owner's raw scale,
+        #                     to seed the score editor (0 when unrated)
+        #   _uuid           so an edit can address this entity in local
+        if score_owner and _is_shared(store, uid, active_provider):
             owner_mi = provider_mediainfo[score_owner]
-            owner_raw = normalize.provider_score(
-                local['score'][0], owner_mi.get('score_max', 10),
+            canonical = local.get('score', (None,))[0]
+            owner_raw = (normalize.provider_score(
+                canonical, owner_mi.get('score_max', 10),
                 owner_mi.get('score_step', 1))
-            fields['_score_display'] = utils.score_to_display(owner_raw,
-                                                              owner_mi)
+                if canonical is not None else 0)
             fields['_score_owner'] = score_owner
+            fields['_score_owner_raw'] = owner_raw
+            fields['_uuid'] = uid
+            if canonical is not None:
+                fields['_score_display'] = utils.score_to_display(
+                    owner_raw, owner_mi)
 
         if fields:
             # store keys provider_id as text; the list model keys shows
@@ -119,6 +134,16 @@ def build_overlay(store, active_provider, active_mediainfo,
 def _eqish(a, b):
     from hakubun.sync.diff import eq
     return eq(a, b)
+
+
+def _is_shared(store, uid, active_provider):
+    """True when this entity is tracked on a provider OTHER than the
+    active account -- i.e. genuinely cross-tracker. Only then does an
+    owner other than the signed-in account get to dictate the rating
+    system; a purely platform-specific entry (only the active account
+    has it) keeps the active account's own system."""
+    return any(m['provider'] != active_provider
+               for m in store.mappings_of(uid))
 
 
 def _score_owner_provider(policy, active_provider, provider_mediainfo):

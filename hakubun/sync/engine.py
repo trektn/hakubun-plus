@@ -597,6 +597,34 @@ class SyncEngine:
             self.history.record(txn, uid, field, old, value, source)
         return txn
 
+    def set_local_field(self, uid, field, value, source='local'):
+        """A user edit made straight against LOCAL (e.g. rating an
+        owned-elsewhere score in the owner's system from the main list),
+        as opposed to one folded in from a provider's fetch.
+
+        Like edit_local it commits the value and records the event, but
+        it also advances every mapped provider's merge base to that
+        provider's CURRENT remote value. Without that, a provider with
+        no recorded base (NO_BASE) reads the edit as divergence rather
+        than a clean local change -- and under a 'provider owns this
+        field' policy the owner's own (stale) value would win the
+        arbitration and silently discard the edit (conflicts.resolve
+        returns the provider side). Seeding base = remote makes it a
+        clean local-only change: the next plan simply PUSHES the edit to
+        the owner, and thence to everyone. Git: an explicit local commit
+        whose parent is each remote's current tip."""
+        old = self.store.local_get(uid).get(field, (None, 0))[0]
+        txn = self.history.new_txn()
+        with self.store.transaction():
+            self.store.local_set(uid, field, value)
+            self.history.record(txn, uid, field, old, value, source)
+            for m in self.store.mappings_of(uid):
+                remote = self.store.remote_get(m['provider'],
+                                               m['provider_id'])
+                self.store.base_set(uid, m['provider'], field,
+                                    remote.get(field, (None,))[0])
+        return txn
+
     # -- conflicts & undo ---------------------------------------------
 
     def resolve_conflict(self, conflict, choice, value=_UNSET):

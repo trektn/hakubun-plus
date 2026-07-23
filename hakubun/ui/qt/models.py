@@ -92,6 +92,25 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 self._calculate_color(row, show)
         self.endResetModel()
 
+    def refresh_overlay(self, overlay):
+        """Replace the overlay and repaint WITHOUT a model reset, so the
+        current selection survives. Used after an in-place owner-score
+        edit; row colours key off progress, not score, so they're left
+        untouched here."""
+        self.overlay = overlay or {}
+        if self.showlist:
+            top = self.index(0, 0)
+            bottom = self.index(len(self.showlist) - 1,
+                                self.columnCount() - 1)
+            self.dataChanged.emit(top, bottom)
+
+    def overlay_for(self, show_id):
+        """The overlay dict for a show id -- editor logic and tooltips
+        consult it for owner-score context (_score_owner, _uuid, ...) --
+        or {} when there's no overlay entry for it. Keyed by the active
+        provider's show id (both int and str forms are stored)."""
+        return self.overlay.get(show_id) or {}
+
     def _v(self, show, key):
         """The value to DISPLAY for a my_* field: the multi-sync
         overlay's if present, else the show's own."""

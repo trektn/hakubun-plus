@@ -130,3 +130,67 @@ def test_score_owned_by_active_provider_not_reformatted(store):
     overlay = build_overlay(store, 'anilist', MEDIAINFO['anilist'],
                             provider_mediainfo={'anilist': MEDIAINFO['anilist']})
     assert '_score_display' not in overlay.get(9, {})
+
+
+def _anilist_decimal_mi():
+    # AniList in POINT_10_DECIMAL: 0-10 in 0.1 steps, display factor 1.
+    mi = dict(MEDIAINFO['anilist'])
+    mi['score_max'], mi['score_step'] = 10, 0.1
+    return mi
+
+
+def test_owner_score_editor_context_on_unrated_shared_entry(store):
+    """A SHARED entry with no score yet still carries owner-system
+    editing context (so you can *rate* it in the owner's system): the
+    owning provider, a zero owner-raw seed, and the entity uuid -- but
+    no _score_display, since there's nothing rated to show yet."""
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 77, 'Bebop', mal_id=1,
+                                            score=0)]),
+            'anilist': FakeLib('anilist', [show('anilist', 9, 'Bebop',
+                                               mal_id=1, score=0)])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    overlay = build_overlay(
+        store, 'kitsu', MEDIAINFO['kitsu'],
+        provider_mediainfo={'anilist': _anilist_decimal_mi(),
+                            'kitsu': MEDIAINFO['kitsu']})
+    assert overlay[77]['_score_owner'] == 'anilist'
+    assert overlay[77]['_score_owner_raw'] == 0
+    assert overlay[77]['_uuid'] == store.entities()[0]['uuid']
+    assert '_score_display' not in overlay[77]
+
+
+def test_owner_score_editor_raw_in_owner_scale(store):
+    """The owner-raw seed handed to the score editor is the reconciled
+    score expressed in the OWNER's own scale (AniList decimal 8.4), so
+    the slider lands on 8.4 rather than a Kitsu-rounded step."""
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 77, 'Bebop', mal_id=1)]),
+            'anilist': FakeLib('anilist', [show('anilist', 9, 'Bebop',
+                                               mal_id=1)])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    uid = store.entities()[0]['uuid']
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    eng.edit_local(uid, 'score', 8.4, source='anilist')
+    overlay = build_overlay(
+        store, 'kitsu', MEDIAINFO['kitsu'],
+        provider_mediainfo={'anilist': _anilist_decimal_mi(),
+                            'kitsu': MEDIAINFO['kitsu']})
+    assert overlay[77]['_score_owner_raw'] == 8.4
+    assert overlay[77]['_score_display'] == 8.4
+
+
+def test_no_owner_score_context_for_platform_specific_entry(store):
+    """An entry that exists only on the active tracker is NOT shared, so
+    it keeps the active account's rating system -- no owner-score context
+    even under a PROVIDER score policy naming another tracker."""
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 55, 'Solo', score=0)])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    overlay = build_overlay(
+        store, 'kitsu', MEDIAINFO['kitsu'],
+        provider_mediainfo={'anilist': _anilist_decimal_mi(),
+                            'kitsu': MEDIAINFO['kitsu']})
+    assert '_score_owner' not in overlay.get(55, {})

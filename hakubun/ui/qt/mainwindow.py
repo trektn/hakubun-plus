@@ -58,6 +58,15 @@ class MainWindow(QMainWindow):
     finish = False
     was_maximized = False
 
+    # Multi-sync owner-score editing state. When the selected show's
+    # Score is owned by another provider (and the entry is shared), the
+    # bottom-bar score slider adopts that owner's rating system and its
+    # Set writes to multisync local instead of the signed-in account.
+    _score_owner_mode = None            # owning provider, or None
+    _score_editor_provider = None       # provider the slider is set for
+    _score_owner_mediainfo = {}         # {provider: mediainfo}
+    _multisync_media_type = None
+
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
         self.debug = debug
@@ -1086,7 +1095,7 @@ class MainWindow(QMainWindow):
 
         self.s_filter_changed()
 
-    def _apply_multisync_overlay(self, showlist):
+    def _apply_multisync_overlay(self, showlist, quiet=False):
         """When multi-sync is on, display each show's reconciled
         per-field value (episodes from one provider, rating from
         another, ...) instead of just this account's raw value. Purely
@@ -1094,8 +1103,15 @@ class MainWindow(QMainWindow):
         to before) whenever it's disabled or has nothing to show, so it
         can never destabilise the main list. Edits still go to the
         signed-in account, which multi-sync reconciles on the next
-        sync."""
+        sync.
+
+        `quiet` refreshes the overlay in place (no model reset), so a
+        refresh triggered mid-interaction -- e.g. right after setting an
+        owned score -- doesn't drop the current selection."""
         model = self.view.model().sourceModel()
+        # Reset owner-score editing state; re-established below when on.
+        self._score_owner_mediainfo = {}
+        self._multisync_media_type = None
         if not self.config.get('multisync_enabled') \
                 or not getattr(self, 'account', None):
             model.set_overlay({})
@@ -1105,19 +1121,27 @@ class MainWindow(QMainWindow):
             from hakubun.sync.overlay import build_overlay
             media_type = self.worker.engine.data_handler.userconfig.get(
                 'mediatype') or 'anime'
+            self._multisync_media_type = media_type
             db = utils.to_data_path('multisync-%s.db' % media_type)
             if not utils.file_exists(db):
                 model.set_overlay({})
                 return
+            # Per-account mediainfo drives both the owner-system display
+            # and the owner-system score editor; build it once here.
+            provider_mediainfo = self._provider_mediainfo(media_type)
+            self._score_owner_mediainfo = provider_mediainfo
             store = SyncStore(db)
             try:
                 overlay = build_overlay(
                     store, self.account['api'], self.mediainfo,
-                    provider_mediainfo=self._provider_mediainfo(media_type),
+                    provider_mediainfo=provider_mediainfo,
                     show_ids=[s['id'] for s in showlist])
             finally:
                 store.close()
-            model.set_overlay(overlay)
+            if quiet:
+                model.refresh_overlay(overlay)
+            else:
+                model.set_overlay(overlay)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -1187,6 +1211,7 @@ class MainWindow(QMainWindow):
             self._set_default_poster()
             self.show_progress.setValue(0)
             self.show_score.setValue(0)
+            self._score_owner_mode = None
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
             self._enable_show_widgets(False)
@@ -1222,7 +1247,7 @@ class MainWindow(QMainWindow):
         self.show_progress.setValue(show['my_progress'])
         self.show_status.setCurrentIndex(
             self.mediainfo['statuses'].index(show['my_status']))
-        self.show_score.setValue(show['my_score'])
+        self._set_score_editor(show)
 
         # Enable relevant buttons
         self._enable_show_widgets(True)
@@ -1257,6 +1282,33 @@ class MainWindow(QMainWindow):
 
         # Unblock signals
         self.show_status.blockSignals(False)
+
+    def _set_score_editor(self, show):
+        """Configure the bottom-bar score slider for the selected show.
+
+        For a SHARED entry whose Score is owned by another provider, the
+        slider adopts the OWNER's rating system -- so you can rate in
+        AniList's decimals (slide to 8.4) even while signed into Kitsu,
+        which only offers 0.5 steps -- seeded from local's reconciled
+        score; the Set then writes to multisync local (see s_set_score).
+        Otherwise the slider stays on the active account's own system and
+        seeds from this account's raw my_score, exactly as before -- so a
+        platform-specific entry keeps the signed-in account's steps."""
+        over = self.view.model().sourceModel().overlay_for(show['id'])
+        owner = over.get('_score_owner')
+        owner_mi = self._score_owner_mediainfo.get(owner) if owner else None
+        if owner_mi:
+            if self._score_editor_provider != owner:
+                self.show_score.setMediaInfo(owner_mi)
+                self._score_editor_provider = owner
+            self.show_score.setValue(over.get('_score_owner_raw') or 0)
+            self._score_owner_mode = owner
+        else:
+            if self._score_editor_provider is not None:
+                self.show_score.setMediaInfo(self.mediainfo)
+                self._score_editor_provider = None
+            self.show_score.setValue(show['my_score'])
+            self._score_owner_mode = None
 
     def generate_episode_menus(self, menu, max_eps=1, watched_eps=0):
         bp_top = 5  # No more than this many submenus/episodes in the root menu
@@ -1501,14 +1553,73 @@ class MainWindow(QMainWindow):
                          showid or self.selected_show_id, ep if ep is not None else self.show_progress.value())
 
     def s_set_score(self, showid=None, score=None):
-        self._busy(True)
-
         if not showid:
             showid = self.selected_show_id
+
+        # Owner-mode: the bottom-bar slider adopted another provider's
+        # rating system for this shared entry, so the value the user
+        # picked is in THAT system. Persist it to multisync local (as
+        # intent) and let the next sync push it to the owner and every
+        # tracker, rather than forcing it into the signed-in account's
+        # coarser scale. Inline list edits (score passed in) are not in
+        # owner mode and keep the normal active-account path below. If
+        # the local write can't happen we ABORT rather than fall through
+        # -- the slider value is in the owner's scale and would be
+        # misread by the active account.
+        if score is None and showid == self.selected_show_id \
+                and self._score_owner_mode:
+            if not self._set_owned_score(showid, self.show_score.value()):
+                self.status('Could not set the owned score locally; '
+                            'nothing changed.')
+            return
+
+        self._busy(True)
         if score is None:
             score = self.show_score.value()
 
         self.worker_call('set_score', self.r_generic, showid, score)
+
+    def _set_owned_score(self, showid, owner_raw):
+        """Persist a score entered in the OWNER's rating system to
+        multisync local, as user intent, so the next multi-sync pushes
+        it to the owner and (per the ownership matrix) every other
+        tracker. Returns True when the score was handled here; False to
+        fall back to the normal active-account set_score path."""
+        owner = self._score_owner_mode
+        owner_mi = self._score_owner_mediainfo.get(owner)
+        media_type = self._multisync_media_type
+        if not owner or not owner_mi or not media_type:
+            return False
+        try:
+            from hakubun.sync.store import SyncStore
+            from hakubun.sync.engine import SyncEngine
+            from hakubun.sync import normalize
+            db = utils.to_data_path('multisync-%s.db' % media_type)
+            if not utils.file_exists(db):
+                return False
+            store = SyncStore(db)
+            try:
+                mapping = store.mapping_for(self.account['api'], str(showid))
+                if not mapping:
+                    return False
+                canonical = normalize.canonical_score(
+                    owner_raw, owner_mi.get('score_max', 10))
+                SyncEngine(store).set_local_field(
+                    mapping['uuid'], 'score', canonical)
+            finally:
+                store.close()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return False
+        # Reflect immediately: refresh the overlay in place (no model
+        # reset -> selection kept) so the list shows the new owner-system
+        # score, and say it's staged for the next sync.
+        self._apply_multisync_overlay(self.worker.engine.get_list(),
+                                      quiet=True)
+        self.status("Score set in %s's rating system; the next multi-sync "
+                    "applies it." % owner.capitalize())
+        return True
 
     def s_set_status(self, index):
         if self.selected_show_id:

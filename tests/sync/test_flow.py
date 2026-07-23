@@ -54,6 +54,69 @@ def test_conflicting_ratings_owner_wins_and_rounds(store):
     assert [c for c in plan2.changes if c.field == 'score'] == []
 
 
+def test_set_local_field_pushes_owned_score_edit(store):
+    """Rating an owned-elsewhere score straight into local (the main
+    list's owner-system editor) must PUSH the edit to the owner and the
+    other trackers -- never be silently overwritten by the owner's own
+    stale value. set_local_field seeds each provider's base to its
+    current remote so the plan sees a clean local change."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=0),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=0))
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER,
+                                             'anilist'))
+    uid = _uid(store)
+    # The user rated 8.4 (AniList's system) on a shared, unrated entry.
+    eng.set_local_field(uid, 'score', 8.4)
+    assert store.local_get(uid)['score'][0] == 8.4
+    # Base advanced to each provider's current remote (both unrated).
+    assert store.base_get(uid, 'anilist').get('score') in (None, 0)
+    assert store.base_get(uid, 'mal').get('score') in (None, 0)
+
+    plan = eng.plan()
+    assert not plan.conflicts
+    # Pushes the canonical 8.4 to the owner and to MAL -- edit
+    # propagates; the adapter scales it per provider on push.
+    to_anilist = [c for c in plan.changes
+                  if c.target == 'anilist' and c.field == 'score']
+    assert len(to_anilist) == 1 and to_anilist[0].new == 8.4
+    result = eng.apply(plan)
+    assert result['errors'] == {}
+    # AniList received 8.4 projected onto its 0-100 scale.
+    assert 84 in [u['my_score'] for u in libs['anilist'].updates
+                  if 'my_score' in u]
+
+
+def test_set_local_field_survives_absent_base(store):
+    """With NO recorded base for the owner (the poison case), a plain
+    local write would diverge and the owner policy would discard it
+    (conflicts.resolve returns the provider side). set_local_field's
+    base-seeding makes it a clean push instead, even when the owner's
+    remote holds a different value."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=0),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=6))  # 60
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER,
+                                             'anilist'))
+    uid = _uid(store)
+    # Wipe every recorded base -> three_way sees NO_BASE for each field.
+    for prov in ('anilist', 'mal'):
+        for field in list(store.base_get(uid, prov)):
+            store.base_delete(uid, prov, field)
+    eng.set_local_field(uid, 'score', 9.0)
+    plan = eng.plan()
+    assert not plan.conflicts
+    to_anilist = [c for c in plan.changes
+                  if c.target == 'anilist' and c.field == 'score']
+    assert len(to_anilist) == 1 and to_anilist[0].new == 9.0
+    # Local kept the user's edit; the owner's stale 6 did not win.
+    assert store.local_get(uid)['score'][0] == 9.0
+    eng.apply(plan)
+    # AniList received 9.0 projected onto its 0-100 scale.
+    assert 90 in [u['my_score'] for u in libs['anilist'].updates
+                  if 'my_score' in u]
+
+
 def test_conflicting_notes_individual_policy_never_syncs(store):
     """Notes policy 'individual': differing notes are left alone --
     no changes, no conflicts (default policy)."""
