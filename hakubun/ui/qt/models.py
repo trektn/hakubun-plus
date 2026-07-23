@@ -365,6 +365,18 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
     def flags(self, index):
         if index.column() in self.editable_columns:
+            # An owner-overlaid Score cell displays another provider's
+            # rating system (e.g. AniList's 8.4 while signed into
+            # Kitsu); an inline editor would edit the ACTIVE account's
+            # raw value on a different scale and bypass ownership
+            # entirely -- block inline editing for that cell. The
+            # bottom-bar score editor handles owner-system rating.
+            if index.column() == ShowListModel.COL_MY_SCORE \
+                    and self.overlay and self.showlist:
+                over = self.overlay.get(self.showlist[index.row()]['id'])
+                if over and ('_score_owner' in over
+                             or '_score_display' in over):
+                    return self.common_flags
             return self.common_flags | QtCore.Qt.ItemFlag.ItemIsEditable
         else:
             return self.common_flags

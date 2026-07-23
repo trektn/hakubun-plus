@@ -103,7 +103,11 @@ class MultiSyncWindow(Gtk.Window):
         outer.pack_start(self._status_label, False, False, 0)
         self.add(outer)
         self.connect('destroy', self._on_destroy)
-        self.show_all()
+        # Show the CONTENT, not the toplevel: the headless Sync-button
+        # flow constructs this window without surfacing it (it is only
+        # present()ed when something needs the user). no_show_all
+        # widgets (Cancel, progress bar) stay hidden either way.
+        outer.show_all()
 
         if self._adapter_errors:
             self._status('Some accounts could not be loaded: %s'
@@ -251,6 +255,19 @@ class MultiSyncWindow(Gtk.Window):
 
     def _current_mode(self):
         return _MODES[max(self.mode_combo.get_active(), 0)][0]
+
+    def set_mode(self, mode):
+        """Select a SyncMode in the mode combo (used by the main
+        window's headless Sync-button flow to apply the configured
+        multisync_mode before planning)."""
+        for i, (m, _label) in enumerate(_MODES):
+            if m is mode:
+                self.mode_combo.set_active(i)
+                return
+
+    def is_busy(self):
+        """True while a fetch/plan/apply worker is running."""
+        return self._thread is not None and self._thread.is_alive()
 
     def _update_mode_context(self, *_a):
         mode = self._current_mode()

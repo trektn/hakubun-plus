@@ -133,7 +133,7 @@ class ShowListStore(Gtk.ListStore):
 
     def set_overlay(self, overlay):
         """Install the multi-sync display overlay. Takes effect on the
-        next populate/append; call apply_overlay_to_rows() to refresh
+        next populate/append; call apply_overlay_to_rows(shows) to refresh
         existing rows in place (keeping the selection)."""
         self.overlay = overlay or {}
 
@@ -265,18 +265,35 @@ class ShowListStore(Gtk.ListStore):
 
         # print("Warning: Show ID not found in ShowView (%d)" % show['id'])
 
-    def apply_overlay_to_rows(self):
-        """Re-apply the current overlay's Score cell to the existing
-        rows in place -- no clear/repopulate, so the selection survives.
-        Used right after an owner-score edit rebuilds the overlay."""
+    def apply_overlay_to_rows(self, shows):
+        """Re-apply the current overlay to the existing rows in place --
+        no clear/repopulate, so the selection survives. Used right after
+        an owner-score edit rebuilds the overlay.
+
+        Recomputes every overlay-affected cell through overlay_cells(),
+        so a row whose overlay entry DISAPPEARED (back in sync, overlay
+        cleared on failure, mapping removed) is restored to the
+        account's own values instead of keeping a stale italic
+        owner-score. `shows` is the engine's current show list (the raw
+        values to restore from)."""
+        by_id = {show['id']: show for show in shows}
         for row in self:
-            over = self.overlay.get(int(row[0]))
-            if over and over.get('_score_display') is not None:
-                row[5] = _fmt_owner_score(over['_score_display'])
-                row[23] = Pango.Style.ITALIC
-                row[24] = over.get('_score_owner') or ''
-                if over.get('my_score') is not None:
-                    row[3] = over['my_score']
+            show = by_id.get(int(row[0]))
+            if show is None:
+                continue
+            cells = overlay_cells(show, self.overlay.get(show['id']),
+                                  self.decimals, self.factor)
+            row[2] = cells['my_progress']
+            row[3] = cells['my_score']
+            row[4] = cells['episodes_str']
+            row[5] = cells['score_str']
+            row[9] = self._get_color(show, row[8], cells['my_progress'])
+            row[10] = cells['percent']
+            row[13] = self.format_date(cells['my_start_date'])
+            row[14] = self.format_date(cells['my_finish_date'])
+            row[23] = (Pango.Style.ITALIC if cells['score_italic']
+                       else Pango.Style.NORMAL)
+            row[24] = cells['score_owner']
 
     def update_title(self, show, altname=None):
         for row in self:

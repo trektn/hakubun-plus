@@ -26,6 +26,17 @@ def store_path(media_type):
     return utils.to_data_path('multisync-%s.db' % (media_type or 'anime'))
 
 
+# Adapters constructed for the display overlay, keyed by
+# (api, media_type, username). Constructing an adapter builds the
+# whole lib (config/token loads), and the overlay is rebuilt on EVERY
+# list repaint -- caching the adapters keeps that off the hot path.
+# Safe to reuse: ProviderAdapter.mediainfo is a live property (it reads
+# lib.media_info() on every access, so e.g. AniList's lazily-detected
+# score format is never frozen), and the overlay only ever reads.
+# Bounded by accounts x media types, i.e. tiny.
+_adapter_cache = {}
+
+
 def provider_mediainfo(accounts, media_type, msg):
     """{provider: mediainfo} for every configured account.
 
@@ -39,9 +50,16 @@ def provider_mediainfo(accounts, media_type, msg):
         api = account['api']
         if api in info:
             continue
+        key = (api, media_type or 'anime', account.get('username'))
+        adapter = _adapter_cache.get(key)
+        if adapter is None:
+            try:
+                adapter = adapter_from_account(account, msg,
+                                               media_type=media_type)
+            except Exception:
+                continue
+            _adapter_cache[key] = adapter
         try:
-            adapter = adapter_from_account(account, msg,
-                                           media_type=media_type)
             info[api] = adapter.mediainfo
         except Exception:
             continue

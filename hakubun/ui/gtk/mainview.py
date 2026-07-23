@@ -341,6 +341,7 @@ class MainView(Gtk.Box):
         if not self._config.get('multisync_enabled') or not self._account \
                 or self._engine is None:
             self._list.set_overlay({})
+            self._resync_score_editor()
             return
         try:
             from hakubun.accounts import AccountManager
@@ -357,6 +358,32 @@ class MainView(Gtk.Box):
             import traceback
             traceback.print_exc()
             self._list.set_overlay({})
+        self._resync_score_editor()
+
+    def _resync_score_editor(self):
+        """Re-derive the sidebar score editor's owner-mode state from
+        the CURRENT overlay. Called after every overlay rebuild/clear so
+        the editor can never be left in a stale owner mode (owner scale
+        on the widgets, no owner mediainfo behind it) -- which would
+        silently discard the next Set, or worse, misroute an
+        owner-scale value to the active account."""
+        showid = self._current_page.selected_show if self._current_page \
+            else None
+        if showid and self._engine is not None:
+            try:
+                show = self._engine.get_show_info(showid)
+            except utils.HakubunError:
+                show = None
+            if show:
+                self._set_score_editor(show)
+                return
+        # Nothing (valid) selected: drop owner mode and restore the
+        # active account's own rating system.
+        if self._score_editor_provider is not None and \
+                self._engine is not None:
+            self._apply_score_widget_range(self._engine.mediainfo)
+        self._score_editor_provider = None
+        self._score_owner_mode = None
 
     def _block_handlers_for_status(self, status):
         for handler_id in self._page_handler_ids[status]:
@@ -484,8 +511,12 @@ class MainView(Gtk.Box):
         # for this shared entry, so the value is in THAT system. Write it
         # to multisync local (propagated on the next sync); never send it
         # to the active account, which would misread the owner-scale
-        # number. Abort on failure rather than fall through.
-        if self._score_owner_mode and showid:
+        # number. Abort on failure rather than fall through -- including
+        # when nothing is selected, since the widgets still hold the
+        # owner's scale.
+        if self._score_owner_mode:
+            if not showid:
+                return
             owner_mi = self._multisync_pmi.get(self._score_owner_mode)
             owner_raw = (utils.score_to_raw(display_score, owner_mi)
                          if owner_mi else None)
@@ -548,15 +579,11 @@ class MainView(Gtk.Box):
             import traceback
             traceback.print_exc()
             return False
-        # Rebuild the overlay (fresh reconciled state) and re-apply the
-        # Score cells in place so the selection survives, then re-seed
-        # the editor from the new reconciled score.
+        # Rebuild the overlay (fresh reconciled state; this also re-seeds
+        # the score editor via _resync_score_editor) and re-apply the
+        # affected cells in place so the selection survives.
         self._refresh_multisync_overlay()
-        self._list.apply_overlay_to_rows()
-        over = self._list.overlay.get(showid)
-        if over is not None and over.get('_score_owner_raw') is not None:
-            self.spinbtn_score.set_value(utils.score_to_display(
-                over['_score_owner_raw'], owner_mi))
+        self._list.apply_overlay_to_rows(self._engine.get_list())
         self.set_status_idle(
             "Score set in %s's rating system; the next multi-sync applies it."
             % owner.capitalize())

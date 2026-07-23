@@ -359,16 +359,21 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._on_modal_destroy(modal_window)
 
     def _on_multisync(self, action, param):
+        win = self._get_multisync_window()
+        if win is not None:
+            win.present()
+
+    def _get_multisync_window(self):
+        """The one MultiSyncWindow instance, built (but NOT presented)
+        on demand. Reused unless the media type changed: anime and
+        manga use separate databases, so a stale window would be the
+        wrong one (mirrors the Qt front-end's _get_syncwindow)."""
         if self._engine is None:
-            return
+            return None
         media_type = self._engine.api_info['mediatype']
-        # Reuse the open window unless the media type changed: anime and
-        # manga use separate databases, so a stale window would be the
-        # wrong one (mirrors the Qt front-end's _get_syncwindow).
         if self._multisync_window is not None:
             if self._multisync_window.media_type == media_type:
-                self._multisync_window.present()
-                return
+                return self._multisync_window
             self._multisync_window.destroy()
             self._multisync_window = None
 
@@ -378,9 +383,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
                               self._engine.account['api'], media_type,
                               transient_for=self)
         win.connect('destroy', self._on_multisync_window_destroy)
-        win.present()
         self._multisync_window = win
         self._modals.append(win)
+        return win
 
     def _on_multisync_window_destroy(self, modal_window):
         self._multisync_window = None
@@ -397,8 +402,78 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._play_episode(show_id, episode)
 
     def _on_synchronize(self, action, param):
+        # When multi-sync is enabled (Settings > Behavior), Sync
+        # reconciles every configured provider instead of the classic
+        # single-account upload+download -- mirroring the Qt front-end's
+        # s_sync_button. Fetch+plan runs on the sync window's worker
+        # thread; the window is only surfaced when something needs the
+        # user (a conflict) or to show apply progress, and the main
+        # window stays live throughout.
+        if self._config.get('multisync_enabled') and self._engine is not None:
+            self._start_multisync()
+            return
         threading.Thread(target=self._synchronization_task,
                          args=(True, True)).start()
+
+    def _start_multisync(self):
+        from hakubun.sync.models import SyncMode
+        win = self._get_multisync_window()
+        if win is None:
+            return
+        if not win.engine.adapters:
+            detail = ('; '.join(win._adapter_errors)
+                      if win._adapter_errors else
+                      'no provider accounts could be loaded')
+            self._error_dialog('Multi-sync: %s.' % detail)
+            return
+        if win.is_busy():
+            # Never drop the click invisibly: surface the window so its
+            # progress/status is visible.
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync: an operation is already running.')
+            return
+        mode_key = self._config.get('multisync_mode') or 'merge'
+        win.set_mode({'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
+                      'push': SyncMode.MIRROR}.get(mode_key, SyncMode.MERGE))
+        self._main_view.set_status_idle('Multi-syncing (%s)...' % mode_key)
+        win._run(win._fetch_and_plan,
+                 lambda plan, error: self._multisync_planned(
+                     win, plan, error),
+                 'Fetching provider lists...')
+
+    def _multisync_planned(self, win, plan, error):
+        # Runs on the GLib main loop (the window's _done). `win` is
+        # captured from the call that started the fetch: if the loaded
+        # account or its media type changed meanwhile, this window is
+        # no longer current -- discard the stale plan rather than
+        # rendering/applying it against the wrong database.
+        if error is not None:
+            self._main_view.set_status_idle('Multi-sync failed: %s' % error)
+            return
+        if win is not self._multisync_window or self._engine is None \
+                or win.media_type != self._engine.api_info['mediatype']:
+            self._main_view.set_status_idle(
+                'Multi-sync: the loaded account changed mid-sync; '
+                'results discarded. Sync again.')
+            return
+        win.r_planned(plan, None)
+        if plan.conflicts:
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync needs your decision on %d conflict(s).'
+                % len(plan.conflicts))
+            return
+        if not plan.changes:
+            self._main_view.set_status_idle('Multi-sync: already in sync.')
+            return
+        # Clean changes: apply IN the window so its progress bar, log
+        # and Cancel button are visible, and the main window is free.
+        win.present()
+        self._main_view.set_status_idle(
+            'Multi-sync: applying %d change(s) -- see the sync window.'
+            % len(plan.changes))
+        win.s_apply()
 
     def _on_upload(self, action, param):
         threading.Thread(target=self._synchronization_task,
@@ -539,6 +614,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._modals.append(win)
 
     def _on_settings_saved(self, _settings_window):
+        # Rebuild the list so the multi-sync overlay follows the
+        # Settings toggle immediately (on or off).
+        if self._main_view is not None:
+            self._main_view.populate_all_pages()
         if self._engine.get_config('sync_on_settings_apply'):
             threading.Thread(target=self._synchronization_task,
                              args=(True, False)).start()

@@ -1227,9 +1227,16 @@ class SyncWindow(QDialog):
 
     # -- plumbing ------------------------------------------------------
 
+    def is_busy(self):
+        """True while a fetch/plan/apply task is running -- callers
+        that would _run() something should check this first rather
+        than have the request dropped with only this (possibly
+        hidden) window's status label updated."""
+        return self._task is not None and self._task.isRunning()
+
     def _run(self, fn, callback, busy_text, *args,
             forward_progress=False, **kwargs):
-        if self._task is not None and self._task.isRunning():
+        if self.is_busy():
             self._status('Another sync operation is still running.')
             return
         self._status(busy_text)

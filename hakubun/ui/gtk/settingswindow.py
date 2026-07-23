@@ -111,6 +111,8 @@ class SettingsWindow(Gtk.Window):
     combo_add_dialog_default_status = Gtk.Template.Child()
     combo_kitsu_api = Gtk.Template.Child()
     checkbox_sync_on_settings_apply = Gtk.Template.Child()
+    checkbox_multisync_enabled = Gtk.Template.Child()
+    combo_multisync_mode = Gtk.Template.Child()
 
     checkbox_show_tray = Gtk.Template.Child()
     checkbox_close_to_tray = Gtk.Template.Child()
@@ -296,6 +298,20 @@ class SettingsWindow(Gtk.Window):
             self.engine.get_config('sync_on_settings_apply'))
         self.combo_kitsu_api.set_active_id(
             self.engine.get_config('kitsu_api'))
+
+        # Multi-sync lives in the GTK UI config (same keys as the Qt
+        # front-end's ui-qt.json): the list overlay and the Sync
+        # button's headless multi-sync gate on it per-frontend.
+        self.checkbox_multisync_enabled.set_active(
+            self.config['multisync_enabled'])
+        if not self.combo_multisync_mode.set_active_id(
+                self.config['multisync_mode']):
+            self.combo_multisync_mode.set_active_id('merge')
+        self.combo_multisync_mode.set_sensitive(
+            self.config['multisync_enabled'])
+        self.checkbox_multisync_enabled.connect(
+            'toggled', lambda w: self.combo_multisync_mode.set_sensitive(
+                w.get_active()))
 
         self.checkbox_show_tray.set_active(self.config['show_tray'])
         self.checkbox_close_to_tray.set_active(self.config['close_to_tray'])
@@ -605,6 +621,10 @@ class SettingsWindow(Gtk.Window):
         self.config['episodebar_style'] = int(
             not self.checkbox_classic_progress.get_active())
         self.config['filter_global'] = self.checkbox_filter_global.get_active()
+        self.config['multisync_enabled'] = \
+            self.checkbox_multisync_enabled.get_active()
+        self.config['multisync_mode'] = \
+            self.combo_multisync_mode.get_active_id() or 'merge'
 
         """Update Colors"""
         self.config['colors'] = {key: reprColor(

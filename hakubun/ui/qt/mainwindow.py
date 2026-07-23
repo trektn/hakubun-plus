@@ -894,6 +894,13 @@ class MainWindow(QMainWindow):
         self._apply_tray()
         self._apply_filter_bar()
         self._apply_sync_action_label()
+        # Refresh the multi-sync overlay so it follows the Settings
+        # toggle immediately (on or off), instead of lingering until
+        # the next full list rebuild.
+        try:
+            self._apply_multisync_overlay(self.worker.engine.get_list())
+        except utils.HakubunError:
+            pass
         # TODO: Reload listviews?
         if self._taiga_mode:
             self._rebuild_library_folders_menu()
@@ -1115,6 +1122,7 @@ class MainWindow(QMainWindow):
         if not self.config.get('multisync_enabled') \
                 or not getattr(self, 'account', None):
             model.set_overlay({})
+            self._resync_score_editor()
             return
         try:
             from hakubun.sync import uibridge
@@ -1137,6 +1145,29 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             model.set_overlay({})   # never break the list over this
+        self._resync_score_editor()
+
+    def _resync_score_editor(self):
+        """Re-derive the bottom-bar score editor's owner-mode state from
+        the CURRENT overlay. Called after every overlay rebuild/clear so
+        the editor can never be left in a stale owner mode (owner scale
+        on the slider, no owner mediainfo behind it) -- which would
+        silently discard the next Set."""
+        if self.selected_show_id:
+            try:
+                show = self.worker.engine.get_show_info(
+                    self.selected_show_id)
+            except utils.EngineError:
+                show = None
+            if show:
+                self._set_score_editor(show)
+                return
+        # Nothing (valid) selected: drop owner mode and restore the
+        # active account's own rating system.
+        if self._score_editor_provider is not None:
+            self.show_score.setMediaInfo(self.mediainfo)
+        self._score_editor_provider = None
+        self._score_owner_mode = None
 
     def _init_view(self):
         # Set view options
@@ -1842,6 +1873,14 @@ class MainWindow(QMainWindow):
                       'no provider accounts could be loaded')
             self.error('Multi-sync: %s.' % detail)
             return
+        if win.is_busy():
+            # Never drop the click invisibly (the window's own guard
+            # only updates its -- possibly hidden -- status label):
+            # surface the window so its progress/status is visible.
+            self._surface_syncwindow(win)
+            self.status('Multi-sync: an operation is already running '
+                        '(see the sync window).')
+            return
 
         mode = self._MULTISYNC_MODES.get(
             self.config['multisync_mode'], SyncMode.MERGE)
@@ -1852,7 +1891,9 @@ class MainWindow(QMainWindow):
         # No self._busy(): the main window stays usable while the sync
         # runs on the window's worker thread.
         self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
-        win._run(win._fetch_and_plan, self._r_multisync_planned,
+        win._run(win._fetch_and_plan,
+                 lambda plan, error: self._r_multisync_planned(
+                     win, plan, error),
                  'Fetching provider lists...')
 
     def _surface_syncwindow(self, win):
@@ -1860,10 +1901,23 @@ class MainWindow(QMainWindow):
         win.raise_()
         win.activateWindow()
 
-    def _r_multisync_planned(self, plan, error):
-        win = self._get_syncwindow()
+    def _r_multisync_planned(self, win, plan, error):
+        # `win` is captured from the call that started the fetch --
+        # never re-resolved via _get_syncwindow(), which can close the
+        # old window and build a fresh one against the OTHER media
+        # type's database. If the loaded account's media type changed
+        # mid-fetch, this window is no longer current: discard the
+        # stale plan rather than rendering/applying it against the
+        # wrong database.
         if error is not None:
             self.error('Multi-sync failed: %s' % error)
+            return
+        media_type = self.worker.engine.data_handler.userconfig.get(
+            'mediatype') or 'anime'
+        if win is not getattr(self, 'syncwindow', None) \
+                or win.media_type != media_type:
+            self.status('Multi-sync: the loaded account changed '
+                        'mid-sync; results discarded. Sync again.')
             return
         # Render this exact plan into the (still hidden) window.
         win.r_planned(plan, None)

@@ -775,6 +775,11 @@ gtk_defaults = {
     'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
     'episodebar_style': 1,
     'filter_global': False,
+    # Multi-sync (same keys/semantics as qt_defaults below): the list
+    # overlay, owner-system score editing and the Sync button's
+    # headless multi-sync all gate on these.
+    'multisync_enabled': True,
+    'multisync_mode': 'merge',
     'colors': {
         'is_airing': '#0099CC',
         'is_playing': '#6C2DC7',
