@@ -621,14 +621,15 @@ class SyncEngine:
             by_entity = {}
             for c in changes:
                 by_entity.setdefault(c.uuid, []).append(c)
-            failed = False
-            for uid, chs in by_entity.items():
+            entities = list(by_entity.items())
+            for i, (uid, chs) in enumerate(entities):
                 if should_cancel is not None and should_cancel():
                     cancelled = True
                     break
                 mapping = next((m for m in self.store.mappings_of(uid)
                                 if m['provider'] == provider), None)
                 if mapping is None:
+                    done += 1   # counted in total_steps; keep it honest
                     continue
                 report('Pushing to %s: %s (%s)...' % (
                     provider.capitalize(), chs[0].title,
@@ -647,8 +648,10 @@ class SyncEngine:
                     break
                 except AdapterError as e:
                     errors[provider] = str(e)
-                    failed = True
-                    done += 1
+                    # This entity plus the rest of the provider's batch
+                    # are skipped; count them all or the progress bar
+                    # stalls short for every later provider.
+                    done += len(entities) - i
                     report('FAILED %s: %s' % (provider.capitalize(), e))
                     break  # isolate: skip the rest of this provider
                 with self.store.transaction():

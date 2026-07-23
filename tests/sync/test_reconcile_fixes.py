@@ -220,6 +220,46 @@ def test_local_tags_survive_tagless_providers(store):
     assert store.local_get(uid)['tags'][0] == ['fantasy']
 
 
+# -- N+1 regression guard ---------------------------------------------
+
+def _query_count(store, fn):
+    count = 0
+
+    def trace(_stmt):
+        nonlocal count
+        count += 1
+
+    store._conn.set_trace_callback(trace)
+    try:
+        fn()
+    finally:
+        store._conn.set_trace_callback(None)
+    return count
+
+
+def test_overlay_and_plan_issue_constant_queries(store):
+    """The display overlay runs on the UI thread on every list repaint
+    (and the planner over the whole library): both must load in bulk,
+    not per show. Pin that with a hard query-count ceiling that a
+    reintroduced per-show query pattern (50+ shows here) would blow
+    through immediately."""
+    from hakubun.sync.overlay import build_overlay
+    from conftest import MEDIAINFO
+
+    shows = [show('mal', i, 'Show %03d' % i, progress=i % 10)
+             for i in range(1, 51)]
+    engine = make_engine(store, {'mal': FakeLib('mal', shows)})
+    assert engine.fetch() == {}
+
+    n = _query_count(store, lambda: build_overlay(
+        store, 'mal', MEDIAINFO['mal'],
+        provider_mediainfo={'mal': MEDIAINFO['mal']}))
+    assert n <= 10, 'overlay ran %d queries for 50 shows' % n
+
+    n = _query_count(store, engine.plan)
+    assert n <= 10, 'plan ran %d queries for 50 shows' % n
+
+
 # -- identity: a quarantined mapping reopens its conflict -------------
 
 def test_quarantined_mapping_reopens_resolved_conflict(store):
