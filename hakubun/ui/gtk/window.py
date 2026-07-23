@@ -66,6 +66,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._main_view = None
         self._modals = []
         self._airing_window = None
+        self._multisync_window = None
 
         self._account = None
         self._engine = None
@@ -247,6 +248,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
 
         add_action('search', self._on_search)
         add_action('airing_schedule', self._on_airing_schedule)
+        add_action('multisync', self._on_multisync)
         add_action('synchronize', self._on_synchronize)
         add_action('upload', self._on_upload)
         add_action('download', self._on_download)
@@ -354,6 +356,34 @@ class HakubunWindow(Gtk.ApplicationWindow):
 
     def _on_airing_window_destroy(self, modal_window):
         self._airing_window = None
+        self._on_modal_destroy(modal_window)
+
+    def _on_multisync(self, action, param):
+        if self._engine is None:
+            return
+        media_type = self._engine.api_info['mediatype']
+        # Reuse the open window unless the media type changed: anime and
+        # manga use separate databases, so a stale window would be the
+        # wrong one (mirrors the Qt front-end's _get_syncwindow).
+        if self._multisync_window is not None:
+            if self._multisync_window.media_type == media_type:
+                self._multisync_window.present()
+                return
+            self._multisync_window.destroy()
+            self._multisync_window = None
+
+        from hakubun.accounts import AccountManager
+        from hakubun.ui.gtk.multisyncwindow import MultiSyncWindow
+        win = MultiSyncWindow(AccountManager(),
+                              self._engine.account['api'], media_type,
+                              transient_for=self)
+        win.connect('destroy', self._on_multisync_window_destroy)
+        win.present()
+        self._multisync_window = win
+        self._modals.append(win)
+
+    def _on_multisync_window_destroy(self, modal_window):
+        self._multisync_window = None
         self._on_modal_destroy(modal_window)
 
     def _on_now_playing_toggled(self, button):
