@@ -10,8 +10,22 @@ PUSH = 'push'        # only the local side changed
 BOTH = 'both'        # diverged: both changed since the base
 
 
+def emptyish(v):
+    """True for a 'blank/unset/zero' value in any of the forms the
+    providers hand back: None (a field a provider left null, e.g. Kitsu
+    returning no reconsumeCount), 0/0.0/False, or an empty string/list/
+    tuple. These all mean 'nothing here', so one provider's None and
+    another's 0 (or '') are the SAME state, not a difference to sync."""
+    return v is None or v == 0 or v in ('', [], ())
+
+
 def eq(a, b):
-    """Value equality with sets-as-lists compared order-insensitively."""
+    """Value equality, with two provider-friendly rules:
+    - any two 'emptyish' values (None vs 0 vs '' vs [] ...) are equal,
+      so a blank response never diffs against a zero/empty one;
+    - lists (tags) compare order-insensitively."""
+    if emptyish(a) and emptyish(b):
+        return True
     if isinstance(a, list) and isinstance(b, list):
         return sorted(map(str, a)) == sorted(map(str, b))
     return a == b

@@ -673,3 +673,32 @@ def test_rewatch_count_normalizes_from_provider(store):
     s = show('anilist', 9, 'Bebop', my_rewatched_times=3)
     entry = normalize.normalize_show('anilist', s, MEDIAINFO['anilist'])
     assert entry.user['rewatches'] == 3
+
+
+def test_blank_never_conflicts_with_zero_or_empty(store):
+    """A provider returning None/blank for a field is the same state as
+    another returning 0 (or '' / []), never a conflict or a change --
+    Kitsu's blank reconsumeCount vs MAL/AniList's 0 rewatches was the
+    reported case, but the guarantee is field-wide."""
+    from hakubun.sync.diff import eq, emptyish
+    for blank in (None, 0, 0.0, False, '', []):
+        assert emptyish(blank), blank
+    assert eq(None, 0) and eq(0, None) and eq(None, '') and eq([], None)
+    assert not eq(None, 5) and not eq('', 'x') and not eq(['a'], None)
+
+    # Full plan: kitsu returns blank rewatches, MAL/AniList return 0.
+    mal = FakeLib('mal', [show('mal', 1, 'Bebop', mal_id=1)])
+    anilist = FakeLib('anilist', [show('anilist', 9, 'Bebop', mal_id=1)])
+    kitsu_show = show('kitsu', 1, 'Bebop', mal_id=1)
+    kitsu_show['my_rewatched_times'] = None          # blank
+    kitsu = FakeLib('kitsu', [kitsu_show])
+    from hakubun.sync.adapters import ProviderAdapter
+    from hakubun.sync.engine import SyncEngine
+    eng = SyncEngine(store, {n: ProviderAdapter(n, l) for n, l in
+                             {'mal': mal, 'anilist': anilist,
+                              'kitsu': kitsu}.items()})
+    eng.primary = 'mal'
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert [c for c in plan.changes if c.field == 'rewatches'] == []
+    assert [c for c in plan.conflicts if c.field == 'rewatches'] == []
