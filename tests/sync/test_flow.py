@@ -357,6 +357,32 @@ def test_owner_still_beats_primary_intent(store):
     assert libs['mal'].shows['1']['my_score'] == 8
 
 
+def test_owner_untouched_still_not_overwritten_by_primary_intent(store):
+    """The much more common case than test_owner_still_beats_primary_intent:
+    the owner's own remote value hasn't independently moved, so there is
+    no two-sided divergence for conflicts.resolve() to arbitrate. A
+    primary-side edit still must not silently push over the owner --
+    only a direct/local edit (set_local_field) may do that."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=7),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=70))
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER,
+                                             'anilist'))
+    eng.primary = 'mal'
+    libs['mal'].shows['1']['my_score'] = 9   # app-side edit; AniList untouched
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    assert plan.conflicts == []
+    locals_ = [c for c in plan.changes
+               if c.field == 'score' and c.target == 'local']
+    assert len(locals_) == 1 and locals_[0].new == 9
+    pushes_to_owner = [c for c in plan.changes
+                       if c.field == 'score' and c.target == 'anilist']
+    assert pushes_to_owner == []
+    eng.apply(plan)
+    assert libs['anilist'].shows['9']['my_score'] == 70
+
+
 def test_primary_vs_other_divergence_still_asks(store):
     """'Ask' still guards genuine cross-provider divergence: the
     conflict is between the app-side intent and the other provider,

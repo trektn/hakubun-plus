@@ -387,7 +387,21 @@ class SyncEngine:
         """Append the push of `effective` to one provider if needed.
         Progress pushes convert into the provider's own episode
         structure (completing a 4-episode listing pushes 1 to the
-        1-episode movie entry, and vice versa)."""
+        1-episode movie entry, and vice versa).
+
+        A field's declared PROVIDER owner is never overwritten on the
+        strength of some OTHER provider's authority: `source` is
+        'local' for a direct/canonical edit (e.g. set_local_field, or
+        a local value simply pending push) and the owner's own name
+        when the owner's remote value itself won arbitration -- both
+        legitimately reach the owner. But when `source` is a
+        DIFFERENT provider (typically the signed-in primary's fetched
+        change folded in as local intent, engine.py `_plan_entity`),
+        that provider is not this field's authority and must not push
+        over -- silently overwriting -- the actual owner."""
+        if (policy.kind is PolicyKind.PROVIDER and policy.provider == provider
+                and source not in ('local', provider)):
+            return
         if progress_field and provider in p_scales:
             raw_r, r_scale = p_scales[provider]
             if eq(state_val, effective):
