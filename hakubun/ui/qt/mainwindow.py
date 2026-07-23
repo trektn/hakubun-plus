@@ -1080,10 +1080,47 @@ class MainWindow(QMainWindow):
             self.notebook.tabData(self.notebook.currentIndex()))
         self.view.model().sourceModel().setMediaInfo(self.mediainfo)
         self.view.model().sourceModel().setShowList(showlist, altnames, library)
+        self._apply_multisync_overlay(showlist)
         self.view.resizeRowsToContents()
         self.view.setSortingEnabled(True)
 
         self.s_filter_changed()
+
+    def _apply_multisync_overlay(self, showlist):
+        """When multi-sync is on, display each show's reconciled
+        per-field value (episodes from one provider, rating from
+        another, ...) instead of just this account's raw value. Purely
+        a display overlay -- read-only, gated, and a no-op (identical
+        to before) whenever it's disabled or has nothing to show, so it
+        can never destabilise the main list. Edits still go to the
+        signed-in account, which multi-sync reconciles on the next
+        sync."""
+        model = self.view.model().sourceModel()
+        if not self.config.get('multisync_enabled') \
+                or not getattr(self, 'account', None):
+            model.set_overlay({})
+            return
+        try:
+            from hakubun.sync.store import SyncStore
+            from hakubun.sync.overlay import build_overlay
+            media_type = self.worker.engine.data_handler.userconfig.get(
+                'mediatype') or 'anime'
+            db = utils.to_data_path('multisync-%s.db' % media_type)
+            if not utils.file_exists(db):
+                model.set_overlay({})
+                return
+            store = SyncStore(db)
+            try:
+                overlay = build_overlay(
+                    store, self.account['api'], self.mediainfo,
+                    show_ids=[s['id'] for s in showlist])
+            finally:
+                store.close()
+            model.set_overlay(overlay)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            model.set_overlay({})   # never break the list over this
 
     def _init_view(self):
         # Set view options

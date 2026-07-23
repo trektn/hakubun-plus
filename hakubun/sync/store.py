@@ -261,6 +261,11 @@ class SyncStore:
         return [dict(r) for r in self._exec(
             'SELECT * FROM mappings WHERE uuid=?', (uid,)).fetchall()]
 
+    def mappings_of_provider(self, provider):
+        return [dict(r) for r in self._exec(
+            'SELECT * FROM mappings WHERE provider=?',
+            (provider,)).fetchall()]
+
     # -- state tables --------------------------------------------------
 
     def local_get(self, uid):

@@ -38,6 +38,17 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
     editable_columns = [COL_MY_PROGRESS, COL_MY_SCORE]
 
+    # column -> overlayable my_* field (for the reconciled-value cue).
+    _COL_OVERLAY_KEY = {
+        COL_MY_PROGRESS: 'my_progress',
+        COL_PERCENT: 'my_progress',
+        COL_MY_SCORE: 'my_score',
+        COL_MY_STATUS: 'my_status',
+        COL_MY_START: 'my_start_date',
+        COL_MY_FINISH: 'my_finish_date',
+        COL_MY_TAGS: 'my_tags',
+    }
+
     common_flags = \
         QtCore.Qt.ItemFlag.ItemIsSelectable | \
         QtCore.Qt.ItemFlag.ItemIsEnabled | \
@@ -48,13 +59,51 @@ class ShowListModel(QtCore.QAbstractTableModel):
     progressChanged = QtCore.pyqtSignal(QtCore.QVariant, float)
     scoreChanged = QtCore.pyqtSignal(QtCore.QVariant, float)
 
+    # my_* fields whose displayed value the multi-sync overlay can
+    # replace with the reconciled/owned value (e.g. AniList's rating
+    # while signed into Kitsu). Empty overlay -> every _v() falls back
+    # to the raw show value, i.e. behaviour identical to no overlay.
+    OVERLAY_FIELDS = ('my_progress', 'my_score', 'my_status',
+                      'my_start_date', 'my_finish_date', 'my_tags')
+
+    # Columns whose cell reflects an overlayable my_* field (for the
+    # italic 'reconciled value' cue). Built after the COL_* constants.
+
     def __init__(self, parent=None, palette=None):
         self.showlist = None
         self.palette = palette
         self.playing = set()
         self.mediainfo = {}
+        self.overlay = {}       # {show_id: {my_field: value}}
 
         super().__init__(parent)
+
+    def set_overlay(self, overlay):
+        """Install the multi-sync reconciled-value overlay (or {} to
+        clear it) and repaint. Read-only: it changes what the list
+        DISPLAYS, never the underlying show dicts or what an edit
+        pushes."""
+        self.beginResetModel()
+        self.overlay = overlay or {}
+        # Row colours key off progress (the 'new episode' highlight),
+        # which the overlay can change -- recompute against it.
+        if self.showlist:
+            for row, show in enumerate(self.showlist):
+                self._calculate_color(row, show)
+        self.endResetModel()
+
+    def _v(self, show, key):
+        """The value to DISPLAY for a my_* field: the multi-sync
+        overlay's if present, else the show's own."""
+        if self.overlay:
+            over = self.overlay.get(show['id'])
+            if over is not None and key in over:
+                return over[key]
+        return show.get(key)
+
+    def _overlaid(self, show, key):
+        over = self.overlay.get(show['id']) if self.overlay else None
+        return over is not None and key in over
 
     def setDateFormat(self, date_format):
         self.date_format = date_format
@@ -75,7 +124,7 @@ class ShowListModel(QtCore.QAbstractTableModel):
             color = 'is_playing'
         elif show.get('queued'):
             color = 'is_queued'
-        elif self.library.get(show['id']) and max(self.library.get(show['id'])) > show['my_progress']:
+        elif self.library.get(show['id']) and max(self.library.get(show['id'])) > self._v(show, 'my_progress'):
             color = 'new_episode'
         elif show['status'] == utils.Status.AIRING:
             color = 'is_airing'
@@ -190,21 +239,21 @@ class ShowListModel(QtCore.QAbstractTableModel):
                     title_str += " [%s]" % self.altnames[show['id']]
                 return title_str
             elif column == ShowListModel.COL_MY_PROGRESS:
-                return "{} / {}".format(show['my_progress'], show['total'] or '?')
+                return "{} / {}".format(self._v(show, 'my_progress'), show['total'] or '?')
             elif column == ShowListModel.COL_MY_SCORE:
-                return utils.score_to_display(show['my_score'], self.mediainfo)
+                return utils.score_to_display(self._v(show, 'my_score'), self.mediainfo)
             elif column == ShowListModel.COL_PERCENT:
-                # return "{:.0%}".format(show['my_progress'] / 100)
+                progress = self._v(show, 'my_progress')
                 if show['total']:
                     total = show['total']
                 else:
-                    total = (int(show['my_progress']/12)+1) * \
+                    total = (int(progress/12)+1) * \
                         12  # Round up to the next cour
 
                 if row in self.eps:
-                    return (show['my_progress'], total, self.eps[row][0], self.eps[row][1])
+                    return (progress, total, self.eps[row][0], self.eps[row][1])
                 else:
-                    return (show['my_progress'], total, None, None)
+                    return (progress, total, None, None)
             elif column == ShowListModel.COL_NEXT_EP:
                 return self.next_ep.get(row, '-')
             elif column == ShowListModel.COL_START_DATE:
@@ -212,15 +261,15 @@ class ShowListModel(QtCore.QAbstractTableModel):
             elif column == ShowListModel.COL_END_DATE:
                 return self._date(show['end_date'])
             elif column == ShowListModel.COL_MY_START:
-                return self._date(show['my_start_date'])
+                return self._date(self._v(show, 'my_start_date'))
             elif column == ShowListModel.COL_LAST_UPDATED:
                 return utils.format_local_time(show.get('my_last_update'))
             elif column == ShowListModel.COL_MY_FINISH:
-                return self._date(show['my_finish_date'])
+                return self._date(self._v(show, 'my_finish_date'))
             elif column == ShowListModel.COL_MY_TAGS:
-                return show.get('my_tags', '-')
+                return self._v(show, 'my_tags') or '-'
             elif column == ShowListModel.COL_MY_STATUS:
-                return self.mediainfo['statuses_dict'][show['my_status']]
+                return self.mediainfo['statuses_dict'][self._v(show, 'my_status')]
             elif column == ShowListModel.COL_SEASON:
                 return utils.get_season_label(show)
             elif column == ShowListModel.COL_TYPE:
@@ -231,6 +280,14 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 return show.get('mal_score') or '-'
             elif column == ShowListModel.COL_RELEASE_STATUS:
                 return utils.release_status_label(show.get('status'))
+        elif role == QtCore.Qt.ItemDataRole.FontRole:
+            key = ShowListModel._COL_OVERLAY_KEY.get(column)
+            if key and self._overlaid(show, key):
+                # Italicise a cell showing a reconciled/owned value
+                # instead of this account's own, so it's distinguishable.
+                font = QtGui.QFont()
+                font.setItalic(True)
+                return font
         elif role == QtCore.Qt.ItemDataRole.BackgroundRole:
             return self.colors.get(row)
         elif role == QtCore.Qt.ItemDataRole.DecorationRole:
@@ -241,7 +298,7 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 return QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter
         elif role == QtCore.Qt.ItemDataRole.ToolTipRole:
             if column == ShowListModel.COL_PERCENT:
-                tooltip = "Watched: %d<br>" % show['my_progress']
+                tooltip = "Watched: %d<br>" % self._v(show, 'my_progress')
                 if self.eps.get(row):
                     (aired_eps, library_eps) = self.eps.get(row)
                     if aired_eps:
