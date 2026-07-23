@@ -16,8 +16,9 @@ orchestrates who owns what.
 
 import datetime
 
+from hakubun import utils
 from hakubun.sync import normalize
-from hakubun.sync.models import USER_FIELDS
+from hakubun.sync.models import PolicyKind, USER_FIELDS
 
 
 def _to_provider_value(field, value, mediainfo):
@@ -49,15 +50,27 @@ _MY_KEY = {
 }
 
 
-def build_overlay(store, active_provider, active_mediainfo, show_ids=None):
+def build_overlay(store, active_provider, active_mediainfo,
+                 provider_mediainfo=None, show_ids=None):
     """{active-provider show id: {my_field: reconciled display value}}.
 
     Only fields whose reconciled value actually DIFFERS from what the
     active provider itself reports are included, so an entity fully in
     sync adds nothing (no needless italic cues, no work). `show_ids`
     optionally restricts to the shows currently displayed.
+
+    `provider_mediainfo` ({provider: mediainfo}) enables the ownership-
+    dependent score display: when Score is owned by another provider,
+    the cell shows the reconciled score in THAT provider's own rating
+    system (AniList's 8.4, MAL's 8, Kitsu's 8.5) rather than the
+    signed-in account's -- the '_score_display' / '_score_owner' keys
+    -- so the list reflects who owns the rating, not who you're
+    signed into.
     """
     wanted = set(str(s) for s in show_ids) if show_ids is not None else None
+    ownership = store.ownership()
+    score_owner = _score_owner_provider(ownership.get('score'),
+                                        active_provider, provider_mediainfo)
     overlay = {}
     for mapping in store.mappings_of_provider(active_provider):
         pid = mapping['provider_id']
@@ -79,6 +92,20 @@ def build_overlay(store, active_provider, active_mediainfo, show_ids=None):
             value = _to_provider_value(field, canonical, active_mediainfo)
             if value is not None:
                 fields[my_key] = value
+
+        # Ownership-dependent score display: shown in the owner's system
+        # whenever score is owned elsewhere, even if the numeric value
+        # matches the account (the FORMAT is the point -- 8.4 vs 8).
+        if score_owner and 'score' in local \
+                and local['score'][0] is not None:
+            owner_mi = provider_mediainfo[score_owner]
+            owner_raw = normalize.provider_score(
+                local['score'][0], owner_mi.get('score_max', 10),
+                owner_mi.get('score_step', 1))
+            fields['_score_display'] = utils.score_to_display(owner_raw,
+                                                              owner_mi)
+            fields['_score_owner'] = score_owner
+
         if fields:
             # store keys provider_id as text; the list model keys shows
             # by their own id type (usually int). Expose both so the
@@ -92,3 +119,18 @@ def build_overlay(store, active_provider, active_mediainfo, show_ids=None):
 def _eqish(a, b):
     from hakubun.sync.diff import eq
     return eq(a, b)
+
+
+def _score_owner_provider(policy, active_provider, provider_mediainfo):
+    """The provider whose rating system the Score column should use, or
+    None to keep the active account's. Only when Score is owned by a
+    specific OTHER provider whose mediainfo we actually have."""
+    if policy is None or provider_mediainfo is None:
+        return None
+    if policy.kind is not PolicyKind.PROVIDER:
+        return None
+    if policy.provider == active_provider:
+        return None
+    if policy.provider not in provider_mediainfo:
+        return None
+    return policy.provider

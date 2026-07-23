@@ -1113,6 +1113,7 @@ class MainWindow(QMainWindow):
             try:
                 overlay = build_overlay(
                     store, self.account['api'], self.mediainfo,
+                    provider_mediainfo=self._provider_mediainfo(media_type),
                     show_ids=[s['id'] for s in showlist])
             finally:
                 store.close()
@@ -1121,6 +1122,26 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             model.set_overlay({})   # never break the list over this
+
+    def _provider_mediainfo(self, media_type):
+        """{provider: mediainfo} for every configured account, so the
+        overlay can render an owned Score in the owner's own rating
+        system. Built locally (no network); failures per account are
+        skipped rather than breaking the overlay."""
+        from hakubun.sync.adapters import adapter_from_account
+        info = {}
+        msg = messenger.Messenger(None, 'Overlay')
+        for num, account in self.accountman.get_accounts():
+            api = account['api']
+            if api in info:
+                continue
+            try:
+                adapter = adapter_from_account(account, msg,
+                                               media_type=media_type)
+                info[api] = adapter.mediainfo
+            except Exception:
+                continue
+        return info
 
     def _init_view(self):
         # Set view options

@@ -103,7 +103,13 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
     def _overlaid(self, show, key):
         over = self.overlay.get(show['id']) if self.overlay else None
-        return over is not None and key in over
+        if over is None:
+            return False
+        if key in over:
+            return True
+        # The score column is 'overlaid' (owner's system) even when only
+        # its display, not its raw my_score, is overridden.
+        return key == 'my_score' and '_score_display' in over
 
     def setDateFormat(self, date_format):
         self.date_format = date_format
@@ -241,6 +247,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
             elif column == ShowListModel.COL_MY_PROGRESS:
                 return "{} / {}".format(self._v(show, 'my_progress'), show['total'] or '?')
             elif column == ShowListModel.COL_MY_SCORE:
+                over = self.overlay.get(show['id']) if self.overlay else None
+                if over and '_score_display' in over:
+                    # Reconciled score shown in its OWNER's rating system.
+                    return over['_score_display']
                 return utils.score_to_display(self._v(show, 'my_score'), self.mediainfo)
             elif column == ShowListModel.COL_PERCENT:
                 progress = self._v(show, 'my_progress')
@@ -311,6 +321,16 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 return tooltip
             elif column == ShowListModel.COL_LAST_UPDATED:
                 return utils.format_local_time(show.get('my_last_update'))
+            key = ShowListModel._COL_OVERLAY_KEY.get(column)
+            if key and self._overlaid(show, key):
+                over = self.overlay.get(show['id']) or {}
+                if column == ShowListModel.COL_MY_SCORE \
+                        and over.get('_score_owner'):
+                    return ('Score owned by %s, shown in its rating '
+                            'system (via multi-sync).'
+                            % over['_score_owner'].capitalize())
+                return ('Reconciled value from multi-sync (owned by '
+                        'another provider).')
         elif role == QtCore.Qt.ItemDataRole.EditRole:
             if column == ShowListModel.COL_MY_PROGRESS:
                 return (show['my_progress'], show['total'], 0, 1)

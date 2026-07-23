@@ -77,3 +77,56 @@ def test_overlay_status_and_dates_convert_to_active_provider(store):
     # canonical 'completed' -> MAL's own status key.
     assert overlay[1]['my_status'] in MEDIAINFO['mal']['statuses_dict']
     assert isinstance(overlay[1]['my_start_date'], datetime.date)
+
+
+def test_score_shown_in_owners_rating_system(store):
+    """Signed into Kitsu, Score owned by AniList: the Kitsu list shows
+    the reconciled score in AniList's system (decimal 8.4), not Kitsu's
+    rounding -- with provider_mediainfo supplying AniList's format."""
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 77, 'Bebop', mal_id=1)]),
+            'anilist': FakeLib('anilist', [show('anilist', 9, 'Bebop',
+                                               mal_id=1)])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    uid = store.entities()[0]['uuid']
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    eng.edit_local(uid, 'score', 8.4, source='anilist')
+
+    # AniList in POINT_10_DECIMAL: 10/0.1, factor 1 -> displays 8.4.
+    anilist_mi = dict(MEDIAINFO['anilist'])
+    anilist_mi['score_max'] = 10
+    anilist_mi['score_step'] = 0.1
+    overlay = build_overlay(store, 'kitsu', MEDIAINFO['kitsu'],
+                            provider_mediainfo={'anilist': anilist_mi,
+                                                'kitsu': MEDIAINFO['kitsu']})
+    assert overlay[77]['_score_display'] == 8.4
+    assert overlay[77]['_score_owner'] == 'anilist'
+
+
+def test_score_owner_display_absent_without_mediainfo(store):
+    """No provider_mediainfo -> no owner-system score display (falls
+    back to the account's own rendering)."""
+    libs = {'kitsu': FakeLib('kitsu', [show('kitsu', 77, 'Bebop', mal_id=1)]),
+            'anilist': FakeLib('anilist', [show('anilist', 9, 'Bebop',
+                                               mal_id=1)])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    uid = store.entities()[0]['uuid']
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    eng.edit_local(uid, 'score', 8.4, source='anilist')
+    overlay = build_overlay(store, 'kitsu', MEDIAINFO['kitsu'])
+    assert '_score_display' not in overlay.get(77, {})
+
+
+def test_score_owned_by_active_provider_not_reformatted(store):
+    """If the active account itself owns Score, no owner-system
+    override (it's already its own system)."""
+    libs = {'anilist': FakeLib('anilist', [show('anilist', 9, 'Bebop')])}
+    eng = _engine(store, libs)
+    eng.fetch()
+    uid = store.entities()[0]['uuid']
+    store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
+    eng.edit_local(uid, 'score', 8.4, source='anilist')
+    overlay = build_overlay(store, 'anilist', MEDIAINFO['anilist'],
+                            provider_mediainfo={'anilist': MEDIAINFO['anilist']})
+    assert '_score_display' not in overlay.get(9, {})
