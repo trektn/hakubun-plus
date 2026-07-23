@@ -702,3 +702,54 @@ def test_blank_never_conflicts_with_zero_or_empty(store):
     plan = eng.plan()
     assert [c for c in plan.changes if c.field == 'rewatches'] == []
     assert [c for c in plan.conflicts if c.field == 'rewatches'] == []
+
+
+def test_switching_to_coarser_primary_does_not_degrade_local(store):
+    """The reported bug: local score is AniList's 8.4; switching the
+    active account to MAL (integer scores) must NOT fold MAL's 8 in as
+    'intent' and push that coarse 8 back over AniList's 8.4. MAL's 8 is
+    local's 8.4 at MAL's precision -- not an edit."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=0),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=0))
+    uid = _uid(store)
+    # AniList owns/holds a decimal score; reconcile it into local.
+    libs['anilist'].shows['9']['my_score'] = 84        # canonical 8.4
+    assert eng.fetch() == {}
+    eng.apply(eng.plan())                               # local <- 8.4, MAL <- 8
+    assert store.local_get(uid)['score'][0] == 8.4
+    assert libs['mal'].shows['1']['my_score'] == 8
+
+    # Now the user switches the active account to MAL and re-syncs.
+    eng.primary = 'mal'
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    # No score change anywhere: MAL's 8 == local 8.4 at MAL's precision,
+    # AniList's 8.4 == local 8.4. The decimal is preserved.
+    assert [c for c in plan.changes if c.field == 'score'] == []
+    assert [c for c in plan.conflicts if c.field == 'score'] == []
+    assert store.local_get(uid)['score'][0] == 8.4      # NOT degraded to 8
+
+
+def test_genuine_edit_on_coarser_primary_still_folds(store):
+    """The precision guard must not swallow a REAL edit: changing the
+    score to 9 while signed into MAL is not equivalent to local's 8.4
+    on MAL's scale (9 vs 8), so it folds and propagates."""
+    eng, libs = _setup(store,
+                       show('mal', 1, 'Bebop', score=0),
+                       show('anilist', 9, 'Bebop', mal_id=1, score=0))
+    uid = _uid(store)
+    libs['anilist'].shows['9']['my_score'] = 84         # local 8.4
+    assert eng.fetch() == {}
+    eng.apply(eng.plan())
+    eng.primary = 'mal'
+    libs['mal'].shows['1']['my_score'] = 9              # a real MAL-side edit
+    assert eng.fetch() == {}
+    plan = eng.plan()
+    # local pulls the 9.0 intent, and it pushes to AniList.
+    locals_ = [c for c in plan.changes
+               if c.field == 'score' and c.target == 'local']
+    assert len(locals_) == 1 and locals_[0].new == 9.0
+    pushes = [c for c in plan.changes
+              if c.field == 'score' and c.target == 'anilist']
+    assert len(pushes) == 1 and pushes[0].new == 9.0

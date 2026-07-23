@@ -232,11 +232,24 @@ class SyncEngine:
             # Fold the primary provider's changes in as local intent
             # (see __init__): they replace the local value up front and
             # are never a conflict against the reconciled DB itself.
+            #
+            # But ONLY a genuine change: if the primary's value is just
+            # what local already is at the primary's own precision
+            # (switching to MAL, whose integer 8 is local's 8.4 rounded
+            # -- not an edit), folding it would degrade local to the
+            # coarser value and then push that over every finer
+            # provider. So skip the fold when the primary's value is
+            # equivalent to local under the primary's precision; a real
+            # in-app edit (8.4 -> 9) is not equivalent and still folds.
             orig_l = l_val
             intent = None
+            primary_adapter = self.adapters.get(self.primary)
             if self.primary and self.primary in states:
                 p_state, p_val, p_ts = states[self.primary]
-                if p_state in (PULL, BOTH):
+                if p_state in (PULL, BOTH) and not (
+                        primary_adapter is not None
+                        and primary_adapter.values_equivalent(
+                            field, p_val, l_val)):
                     intent = (p_val, p_ts)
                     l_val, l_ts = p_val, p_ts
                     merged = {**pulls, **divergent}
