@@ -76,6 +76,13 @@ class MainView(Gtk.Box):
 
         self._image_thread = None
         self._current_page = None
+        # Multi-sync: per-account mediainfo + media type for the display
+        # overlay and owner-system score editor, and the owner-score
+        # editing state (see _set_score_editor / _on_spinbtn_score_activate).
+        self._multisync_pmi = {}
+        self._multisync_media_type = None
+        self._score_owner_mode = None       # owning provider, or None
+        self._score_editor_provider = None  # provider the editor is set for
         self.statusbox_handler = None
         self.notebook_switch_handler = None
         self._hovering_over_tabs = None
@@ -306,6 +313,10 @@ class MainView(Gtk.Box):
             tree_view.freeze_child_notify()
 
         self._list.clear()
+        # Build the multi-sync display overlay before appending, so each
+        # row shows its reconciled per-field value (episodes from one
+        # provider, an owned Score in the owner's rating system).
+        self._refresh_multisync_overlay()
         library = self._engine.library()
         for show in self._engine.get_list():
             self._list.append(show,
@@ -317,6 +328,35 @@ class MainView(Gtk.Box):
             tree_view = self._pages[status].show_tree_view
             tree_view.thaw_child_notify()
             self._unblock_handlers_for_status(status)
+
+    def _refresh_multisync_overlay(self):
+        """Build the multi-sync display overlay for the active account's
+        list and install it on the shared store. Read-only and gated: a
+        no-op (list shows the account's own values) when multi-sync is
+        off, no account is loaded, or nothing has been synced yet. Also
+        caches the per-account mediainfo the owner-system score editor
+        needs. Never breaks the list -- any failure clears the overlay."""
+        self._multisync_pmi = {}
+        self._multisync_media_type = None
+        if not self._config.get('multisync_enabled') or not self._account \
+                or self._engine is None:
+            self._list.set_overlay({})
+            return
+        try:
+            from hakubun.accounts import AccountManager
+            from hakubun.sync import uibridge
+            media_type = self._engine.api_info['mediatype']
+            self._multisync_media_type = media_type
+            msg = messenger.Messenger(None, 'Overlay')
+            overlay, pmi = uibridge.build_list_overlay(
+                AccountManager().get_accounts(), self._account['api'],
+                self._engine.mediainfo, media_type, msg)
+            self._multisync_pmi = pmi
+            self._list.set_overlay(overlay)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self._list.set_overlay({})
 
     def _block_handlers_for_status(self, status):
         for handler_id in self._page_handler_ids[status]:
@@ -336,11 +376,12 @@ class MainView(Gtk.Box):
         self.statusbox.set_model(self.statusmodel)
         self.statusbox.show_all()
 
-    def _set_score_ranges(self):
-        mediainfo = self._engine.mediainfo
+    def _apply_score_widget_range(self, mediainfo):
+        """Configure the sidebar score spin/scale for a given rating
+        system. Shared by the active-account setup and the owner-system
+        score editor (which retargets these widgets to another provider's
+        scale for a shared, owned-elsewhere entry)."""
         display_max, display_step, decimals = utils.score_display_range(mediainfo)
-        factor = utils.score_display_factor(mediainfo)
-
         # scale_score and spinbtn_score share score_adjustment, so setting
         # it here keeps both widgets in sync automatically.
         self.spinbtn_score.set_value(0)
@@ -349,6 +390,14 @@ class MainView(Gtk.Box):
         self.spinbtn_score.get_adjustment().set_step_increment(display_step)
         self.scale_score.set_digits(decimals)
 
+    def _set_score_ranges(self):
+        mediainfo = self._engine.mediainfo
+        self._apply_score_widget_range(mediainfo)
+        # The score editor now reflects the active account's system.
+        self._score_editor_provider = None
+
+        _, _, decimals = utils.score_display_range(mediainfo)
+        factor = utils.score_display_factor(mediainfo)
         for view in self._pages.values():
             view.decimals = decimals
             view.factor = factor
@@ -428,12 +477,90 @@ class MainView(Gtk.Box):
         return False
 
     def _on_spinbtn_score_activate(self, widget):
-        display_score = round(self.spinbtn_score.get_value(), self.spinbtn_score.get_digits())
+        showid = self._current_page.selected_show if self._current_page else None
+        display_score = round(self.spinbtn_score.get_value(),
+                              self.spinbtn_score.get_digits())
+        # Owner mode: the editor adopted another provider's rating system
+        # for this shared entry, so the value is in THAT system. Write it
+        # to multisync local (propagated on the next sync); never send it
+        # to the active account, which would misread the owner-scale
+        # number. Abort on failure rather than fall through.
+        if self._score_owner_mode and showid:
+            owner_mi = self._multisync_pmi.get(self._score_owner_mode)
+            owner_raw = (utils.score_to_raw(display_score, owner_mi)
+                         if owner_mi else None)
+            if not self._set_owned_score(showid, owner_raw):
+                self.set_status_idle('Could not set the owned score '
+                                     'locally; nothing changed.')
+            return
         score = utils.score_to_raw(display_score, self._engine.mediainfo)
         score = round(score, utils.decimal_places(self._engine.mediainfo['score_step']))
         self.emit('show-action',
                   ShowEventType.SET_SCORE,
-                  (self._current_page.selected_show, score))
+                  (showid, score))
+
+    def _set_score_editor(self, show):
+        """Configure the sidebar score editor for the selected show.
+
+        For a SHARED entry whose Score is owned by another provider, the
+        spin/scale adopt the OWNER's rating system -- so you can rate in
+        AniList's decimals (8.4) even while signed into Kitsu, which only
+        offers 0.5 steps -- seeded from local's reconciled score; Set then
+        writes to multisync local. Otherwise the editor stays on the
+        active account's system, seeded from this account's my_score --
+        so a platform-specific entry keeps the signed-in account's steps."""
+        over = self._list.overlay.get(show['id']) if self._list.overlay else None
+        owner = over.get('_score_owner') if over else None
+        owner_mi = self._multisync_pmi.get(owner) if owner else None
+        if owner_mi:
+            if self._score_editor_provider != owner:
+                self._apply_score_widget_range(owner_mi)
+                self._score_editor_provider = owner
+            self.spinbtn_score.set_value(utils.score_to_display(
+                over.get('_score_owner_raw') or 0, owner_mi))
+            self._score_owner_mode = owner
+        else:
+            if self._score_editor_provider is not None:
+                self._apply_score_widget_range(self._engine.mediainfo)
+                self._score_editor_provider = None
+            self.spinbtn_score.set_value(utils.score_to_display(
+                show['my_score'], self._engine.mediainfo))
+            self._score_owner_mode = None
+
+    def _set_owned_score(self, showid, owner_raw):
+        """Persist a score entered in the owner's rating system to
+        multisync local (see uibridge.write_owned_score), then refresh
+        the list's overlay in place so the new owner-system score shows
+        immediately without dropping the selection. Returns True when
+        handled here, False to fall back to the active-account path."""
+        owner = self._score_owner_mode
+        owner_mi = self._multisync_pmi.get(owner)
+        media_type = self._multisync_media_type
+        if owner_raw is None or not owner_mi or not media_type:
+            return False
+        try:
+            from hakubun.sync import uibridge
+            if not uibridge.write_owned_score(
+                    media_type, self._account['api'], showid, owner_raw,
+                    owner_mi):
+                return False
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return False
+        # Rebuild the overlay (fresh reconciled state) and re-apply the
+        # Score cells in place so the selection survives, then re-seed
+        # the editor from the new reconciled score.
+        self._refresh_multisync_overlay()
+        self._list.apply_overlay_to_rows()
+        over = self._list.overlay.get(showid)
+        if over is not None and over.get('_score_owner_raw') is not None:
+            self.spinbtn_score.set_value(utils.score_to_display(
+                over['_score_owner_raw'], owner_mi))
+        self.set_status_idle(
+            "Score set in %s's rating system; the next multi-sync applies it."
+            % owner.capitalize())
+        return True
 
     def _on_statusbox_changed(self, widget):
         statusiter = self.statusbox.get_active_iter()
@@ -482,7 +609,7 @@ class MainView(Gtk.Box):
         self._list.update(show)
         if self._current_page and show['id'] == self._current_page.selected_show:
             self.btn_episode_show_entry.set_label(str(show['my_progress']))
-            self.spinbtn_score.set_value(utils.score_to_display(show['my_score'], self._engine.mediainfo))
+            self._set_score_editor(show)
 
     def change_show_title_idle(self, show, altname):
         GLib.idle_add(self._update_show_title, show, altname)
@@ -586,8 +713,9 @@ class MainView(Gtk.Box):
                 self.statusbox.set_active_iter(i.iter)
                 break
 
-        # Score selector
-        self.spinbtn_score.set_value(utils.score_to_display(show['my_score'], self._engine.mediainfo))
+        # Score selector -- owner's rating system for a shared, owned-
+        # elsewhere entry; the active account's own system otherwise.
+        self._set_score_editor(show)
 
         # Image
         if show.get('image_thumb') or show.get('image'):

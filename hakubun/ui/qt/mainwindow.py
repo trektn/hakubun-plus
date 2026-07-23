@@ -1117,27 +1117,18 @@ class MainWindow(QMainWindow):
             model.set_overlay({})
             return
         try:
-            from hakubun.sync.store import SyncStore
-            from hakubun.sync.overlay import build_overlay
+            from hakubun.sync import uibridge
             media_type = self.worker.engine.data_handler.userconfig.get(
                 'mediatype') or 'anime'
             self._multisync_media_type = media_type
-            db = utils.to_data_path('multisync-%s.db' % media_type)
-            if not utils.file_exists(db):
-                model.set_overlay({})
-                return
-            # Per-account mediainfo drives both the owner-system display
-            # and the owner-system score editor; build it once here.
-            provider_mediainfo = self._provider_mediainfo(media_type)
-            self._score_owner_mediainfo = provider_mediainfo
-            store = SyncStore(db)
-            try:
-                overlay = build_overlay(
-                    store, self.account['api'], self.mediainfo,
-                    provider_mediainfo=provider_mediainfo,
-                    show_ids=[s['id'] for s in showlist])
-            finally:
-                store.close()
+            msg = messenger.Messenger(None, 'Overlay')
+            # Shared with the GTK front-end (hakubun.sync.uibridge) so the
+            # two UIs build the overlay identically.
+            overlay, pmi = uibridge.build_list_overlay(
+                self.accountman.get_accounts(), self.account['api'],
+                self.mediainfo, media_type, msg,
+                show_ids=[s['id'] for s in showlist])
+            self._score_owner_mediainfo = pmi
             if quiet:
                 model.refresh_overlay(overlay)
             else:
@@ -1146,26 +1137,6 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             model.set_overlay({})   # never break the list over this
-
-    def _provider_mediainfo(self, media_type):
-        """{provider: mediainfo} for every configured account, so the
-        overlay can render an owned Score in the owner's own rating
-        system. Built locally (no network); failures per account are
-        skipped rather than breaking the overlay."""
-        from hakubun.sync.adapters import adapter_from_account
-        info = {}
-        msg = messenger.Messenger(None, 'Overlay')
-        for num, account in self.accountman.get_accounts():
-            api = account['api']
-            if api in info:
-                continue
-            try:
-                adapter = adapter_from_account(account, msg,
-                                               media_type=media_type)
-                info[api] = adapter.mediainfo
-            except Exception:
-                continue
-        return info
 
     def _init_view(self):
         # Set view options
@@ -1591,23 +1562,13 @@ class MainWindow(QMainWindow):
         if not owner or not owner_mi or not media_type:
             return False
         try:
-            from hakubun.sync.store import SyncStore
-            from hakubun.sync.engine import SyncEngine
-            from hakubun.sync import normalize
-            db = utils.to_data_path('multisync-%s.db' % media_type)
-            if not utils.file_exists(db):
+            from hakubun.sync import uibridge
+            # Shared with the GTK front-end so both write owned scores
+            # to multisync local identically.
+            if not uibridge.write_owned_score(
+                    media_type, self.account['api'], showid, owner_raw,
+                    owner_mi):
                 return False
-            store = SyncStore(db)
-            try:
-                mapping = store.mapping_for(self.account['api'], str(showid))
-                if not mapping:
-                    return False
-                canonical = normalize.canonical_score(
-                    owner_raw, owner_mi.get('score_max', 10))
-                SyncEngine(store).set_local_field(
-                    mapping['uuid'], 'score', canonical)
-            finally:
-                store.close()
         except Exception:
             import traceback
             traceback.print_exc()
