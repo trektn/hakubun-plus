@@ -1697,8 +1697,10 @@ class MainWindow(QMainWindow):
     def s_sync_button(self):
         """The toolbar/menu Sync action. Classic single-account sync
         when multi-sync is disabled in Settings > Behavior; otherwise
-        attempts a full multi-sync headlessly and only surfaces the
-        Sync window if it produced something the user must decide."""
+        fetch+plan happens off the GUI thread and, if there's work, the
+        Sync window is surfaced to apply it WITH its progress bar and
+        Cancel button -- never behind a disabled main window (that was
+        the multi-minute 'hang')."""
         if not self.config['multisync_enabled']:
             self.s_send(True)
             return
@@ -1717,51 +1719,38 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             win.mode_combo.setCurrentIndex(idx)
 
-        self._busy(True)
+        # No self._busy(): the main window stays usable while the sync
+        # runs on the window's worker thread.
         self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
         win._run(win._fetch_and_plan, self._r_multisync_planned,
                  'Fetching provider lists...')
 
+    def _surface_syncwindow(self, win):
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
     def _r_multisync_planned(self, plan, error):
         win = self._get_syncwindow()
         if error is not None:
-            self._busy(False)
             self.error('Multi-sync failed: %s' % error)
             return
+        # Render this exact plan into the (still hidden) window.
+        win.r_planned(plan, None)
         if plan.conflicts:
-            # Let the window render and own this exact plan (no
-            # refetch) and bring it forward -- this is the one case
-            # the toolbar button surfaces the window for.
-            self._busy(False)
-            win.r_planned(plan, None)
-            win.show()
-            win.raise_()
-            win.activateWindow()
+            self._surface_syncwindow(win)
             self.status('Multi-sync needs your decision on %d '
                        'conflict(s).' % len(plan.conflicts))
             return
         if not plan.changes:
-            self._busy(False)
             self.status('Multi-sync: already in sync.')
             return
-        self.status('Multi-sync: applying %d change(s)...'
-                    % len(plan.changes))
-        win._cancel.clear()
-        win._run(win.engine.apply, self._r_multisync_applied,
-                 'Applying...', plan,
-                 should_cancel=win._cancel.is_set, forward_progress=True)
-
-    def _r_multisync_applied(self, result, error):
-        self._busy(False)
-        if error is not None:
-            self.error('Multi-sync apply failed: %s' % error)
-            return
-        text = ('Multi-sync: %d local change(s), %d push(es)'
-               % (result['local'], result['pushed']))
-        if result['errors']:
-            text += ' -- some providers failed: %s' % ', '.join(
-                '%s (%s)' % kv for kv in result['errors'].items())
-        self.status(text)
+        # Clean changes: apply IN the window so its progress bar, log
+        # and Cancel button are visible, and the main window is free.
+        self._surface_syncwindow(win)
+        self.status('Multi-sync: applying %d change(s) -- see the sync '
+                    'window.' % len(plan.changes))
+        win.s_apply()
 
     def s_mediatype(self, action):
         index = action.data()
