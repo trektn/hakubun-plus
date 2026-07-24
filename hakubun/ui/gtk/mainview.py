@@ -59,6 +59,8 @@ class MainView(Gtk.Box):
     spinbtn_score = Gtk.Template.Child()
     scale_score = Gtk.Template.Child()
     btn_score_set = Gtk.Template.Child()
+    switch_score_system = Gtk.Template.Child()
+    label_score_system = Gtk.Template.Child()
     statusbox = Gtk.Template.Child()
     statusmodel = Gtk.Template.Child()
     notebook = Gtk.Template.Child()
@@ -149,6 +151,12 @@ class MainView(Gtk.Box):
         self.spinbtn_score.connect("activate", self._on_spinbtn_score_activate)
         self.spinbtn_score.connect("output", self._on_spinbtn_score_output)
         self.btn_score_set.connect("clicked", self._on_spinbtn_score_activate)
+        # Synced/Platform score-system switch: re-seed the editor for the
+        # current show when flipped. notify::active (not state-set) so the
+        # handler reads the NEW state -- state-set fires before get_active
+        # updates.
+        self.switch_score_system.connect(
+            "notify::active", self._on_score_system_switched)
         self.statusbox_handler = self.statusbox.connect(
             "changed", self._on_statusbox_changed)
         self.notebook_switch_handler = self.notebook.connect(
@@ -384,6 +392,8 @@ class MainView(Gtk.Box):
             self._apply_score_widget_range(self._engine.mediainfo)
         self._score_editor_provider = None
         self._score_owner_mode = None
+        self.switch_score_system.set_visible(False)
+        self.label_score_system.set_visible(False)
 
     def _block_handlers_for_status(self, status):
         for handler_id in self._page_handler_ids[status]:
@@ -536,26 +546,43 @@ class MainView(Gtk.Box):
                   ShowEventType.SET_SCORE,
                   (showid, score))
 
+    def _on_score_system_switched(self, _switch, _pspec):
+        """Synced/Platform switch flipped: re-seed the editor for the
+        selected show in the newly-chosen system."""
+        self._resync_score_editor()
+
     def _set_score_editor(self, show):
         """Configure the sidebar score editor for the selected show.
 
-        For a SHARED entry whose Score is owned by another provider, the
-        spin/scale adopt the OWNER's rating system -- so you can rate in
-        AniList's decimals (8.4) even while signed into Kitsu, which only
-        offers 0.5 steps -- seeded from local's reconciled score; Set then
-        writes to multisync local. Otherwise the editor stays on the
-        active account's system, seeded from this account's my_score --
-        so a platform-specific entry keeps the signed-in account's steps."""
+        For a SHARED entry whose Score is owned by another provider, a
+        Synced/Platform switch appears beside the slider (only when
+        multisync's 'edit owned scores in the owner's system' setting is
+        on). In the SYNCED position the spin/scale adopt the OWNER's
+        rating system -- so you can rate in AniList's decimals (8.4) even
+        while signed into Kitsu -- seeded from local's reconciled score;
+        Set then writes to multisync local. In the PLATFORM position (or
+        for a platform-specific entry, or when the setting is off) the
+        editor stays on the active account's own system, seeded from this
+        account's my_score."""
         over = self._list.overlay.get(show['id']) if self._list.overlay else None
         owner = over.get('_score_owner') if over else None
         owner_mi = self._multisync_pmi.get(owner) if owner else None
-        if owner_mi:
+        # The owner-system editor is only offered when the setting allows
+        # it; otherwise every entry is edited in the active account's own
+        # system (and the switch stays hidden).
+        can_synced = bool(owner_mi) and self._config.get(
+            'multisync_edit_owned_score', True)
+        self.switch_score_system.set_visible(can_synced)
+        self.label_score_system.set_visible(can_synced)
+        use_synced = can_synced and self.switch_score_system.get_active()
+        if use_synced:
             if self._score_editor_provider != owner:
                 self._apply_score_widget_range(owner_mi)
                 self._score_editor_provider = owner
             self.spinbtn_score.set_value(utils.score_to_display(
                 over.get('_score_owner_raw') or 0, owner_mi))
             self._score_owner_mode = owner
+            self.label_score_system.set_text('Synced (%s)' % owner.capitalize())
         else:
             if self._score_editor_provider is not None:
                 self._apply_score_widget_range(self._engine.mediainfo)
@@ -563,6 +590,8 @@ class MainView(Gtk.Box):
             self.spinbtn_score.set_value(utils.score_to_display(
                 show['my_score'], self._engine.mediainfo))
             self._score_owner_mode = None
+            if can_synced:
+                self.label_score_system.set_text('Platform')
 
     def _set_owned_score(self, showid, owner_raw):
         """Persist a score entered in the owner's rating system to

@@ -536,6 +536,20 @@ class MainWindow(QMainWindow):
         self.show_score_btn.setToolTip('Set score to the value entered above')
         self.show_score_btn.clicked.connect(self.s_set_score)
         self.show_score.add_extra_widget(self.show_score_btn)
+        # Synced/Platform score-system switch (multisync): for a shared
+        # entry whose Score is owned by another tracker, flip the slider
+        # between the owner's synced rating system and this account's own
+        # system. Hidden unless the selected entry is owned elsewhere and
+        # the 'edit owned scores in owner's system' setting is on.
+        self.show_score_system = QCheckBox('Synced score')
+        self.show_score_system.setToolTip(
+            'Checked: rate this cross-tracker entry in its owner\'s synced '
+            'rating system (e.g. AniList\'s 8.4). Unchecked: rate it in '
+            'this account\'s own system.')
+        self.show_score_system.setChecked(True)
+        self.show_score_system.setVisible(False)
+        self.show_score_system.toggled.connect(
+            lambda _checked: self._resync_score_editor())
         self.show_tags_btn = QPushButton('Edit Tags...')
         self.show_tags_btn.setToolTip(
             'Open a dialog to edit your tags for this show')
@@ -627,6 +641,7 @@ class MainWindow(QMainWindow):
             edit_form.addRow(self.show_progress, self.show_progress_btn)
             edit_form.addRow(show_score_label)
             edit_form.addRow(self.show_score)
+            edit_form.addRow(self.show_score_system)
             edit_form.addRow(self.show_status)
             edit_form.addRow(self.show_tags_btn)
             self.taiga_edit_widget = QWidget()
@@ -644,6 +659,7 @@ class MainWindow(QMainWindow):
             left_box.addRow(self.show_progress, self.show_progress_btn)
             left_box.addRow(show_score_label)
             left_box.addRow(self.show_score)
+            left_box.addRow(self.show_score_system)
             left_box.addRow(self.now_playing_group)
             left_box.addRow(self.show_status)
             left_box.addRow(self.show_tags_btn)
@@ -1168,6 +1184,7 @@ class MainWindow(QMainWindow):
             self.show_score.setMediaInfo(self.mediainfo)
         self._score_editor_provider = None
         self._score_owner_mode = None
+        self.show_score_system.setVisible(False)
 
     def _init_view(self):
         # Set view options
@@ -1299,7 +1316,17 @@ class MainWindow(QMainWindow):
         over = self.view.model().sourceModel().overlay_for(show['id'])
         owner = over.get('_score_owner')
         owner_mi = self._score_owner_mediainfo.get(owner) if owner else None
-        if owner_mi:
+        # The owner-system editor is only offered when the setting allows
+        # it; the Synced/Platform switch appears only for an owned entry.
+        can_synced = bool(owner_mi) and self.config.get(
+            'multisync_edit_owned_score', True)
+        self.show_score_system.setVisible(can_synced)
+        if can_synced:
+            self.show_score_system.setText(
+                'Synced score (%s)' % owner.capitalize()
+                if self.show_score_system.isChecked() else 'Platform score')
+        use_synced = can_synced and self.show_score_system.isChecked()
+        if use_synced:
             if self._score_editor_provider != owner:
                 self.show_score.setMediaInfo(owner_mi)
                 self._score_editor_provider = owner
