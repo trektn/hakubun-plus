@@ -175,7 +175,8 @@ class SyncWindow(QDialog):
         self.mode_combo = QComboBox()
         for mode, label in ((SyncMode.MERGE, 'Merge (reconcile all)'),
                             (SyncMode.MIRROR, 'Mirror (local pushes out)'),
-                            (SyncMode.PULL, 'Pull (providers update local)')):
+                            (SyncMode.PULL, 'Pull (providers update local)'),
+                            (SyncMode.REBASE, 'Rebase (owners overwrite all)')):
             self.mode_combo.addItem(label, mode)
         bar.addWidget(self.mode_combo)
         bar.addStretch()
@@ -285,6 +286,14 @@ class SyncWindow(QDialog):
         elif mode is SyncMode.PULL:
             text = ('<b>Pull:</b> providers update local state; '
                     'nothing is pushed.%s' % signed)
+        elif mode is SyncMode.REBASE:
+            text = ('<b>Rebase:</b> forces each field\'s owner (from the '
+                    'Ownership tab) onto local <i>and</i> every other '
+                    'tracker, retroactively — the value the owner holds '
+                    'now overwrites everyone, even for entries that '
+                    'already look in sync. Use it right after changing '
+                    'who owns a field. Fields set to Merge/Ask/Individual '
+                    'have no single owner and are left alone.')
         else:
             text = ('<b>Merge:</b> reconciles every provider into '
                     'local state, then pushes the result.%s' % signed)

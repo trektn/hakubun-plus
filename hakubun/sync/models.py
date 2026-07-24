@@ -27,6 +27,9 @@ class SyncMode(enum.Enum):
     MIRROR = 'mirror'   # local state pushes outward
     PULL = 'pull'       # providers update local state
     MERGE = 'merge'     # 3-way reconciliation into local, then push
+    REBASE = 'rebase'   # force each field's OWNER into local + every
+                        # tracker, ignoring the merge base (retroactive:
+                        # "make the ownership I just set true everywhere")
 
 
 class PolicyKind(enum.Enum):

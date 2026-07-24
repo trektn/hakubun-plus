@@ -326,6 +326,25 @@ class SyncEngine:
             if not states:
                 continue
 
+            if mode is SyncMode.REBASE:
+                # Retroactively re-establish each field's declared OWNER
+                # as the truth everywhere, ignoring the merge base: the
+                # owner's current value is forced into local and pushed
+                # over every other tracker, whether or not anything
+                # "changed" since the last sync. This is the deliberate
+                # "I just set MAL to own scores -- now go make that real
+                # on Kitsu and AniList" action; nothing here consults
+                # three_way's PULL/PUSH/BOTH verdict (which only sees
+                # divergence). Previewed and checkbox-selectable like any
+                # plan, and it still converges: pushes advance each
+                # provider's base as usual. Fields with no single owner
+                # (merge/ask/individual) have nothing to rebase to and
+                # are left alone.
+                self._plan_rebase(plan, uid, title, field, policy, l_val,
+                                  states, progress_field, p_scales,
+                                  ent_total)
+                continue
+
             # Fold the primary provider's changes in as local intent
             # (see __init__): they replace the local value up front and
             # are never a conflict against the reconciled DB itself.
@@ -484,6 +503,38 @@ class SyncEngine:
             kept[provider] = (r_val, r_ts)
             survivors.append(r_val)
         return kept
+
+    def _plan_rebase(self, plan, uid, title, field, policy, l_val,
+                     states, progress_field, p_scales, ent_total):
+        """One field, REBASE mode: force its declared owner everywhere.
+
+        The authoritative value is the owner's CURRENT value -- a named
+        provider's live value for a `provider:` policy, or the local
+        value for a `local` policy. It is written into local state and
+        pushed to every provider whose value differs, with no reference
+        to the merge base (that is the whole point of rebase: re-assert
+        ownership over values that already "agree" with a stale base).
+        Fields owned by no one in particular (merge/ask/individual) are
+        skipped -- there is nothing to rebase them to."""
+        if policy.kind is PolicyKind.PROVIDER:
+            if policy.provider not in states:
+                return                       # owner lists nothing here
+            effective = states[policy.provider][1]
+            source = policy.provider
+        elif policy.kind is PolicyKind.LOCAL:
+            effective, source = l_val, 'local'
+        else:
+            return
+        if not eq(effective, l_val):
+            plan.changes.append(FieldChange(
+                uid, field, l_val, effective, target='local',
+                source=source, title=title,
+                remote_raw=(p_scales[source][0] if progress_field
+                            and source in p_scales else None)))
+        for provider, (_state, r_val, _ts) in states.items():
+            self._plan_push(plan, uid, title, field, policy, provider,
+                            r_val, effective, source, progress_field,
+                            p_scales, ent_total)
 
     def _plan_push(self, plan, uid, title, field, policy, provider,
                    state_val, effective, source, progress_field,

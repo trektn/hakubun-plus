@@ -287,6 +287,17 @@ Record history         sync/history.py    — event log, undo, stats
   local; nothing is pushed.
 - **Merge** — full 3-way reconciliation into local state per §4, then
   push resolved values outward. Default.
+- **Rebase** — force each field's declared *owner* onto local and every
+  other tracker, **ignoring the merge base**. For a `provider:` policy
+  the owner's current value is adopted into local and pushed everywhere;
+  for `local` it pushes the local value out; `merge`/`ask`/`individual`
+  fields have no single owner and are left alone. Unlike Merge, it does
+  not consult the PULL/PUSH/BOTH verdict — it re-asserts ownership
+  *retroactively* over values that already agree with a stale base. This
+  is the deliberate answer to "I just changed who owns this field; make
+  it true everywhere now." Manual-only (the sync-window Preview), never
+  a background/auto mode; previewed and checkbox-selectable like any
+  plan, and it still converges (pushes advance each provider's base).
 
 ### Diff semantics (per entity, per synced field, per mapped provider)
 
