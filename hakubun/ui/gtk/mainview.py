@@ -85,6 +85,12 @@ class MainView(Gtk.Box):
         self._multisync_media_type = None
         self._score_owner_mode = None       # owning provider, or None
         self._score_editor_provider = None  # provider the editor is set for
+        # The score scale/spin share one adjustment; GtkScale is
+        # continuous and only rounds to `digits` decimals, so on a
+        # non-decimal step (Kitsu's 0.5) it would still drag in 0.1s.
+        # Snap the adjustment to the active system's display step.
+        self._score_display_step = 1.0
+        self._score_snap_guard = False
         self.statusbox_handler = None
         self.notebook_switch_handler = None
         self._hovering_over_tabs = None
@@ -151,6 +157,10 @@ class MainView(Gtk.Box):
         self.spinbtn_score.connect("activate", self._on_spinbtn_score_activate)
         self.spinbtn_score.connect("output", self._on_spinbtn_score_output)
         self.btn_score_set.connect("clicked", self._on_spinbtn_score_activate)
+        # Snap the shared score adjustment (scale + spin) to the active
+        # system's step so e.g. Kitsu's slider moves in 0.5s, not 0.1s.
+        self.spinbtn_score.get_adjustment().connect(
+            "value-changed", self._on_score_value_changed)
         # Synced/Platform score-system switch: re-seed the editor for the
         # current show when flipped. notify::active (not state-set) so the
         # handler reads the NEW state -- state-set fires before get_active
@@ -421,11 +431,27 @@ class MainView(Gtk.Box):
         display_max, display_step, decimals = utils.score_display_range(mediainfo)
         # scale_score and spinbtn_score share score_adjustment, so setting
         # it here keeps both widgets in sync automatically.
+        self._score_display_step = display_step or 1.0
         self.spinbtn_score.set_value(0)
         self.spinbtn_score.set_digits(decimals)
         self.spinbtn_score.set_range(0, display_max)
         self.spinbtn_score.get_adjustment().set_step_increment(display_step)
         self.scale_score.set_digits(decimals)
+
+    def _on_score_value_changed(self, adj):
+        """Snap the score to the active system's display step. GtkScale
+        drags continuously (rounding only to `digits` decimals), so a
+        0.5-step system like Kitsu would otherwise land on 0.1 values the
+        provider can't store; snapping keeps every slider value on-grid."""
+        if self._score_snap_guard:
+            return
+        step = self._score_display_step
+        value = adj.get_value()
+        snapped = round(value / step) * step if step else value
+        if abs(snapped - value) > 1e-9:
+            self._score_snap_guard = True
+            adj.set_value(snapped)
+            self._score_snap_guard = False
 
     def _set_score_ranges(self):
         mediainfo = self._engine.mediainfo
