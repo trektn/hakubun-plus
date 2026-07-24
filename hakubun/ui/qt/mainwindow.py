@@ -1333,9 +1333,12 @@ class MainWindow(QMainWindow):
             self.show_score.setValue(over.get('_score_owner_raw') or 0)
             self._score_owner_mode = owner
         else:
-            if self._score_editor_provider is not None:
-                self.show_score.setMediaInfo(self.mediainfo)
-                self._score_editor_provider = None
+            # Always re-apply the active account's own scale here, not
+            # only when transitioning off an owner scale: flipping the
+            # switch to Platform must reliably restore the signed-in
+            # tracker's system, regardless of any stale editor state.
+            self.show_score.setMediaInfo(self.mediainfo)
+            self._score_editor_provider = None
             self.show_score.setValue(show['my_score'])
             self._score_owner_mode = None
 

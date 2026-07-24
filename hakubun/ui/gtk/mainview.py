@@ -584,9 +584,13 @@ class MainView(Gtk.Box):
             self._score_owner_mode = owner
             self.label_score_system.set_text('Synced (%s)' % owner.capitalize())
         else:
-            if self._score_editor_provider is not None:
-                self._apply_score_widget_range(self._engine.mediainfo)
-                self._score_editor_provider = None
+            # Always re-apply the active account's own scale here, not
+            # only when transitioning off an owner scale: flipping the
+            # switch to Platform must reliably restore the signed-in
+            # tracker's system (e.g. Kitsu's 0-10/0.5), regardless of any
+            # stale editor-provider state.
+            self._apply_score_widget_range(self._engine.mediainfo)
+            self._score_editor_provider = None
             self.spinbtn_score.set_value(utils.score_to_display(
                 show['my_score'], self._engine.mediainfo))
             self._score_owner_mode = None
