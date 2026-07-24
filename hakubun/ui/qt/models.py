@@ -30,11 +30,13 @@ class ShowListModel(QtCore.QAbstractTableModel):
     COL_PLATFORM_SCORE = 15
     COL_MAL_SCORE = 16
     COL_RELEASE_STATUS = 17
+    COL_SYNCED_SCORE = 18
 
     columns = ['ID', 'Title', 'Progress', 'Score',
                'Percent', 'Next Episode', 'Start date', 'End date',
                'My start', 'My finish', 'Tags', 'Status', 'Last updated', 'Season',
-               'Type', 'Platform Score', 'MAL Score', 'Release Status']
+               'Type', 'Platform Score', 'MAL Score', 'Release Status',
+               'Synced Score']
 
     editable_columns = [COL_MY_PROGRESS, COL_MY_SCORE]
 
@@ -47,6 +49,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
         COL_MY_START: 'my_start_date',
         COL_MY_FINISH: 'my_finish_date',
         COL_MY_TAGS: 'my_tags',
+        # The Synced Score cell is only ever populated for an owned
+        # (cross-tracker) entry, so italicise it like the other
+        # reconciled cells whenever it shows a value.
+        COL_SYNCED_SCORE: 'my_score',
     }
 
     common_flags = \
@@ -309,6 +315,17 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 return show.get('mal_score') or '-'
             elif column == ShowListModel.COL_RELEASE_STATUS:
                 return utils.release_status_label(show.get('status'))
+            elif column == ShowListModel.COL_SYNCED_SCORE:
+                # Dedicated Synced Score column: the reconciled score in
+                # the OWNER's own rating system for a shared entry, an en
+                # dash when owned-elsewhere but unrated, and blank for a
+                # platform-specific entry (nothing else owns it) -- so the
+                # column itself reads as the owned-vs-platform indicator.
+                over = self.overlay.get(show['id']) if self.overlay else None
+                if not over or not over.get('_score_owner'):
+                    return ''
+                disp = over.get('_score_display')
+                return ('%g' % disp) if disp is not None else '–'
         elif role == QtCore.Qt.ItemDataRole.FontRole:
             key = ShowListModel._COL_OVERLAY_KEY.get(column)
             if key and self._overlaid(show, key):
@@ -340,6 +357,13 @@ class ShowListModel(QtCore.QAbstractTableModel):
                 return tooltip
             elif column == ShowListModel.COL_LAST_UPDATED:
                 return utils.format_local_time(show.get('my_last_update'))
+            elif column == ShowListModel.COL_SYNCED_SCORE:
+                over = self.overlay.get(show['id']) if self.overlay else None
+                owner = over.get('_score_owner') if over else None
+                if owner:
+                    return ('Synced from %s, in its rating system '
+                            '(via multi-sync).' % owner.capitalize())
+                return 'Platform-specific entry — not synced to another tracker.'
             key = ShowListModel._COL_OVERLAY_KEY.get(column)
             if key and self._overlaid(show, key):
                 over = self.overlay.get(show['id']) or {}
