@@ -772,7 +772,7 @@ gtk_defaults = {
     'remember_geometry': False,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'episodebar_style': 1,
     'filter_global': False,
     # Multi-sync (same keys/semantics as qt_defaults below): the list
@@ -806,7 +806,7 @@ qt_defaults = {
     'last_y': 0,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'inline_edit': True,
     'columns_state': None,
     'columns_per_api': False,
@@ -834,7 +834,7 @@ qt_defaults = {
 }
 
 qt_per_api_defaults = {
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'columns_state': None,
 }
 
@@ -984,6 +984,35 @@ def score_to_display(raw_score, mediainfo):
 def score_to_raw(display_score, mediainfo):
     """Converts a display score back into the API's raw scale."""
     return display_score / score_display_factor(mediainfo)
+
+
+def snap_score_to_step(raw_score, mediainfo):
+    """Quantize a raw score to the provider's own grid (score_step),
+    half up, clamped to [0, score_max].
+
+    The score widgets set their increment to the account's display step,
+    but a value can still land off-grid -- the widget was left on another
+    provider's finer scale (owner-mode editing), or the user typed one --
+    and every backend forwards the number verbatim, so an off-grid score
+    (e.g. Kitsu 4.35 when its grid is quarter-stars) reaches the API as
+    an invalid rating. Snapping here guarantees a value the provider can
+    actually store. Uses Decimal(str(...)) so binary float noise on fine
+    steps can't tip a genuine half the wrong way (mirrors
+    sync.normalize.provider_score)."""
+    import decimal
+    step = mediainfo.get('score_step') or 1
+    smax = mediainfo.get('score_max', 10)
+    if not raw_score:
+        return 0 if float(step).is_integer() else 0.0
+    raw = decimal.Decimal(str(raw_score))
+    step_d = decimal.Decimal(str(step))
+    ticks = (raw / step_d).quantize(decimal.Decimal(1),
+                                    rounding=decimal.ROUND_HALF_UP)
+    snapped = min(max(ticks * step_d, decimal.Decimal(0)),
+                  decimal.Decimal(str(smax)))
+    if float(step).is_integer():
+        return int(snapped)
+    return round(float(snapped), 2)
 
 
 def date_to_season(dt) -> str:

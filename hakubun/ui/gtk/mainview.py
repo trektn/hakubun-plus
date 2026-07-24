@@ -524,8 +524,14 @@ class MainView(Gtk.Box):
                 self.set_status_idle('Could not set the owned score '
                                      'locally; nothing changed.')
             return
-        score = utils.score_to_raw(display_score, self._engine.mediainfo)
-        score = round(score, utils.decimal_places(self._engine.mediainfo['score_step']))
+        # Snap to the active account's own grid before sending: the
+        # widget's increment can be left on another provider's finer
+        # scale (owner-mode editing) or a value typed in, and the backend
+        # forwards it verbatim -- an off-grid number (Kitsu 4.35 when its
+        # grid is quarter-stars) is an invalid rating at the API.
+        score = utils.snap_score_to_step(
+            utils.score_to_raw(display_score, self._engine.mediainfo),
+            self._engine.mediainfo)
         self.emit('show-action',
                   ShowEventType.SET_SCORE,
                   (showid, score))

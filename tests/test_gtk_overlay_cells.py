@@ -45,6 +45,29 @@ def test_owner_score_display_and_italic():
     assert c['score_owner'] == 'anilist'
 
 
+def test_synced_score_column_owned_rated():
+    over = {'my_score': 4.25, '_score_display': 8.4, '_score_owner': 'anilist'}
+    c = overlay_cells(_show(my_score=4.25), over, decimals=2, factor=2)
+    assert c['synced_score_str'] == '8.4'      # owner-system value
+
+
+def test_synced_score_column_owned_unrated_shows_dash():
+    over = {'_score_owner': 'anilist', '_score_owner_raw': 0}
+    c = overlay_cells(_show(my_score=0.0), over, 0, 1)
+    assert c['synced_score_str'] == '–'        # owned but unrated
+
+
+def test_synced_score_column_blank_for_platform_specific():
+    # No overlay owner -> platform-specific -> the column is blank, which
+    # is what distinguishes it from a cross-tracker row in the list.
+    c = overlay_cells(_show(my_score=4.25), None, decimals=2, factor=2)
+    assert c['synced_score_str'] == ''
+    # A progress-only overlay (owned progress, but score not owned) is
+    # still platform-specific as far as the score column is concerned.
+    c2 = overlay_cells(_show(my_progress=3), {'my_progress': 13}, 0, 1)
+    assert c2['synced_score_str'] == ''
+
+
 def test_progress_overlay_feeds_episodes_and_percent():
     c = overlay_cells(_show(my_progress=3, total=26), {'my_progress': 13}, 0, 1)
     assert c['my_progress'] == 13

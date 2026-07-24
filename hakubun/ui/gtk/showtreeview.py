@@ -44,6 +44,12 @@ def overlay_cells(show, over, decimals, factor):
                      ('8.4'), else the active-scale text ('4.0')
       score_italic   True when the Score cell is a reconciled/owned value
       score_owner    owning provider, '' when Score is not owned elsewhere
+      synced_score_str  dedicated 'Synced Score' column: the owner-system
+                     score for a SHARED (owned-elsewhere) entry ('8.4'),
+                     '–' when owned-elsewhere but unrated, '' for a
+                     platform-specific entry (nothing else owns it, so it
+                     has no synced score) -- lets the column itself say
+                     whether a row is cross-tracker or platform-specific
       percent        progress %
       my_start_date / my_finish_date  reconciled dates (or the show's own)
     """
@@ -72,6 +78,15 @@ def overlay_cells(show, over, decimals, factor):
         score_italic = True
     else:
         score_str = "%0.*f" % (decimals, my_score * factor)
+    # Synced Score column: only a SHARED entry (owned on another tracker)
+    # has a "synced" score, shown in the OWNER's own system; a platform-
+    # specific entry leaves it blank, so the column reads as the
+    # owned-vs-platform-specific indicator itself.
+    if over and over.get('_score_owner'):
+        disp = over.get('_score_display')
+        synced_score_str = _fmt_owner_score(disp) if disp is not None else '–'
+    else:
+        synced_score_str = ''
     episodes_str = "{} / {}".format(my_progress, show['total'] or '?')
     if show['total'] and my_progress <= show['total']:
         percent = (float(my_progress) / show['total']) * 100
@@ -80,6 +95,7 @@ def overlay_cells(show, over, decimals, factor):
     return {'my_progress': my_progress, 'my_score': my_score,
             'episodes_str': episodes_str, 'score_str': score_str,
             'score_italic': score_italic, 'score_owner': score_owner,
+            'synced_score_str': synced_score_str,
             'percent': percent, 'my_start_date': my_start,
             'my_finish_date': my_finish}
 
@@ -115,6 +131,9 @@ class ShowListStore(Gtk.ListStore):
         # value, and the owning provider's name for that cell's tooltip.
         ('score-style', int),
         ('score-owner', str),
+        # Dedicated 'Synced Score' column text (index 25): the owner-
+        # system reconciled score for a shared entry, '' otherwise.
+        ('synced-score', str),
     )
 
     def __init__(self, decimals=0, factor=1, colors=dict()):
@@ -224,6 +243,7 @@ class ShowListStore(Gtk.ListStore):
                Pango.Style.ITALIC if cells['score_italic']
                else Pango.Style.NORMAL,
                cells['score_owner'],
+               cells['synced_score_str'],
                ]
         super().append(row)
 
@@ -261,6 +281,7 @@ class ShowListStore(Gtk.ListStore):
             row[23] = (Pango.Style.ITALIC if cells['score_italic']
                        else Pango.Style.NORMAL)
             row[24] = cells['score_owner']
+            row[25] = cells['synced_score_str']
         return
 
         # print("Warning: Show ID not found in ShowView (%d)" % show['id'])
@@ -294,6 +315,7 @@ class ShowListStore(Gtk.ListStore):
             row[23] = (Pango.Style.ITALIC if cells['score_italic']
                        else Pango.Style.NORMAL)
             row[24] = cells['score_owner']
+            row[25] = cells['synced_score_str']
 
     def update_title(self, show, altname=None):
         for row in self:
@@ -397,6 +419,7 @@ class ShowTreeView(Gtk.TreeView):
             ('Type', 20),
             ('Platform Score', 21),
             ('MAL Score', 22),
+            ('Synced Score', 25),
         )
 
         for (name, sort) in self.available_columns:
@@ -493,6 +516,13 @@ class ShowTreeView(Gtk.TreeView):
         renderer = Gtk.CellRendererText()
         self.cols['MAL Score'].pack_start(renderer, False)
         self.cols['MAL Score'].add_attribute(renderer, 'text', 22)
+        # Synced Score: the reconciled score in the owner's own system
+        # (col 25). Italicised via the same per-row Pango style as the
+        # Score cell (col 23), since it too is a reconciled/owned value.
+        renderer_synced = Gtk.CellRendererText()
+        self.cols['Synced Score'].pack_start(renderer_synced, False)
+        self.cols['Synced Score'].add_attribute(renderer_synced, 'text', 25)
+        self.cols['Synced Score'].add_attribute(renderer_synced, 'style', 23)
 
     def _on_drag_data_get(self, widget, drag_context, data, info, time):
         model, treeiter = self.get_selection().get_selected()
@@ -568,6 +598,15 @@ class ShowTreeView(Gtk.TreeView):
                 return False
             tip.set_text('Score owned by %s, shown in its rating system'
                          % owner.capitalize())
+            renderer = next(iter(col.get_cells()))
+            self.set_tooltip_cell(tip, path, col, renderer)
+            return True
+        elif col is self.cols['Synced Score']:
+            owner = gv('score-owner')
+            tip.set_text(
+                'Synced from %s, in its rating system' % owner.capitalize()
+                if owner else
+                'Platform-specific entry — not synced to another tracker')
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
             return True
