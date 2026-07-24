@@ -113,6 +113,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_sync_on_settings_apply = Gtk.Template.Child()
     checkbox_multisync_enabled = Gtk.Template.Child()
     combo_multisync_mode = Gtk.Template.Child()
+    checkbox_multisync_edit_owned_score = Gtk.Template.Child()
 
     checkbox_show_tray = Gtk.Template.Child()
     checkbox_close_to_tray = Gtk.Template.Child()
@@ -309,9 +310,15 @@ class SettingsWindow(Gtk.Window):
             self.combo_multisync_mode.set_active_id('merge')
         self.combo_multisync_mode.set_sensitive(
             self.config['multisync_enabled'])
+        self.checkbox_multisync_edit_owned_score.set_active(
+            self.config['multisync_edit_owned_score'])
+        self.checkbox_multisync_edit_owned_score.set_sensitive(
+            self.config['multisync_enabled'])
         self.checkbox_multisync_enabled.connect(
-            'toggled', lambda w: self.combo_multisync_mode.set_sensitive(
-                w.get_active()))
+            'toggled', lambda w: (
+                self.combo_multisync_mode.set_sensitive(w.get_active()),
+                self.checkbox_multisync_edit_owned_score.set_sensitive(
+                    w.get_active())))
 
         self.checkbox_show_tray.set_active(self.config['show_tray'])
         self.checkbox_close_to_tray.set_active(self.config['close_to_tray'])
@@ -625,6 +632,8 @@ class SettingsWindow(Gtk.Window):
             self.checkbox_multisync_enabled.get_active()
         self.config['multisync_mode'] = \
             self.combo_multisync_mode.get_active_id() or 'merge'
+        self.config['multisync_edit_owned_score'] = \
+            self.checkbox_multisync_edit_owned_score.get_active()
 
         """Update Colors"""
         self.config['colors'] = {key: reprColor(

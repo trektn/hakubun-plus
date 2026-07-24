@@ -448,13 +448,24 @@ class SettingsDialog(QDialog):
                                     'pull')
         self.multisync_mode.addItem('Push (local overwrites providers)',
                                     'push')
+        self.multisync_edit_owned_score = QCheckBox(
+            'Edit owned scores in the owner\'s rating system')
+        self.multisync_edit_owned_score.setToolTip(
+            'When a show\'s Score is owned by another tracker, let the '
+            'sidebar score editor rate it in that owner\'s own system '
+            '(e.g. AniList\'s 8.4 while signed into Kitsu), toggled live '
+            'via the Synced/Platform switch under the slider. Turn this '
+            'off to always edit in the signed-in account\'s own system.')
         self.multisync_enabled.toggled.connect(
             self.multisync_mode.setEnabled)
+        self.multisync_enabled.toggled.connect(
+            self.multisync_edit_owned_score.setEnabled)
         g_sync_layout = QVBoxLayout()
         g_sync_layout.addWidget(self.multisync_enabled)
         mode_row = QFormLayout()
         mode_row.addRow('Mode:', self.multisync_mode)
         g_sync_layout.addLayout(mode_row)
+        g_sync_layout.addWidget(self.multisync_edit_owned_score)
         g_sync.setLayout(g_sync_layout)
 
         page_behavior_layout.addWidget(g_sync)
@@ -796,6 +807,10 @@ class SettingsDialog(QDialog):
             max(0, self.multisync_mode.findData(
                 self.config['multisync_mode'])))
         self.multisync_mode.setEnabled(self.config['multisync_enabled'])
+        self.multisync_edit_owned_score.setChecked(
+            self.config['multisync_edit_owned_score'])
+        self.multisync_edit_owned_score.setEnabled(
+            self.config['multisync_enabled'])
         self.taiga_mode.setChecked(self.config['taiga_mode'])
 
         self.ep_bar_style.setCurrentIndex(
@@ -931,6 +946,8 @@ class SettingsDialog(QDialog):
         self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
         self.config['multisync_mode'] = self.multisync_mode.itemData(
             self.multisync_mode.currentIndex())
+        self.config['multisync_edit_owned_score'] = \
+            self.multisync_edit_owned_score.isChecked()
 
         self.config['episodebar_style'] = self.ep_bar_style.itemData(
             self.ep_bar_style.currentIndex())

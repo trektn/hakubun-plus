@@ -780,6 +780,11 @@ gtk_defaults = {
     # headless multi-sync all gate on these.
     'multisync_enabled': True,
     'multisync_mode': 'merge',
+    # When on (and multisync is enabled), the sidebar score editor can
+    # edit an owned entry's score in its OWNER's rating system, toggled
+    # live via the Synced/Platform switch by the slider. Off keeps the
+    # editor on the active account's own system for every entry.
+    'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#0099CC',
         'is_playing': '#6C2DC7',
@@ -816,6 +821,7 @@ qt_defaults = {
     'filter_global': False,
     'multisync_enabled': True,
     'multisync_mode': 'merge',
+    'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#D2FAFA',
         'is_playing': '#9696FA',
