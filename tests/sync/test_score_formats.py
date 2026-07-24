@@ -68,23 +68,23 @@ def test_score_normalized_correctly_once_real_format_is_known(store):
 def test_push_projects_into_the_true_live_format():
     """Pushing a canonical 6.5 to an AniList account whose real format
     turns out to be POINT_10 (integer only) must round through THAT
-    scale (6.5 -> 6, banker's rounding to even), not carry forward
-    whatever the stale 100/1 default would have computed (65)."""
+    scale (6.5 -> 7, rounding half up), not carry forward whatever the
+    stale 100/1 default would have computed (65)."""
     lib = DriftingFormatLib([show('anilist', 1, 'Bebop')])
     adapter = ProviderAdapter('anilist', lib)
     adapter.fetch()   # discovers the real format, as a real sync would
     sent = adapter.push('1', {'score': 6.5})
-    assert lib.updates[-1]['my_score'] == 6          # POINT_10, integer
-    assert sent['score'] == 6.0
+    assert lib.updates[-1]['my_score'] == 7          # POINT_10, half up
+    assert sent['score'] == 7.0
 
 
 def test_all_five_anilist_formats_round_trip():
-    # Expected values verified directly against provider_score's actual
-    # (banker's-rounding) behavior, not hand-computed.
+    # Expected values are hand-computed for HALF-UP rounding (a value
+    # exactly on a step boundary goes to the larger step).
     cases = [
-        ('POINT_3', 3, 1, 6.5, 2),
-        ('POINT_5', 5, 1, 6.5, 3),
-        ('POINT_10', 10, 1, 6.5, 6),       # 6.5 ties to even (6)
+        ('POINT_3', 3, 1, 6.5, 2),         # 1.95 -> 2
+        ('POINT_5', 5, 1, 6.5, 3),         # 3.25 -> 3
+        ('POINT_10', 10, 1, 6.5, 7),       # 6.5 rounds half up (7)
         ('POINT_10_DECIMAL', 10, 0.1, 6.53, 6.5),
         ('POINT_100', 100, 1, 6.5, 65),
     ]

@@ -17,8 +17,8 @@ def test_score_to_canonical():
 def test_score_to_provider_rounds():
     # "MAL and Kitsu will be rounded"
     assert normalize.provider_score(8.4, 10, 1) == 8        # MAL
-    assert normalize.provider_score(8.5, 10, 1) == 8 or \
-           normalize.provider_score(8.5, 10, 1) == 9        # banker's ok
+    assert normalize.provider_score(8.5, 10, 1) == 9        # half up
+    assert normalize.provider_score(2.5, 10, 1) == 3        # half up, not 2
     assert normalize.provider_score(8.4, 100, 1) == 84      # AniList
     assert normalize.provider_score(8.4, 5, 0.25) == 4.25   # Kitsu quarter
     assert normalize.provider_score(None, 10, 1) == 0

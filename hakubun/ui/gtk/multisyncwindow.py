@@ -321,6 +321,25 @@ class MultiSyncWindow(Gtk.Window):
                 value = value * (10.0 / smax)
         return self._fmt_value(field, value)
 
+    def _score_round_note(self, target, canonical):
+        """Suffix spelling out any rounding a score push applies to reach
+        `target`'s scale -- '' when it lands exactly, else e.g.
+        '  (8.5 rounded up to 9)'. Says what's actually being submitted
+        to the coarser sites and why (half up: 8.5 -> 9)."""
+        if canonical is None or target not in self.engine.adapters:
+            return ''
+        info = self.engine.adapters[target].mediainfo
+        smax = info.get('score_max', 10)
+        back = normalize.canonical_score(
+            normalize.provider_score(canonical, smax,
+                                     info.get('score_step', 1)), smax)
+        if back is None or abs(back - canonical) < 1e-9:
+            return ''
+        return '  (%s rounded %s to %s)' % (
+            self._fmt_value('score', canonical),
+            'up' if back > canonical else 'down',
+            self._fmt_target_value('score', canonical, target))
+
     def _change_label(self, change):
         label = _FIELD_LABELS.get(change.field, change.field)
         if change.target == 'local':
@@ -331,8 +350,11 @@ class MultiSyncWindow(Gtk.Window):
         values = '%s -> %s' % (
             self._fmt_target_value(change.field, change.old, change.target),
             self._fmt_target_value(change.field, change.new, change.target))
-        return ('^ Push to %s -- %s: %s' % (
-            change.target.capitalize(), label, values), _PUSH_COLOR)
+        text = '^ Push to %s -- %s: %s' % (
+            change.target.capitalize(), label, values)
+        if change.field == 'score':
+            text += self._score_round_note(change.target, change.new)
+        return (text, _PUSH_COLOR)
 
     def _populate_changes(self, changes):
         self._changes_store.clear()

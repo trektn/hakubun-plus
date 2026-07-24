@@ -183,9 +183,14 @@ editor), a user conflict resolution, or the owner's own value. Mirror
 mode is the deliberate exception (local overwrites everyone).
 
 Score scales: canonical score is a 0–10 float. Adapter conversion:
-MAL 0–10 int (round), AniList 0–100 (POINT_100; ×10), Kitsu 0–20
-(×2, round). Conversions are lossy by design; the canonical value is
-what the owner said, converted copies are best-effort projections.
+MAL 0–10 int (round), AniList 0–100 (POINT_100; ×10) or any of its
+other four formats, Kitsu 0–20 (×2, round). Rounding is **half up** — a
+value exactly on a step boundary goes to the larger step (canonical 8.5
+is pushed to MAL as 9, not 8; Python's default round() is banker's
+rounding and would give 8). Conversions are lossy by design; the
+canonical value is what the owner said, converted copies are best-effort
+projections. The sync Preview names every rounded score push explicitly
+(e.g. "8.5 rounded up to 9") so it's clear what each site receives.
 
 ## 5. Storage schema (SQLite, `multisync.db`)
 

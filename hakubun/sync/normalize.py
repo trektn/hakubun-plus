@@ -19,6 +19,7 @@ import datetime
 import functools
 import re
 import unicodedata
+from decimal import ROUND_HALF_UP, Decimal
 
 from hakubun.sync.models import NormalizedEntry, STATUSES
 
@@ -64,16 +65,25 @@ def canonical_score(value, score_max):
 
 
 def provider_score(value, score_max, score_step):
-    """Canonical 0-10 -> provider scale, quantized to score_step."""
+    """Canonical 0-10 -> provider scale, quantized to score_step.
+
+    Rounds HALF UP (a value exactly on the boundary goes to the larger
+    step): canonical 8.5 becomes MAL 9, not 8. Python's built-in round()
+    is banker's rounding (round-half-to-even), which sends 8.5->8 and
+    2.5->2 -- surprising when the whole point is "your 8.5 is being
+    pushed as a 9". Decimal(str(...)) keeps the boundary exact so float
+    noise on fine scales (AniList's 0.1 step: 8.75/0.1 == 87.4999... in
+    binary) can't tip a genuine half the wrong way."""
     if value is None:
         return 0
-    raw = float(value) * score_max / 10.0
     step = score_step or 1
-    quantized = round(raw / step) * step
-    quantized = min(max(quantized, 0), score_max)
+    raw = Decimal(str(value)) * Decimal(str(score_max)) / Decimal(10)
+    step_d = Decimal(str(step))
+    ticks = (raw / step_d).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    quantized = min(max(ticks * step_d, Decimal(0)), Decimal(str(score_max)))
     if float(step).is_integer():
-        return int(round(quantized))
-    return round(quantized, 2)
+        return int(quantized)
+    return round(float(quantized), 2)
 
 
 def canonical_date(value):

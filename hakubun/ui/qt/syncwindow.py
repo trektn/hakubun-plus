@@ -339,6 +339,28 @@ class SyncWindow(QDialog):
                 value = value * (10.0 / smax)
         return self._fmt_value(field, value)
 
+    def _score_round_note(self, target, canonical):
+        """Suffix spelling out any rounding a score push applies to reach
+        `target`'s scale -- '' when it lands exactly, else e.g.
+        '  (8.5 rounded up to 9)'. This is the "say what you're pushing
+        and why" the coarser sites need: MAL/AniList-integer round to a
+        whole number (half up: 8.5 -> 9), Kitsu to a quarter-star. The
+        target value is shown in the same units the push row already
+        uses (Kitsu re-expressed on its 0-10 site scale)."""
+        if canonical is None or target not in self.engine.adapters:
+            return ''
+        info = self.engine.adapters[target].mediainfo
+        smax = info.get('score_max', 10)
+        back = normalize.canonical_score(
+            normalize.provider_score(canonical, smax,
+                                     info.get('score_step', 1)), smax)
+        if back is None or abs(back - canonical) < 1e-9:
+            return ''       # exact on this scale; nothing was rounded
+        shown = self._fmt_target_value('score', canonical, target)
+        return '  (%s rounded %s to %s)' % (
+            self._fmt_value('score', canonical),
+            'up' if back > canonical else 'down', shown)
+
     def _change_item(self, change):
         label = _FIELD_LABELS.get(change.field, change.field)
         if change.target == 'local':
@@ -355,6 +377,8 @@ class SyncWindow(QDialog):
                                        change.target))
             text = '⬆ Push to %s — %s: %s' % (
                 change.target.capitalize(), label, values)
+            if change.field == 'score':
+                text += self._score_round_note(change.target, change.new)
             color = self._PUSH_COLOR
         item = QTreeWidgetItem([text])
         item.setForeground(0, color)
