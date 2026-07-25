@@ -92,7 +92,7 @@ class libkitsu(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -113,7 +113,7 @@ class libkitsu(lib):
             'planned': 'Plan to Read'
         },
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
     mediatypes['drama'] = {
         'has_progress': True,
@@ -128,7 +128,7 @@ class libkitsu(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
 
     url = 'https://kitsu.app/api'
@@ -555,6 +555,9 @@ class libkitsu(lib):
         if 'my_status' in item:
             values['data']['attributes']['status'] = item['my_status']
         if 'my_score' in item:
+            # ratingTwenty (2-20) only accepts EVEN values (half-stars);
+            # my_score is on a 0-5/0.5 grid (score_step) so my_score*4 is
+            # always even. 0 clears the rating.
             values['data']['attributes']['ratingTwenty'] = int(
                 item['my_score']*4) or None
 

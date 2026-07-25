@@ -95,7 +95,7 @@ class libkitsu_graphql(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -117,7 +117,7 @@ class libkitsu_graphql(lib):
             'planned': 'Plan to Read'
         },
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
 
     oauth_url = 'https://kitsu.app/api/oauth/token'
@@ -576,7 +576,10 @@ class libkitsu_graphql(lib):
         if 'my_status' in item:
             input_fields['status'] = self._status_to_gql(item['my_status'])
         if 'my_score' in item:
-            # Same 1-20 scale as the REST ratingTwenty field; 0 clears it.
+            # ratingTwenty is a 2-20 scale; Kitsu's star rating system
+            # only accepts EVEN values (half-stars). my_score is on a
+            # 0-5/0.5 grid (score_step) so my_score*4 is always even here;
+            # 0 clears it.
             input_fields['rating'] = int(item['my_score'] * 4) or None
 
     def _check_mutation_errors(self, payload, action):
