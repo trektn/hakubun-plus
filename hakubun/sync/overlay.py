@@ -14,8 +14,6 @@ local -- not whichever account you happen to be signed into --
 orchestrates who owns what.
 """
 
-import datetime
-
 from hakubun import utils
 from hakubun.sync import normalize
 from hakubun.sync.models import PolicyKind, USER_FIELDS

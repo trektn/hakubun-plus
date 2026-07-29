@@ -79,6 +79,9 @@ class ProviderAdapter:
         self.lib = lib
         self._infolist = []
         self._last_push = 0.0
+        # Set by freeze_mediainfo() for the duration of one plan; None
+        # everywhere else so the live-read guarantee below still holds.
+        self._mi_frozen = None
         # Scaled up after a rate-limit hit so the rest of the run
         # paces itself slower and stops tripping the limit repeatedly.
         self._interval_scale = 1.0
@@ -108,9 +111,16 @@ class ProviderAdapter:
         adapter construction, before any fetch ever ran, would freeze
         in whatever was true then -- usually just the class's
         hardcoded 100/1 default -- and never notice the correction.
-        media_info() is a cheap dict lookup, so paying for a fresh read
-        every time costs nothing and rules the whole staleness class
-        out permanently."""
+        media_info() is a cheap dict lookup, but "cheap" is relative:
+        planning reads it O(entities x fields x providers) times, so a
+        plan explicitly freezes it for its own duration (see
+        freeze_mediainfo) -- the format cannot change mid-plan anyway,
+        since only a fetch can learn a new one."""
+        if self._mi_frozen is not None:
+            return self._mi_frozen
+        return self._read_mediainfo()
+
+    def _read_mediainfo(self):
         info = dict(self.lib.media_info())
         # The real libs' media_info() (mediatypes[type]) carries no
         # 'mediatype' key -- only api_info does -- so without this,
@@ -119,6 +129,17 @@ class ProviderAdapter:
         if 'mediatype' not in info:
             info['mediatype'] = getattr(self.lib, 'mediatype', 'anime')
         return info
+
+    def freeze_mediainfo(self):
+        """Pin mediainfo to one read for a bounded, read-only stretch
+        (SyncEngine.plan). Always paired with thaw_mediainfo() in a
+        finally, so nothing outside that stretch can ever observe a
+        stale score format -- the bug the live property exists to
+        prevent."""
+        self._mi_frozen = self._read_mediainfo()
+
+    def thaw_mediainfo(self):
+        self._mi_frozen = None
 
     # -- inbound -------------------------------------------------------
 

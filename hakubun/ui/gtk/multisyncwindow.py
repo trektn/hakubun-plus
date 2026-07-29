@@ -30,30 +30,19 @@ import traceback
 
 from gi.repository import GLib, GObject, Gtk, Pango
 
-from hakubun import messenger, utils
-from hakubun.sync import adapters, normalize
-from hakubun.sync.adapters import adapter_from_account
-from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import (FieldConflict, FieldPolicy, NormalizedEntry,
-                                 PolicyKind, SyncCancelled, SyncMode,
+from hakubun import utils
+from hakubun.sync import adapters, present
+from hakubun.sync.models import (FieldPolicy, NormalizedEntry, SyncCancelled,
                                  USER_FIELDS)
+from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
+from hakubun.sync.present import MODES as _MODES
 from hakubun.sync.store import SyncStore
-
-_FIELD_LABELS = {
-    'score': 'Score', 'progress': 'Watched Episodes',
-    'rewatches': 'Rewatches', 'status': 'Status',
-    'notes': 'Notes', 'start_date': 'Start Date',
-    'finish_date': 'Finish Date', 'tags': 'Tags', 'favorite': 'Favorites',
-}
-
-_MODES = ((SyncMode.MERGE, 'Merge (reconcile all)'),
-          (SyncMode.MIRROR, 'Mirror (local pushes out)'),
-          (SyncMode.PULL, 'Pull (providers update local)'),
-          (SyncMode.REBASE, 'Rebase (owners overwrite all)'))
 
 _PULL_COLOR = '#4caf50'
 _PUSH_COLOR = '#42a5f5'
 _CONFLICT_COLOR = '#e5a400'
+# First-sync overwrites: planned and previewed, but unticked.
+_FIRST_SYNC_COLOR = _CONFLICT_COLOR
 
 # ShowListStore-style column indices for the Preview changes tree.
 _C_ACTIVE, _C_INCONSISTENT, _C_LABEL, _C_COLOR, _C_CHANGE = range(5)
@@ -84,10 +73,14 @@ class MultiSyncWindow(Gtk.Window):
             # drift onto different files.
             from hakubun.sync import uibridge
             self.store = SyncStore(uibridge.store_path(media_type))
-            self.engine, self._adapter_errors = \
-                self._build_engine(accountman, media_type)
+            self.engine, self._adapter_errors = present.build_engine(
+                self.store, accountman, media_type)
         # The signed-in account is the working tree: its changes fold in
-        # as local intent.
+        # as local intent. Kept as an attribute (not just
+        # engine.primary, which stays None when the account has no
+        # adapter) so the caller can tell whether a cached window still
+        # belongs to the loaded account.
+        self.active_api = active_api
         if active_api and active_api in self.engine.adapters:
             self.engine.primary = active_api
 
@@ -122,28 +115,6 @@ class MultiSyncWindow(Gtk.Window):
                          'have accounts for the other media type).'
                          % media_type)
         self._refresh_identity()
-
-    def _build_engine(self, accountman, media_type):
-        by_provider, errors = {}, []
-        msg = messenger.Messenger(None, 'Sync')
-        for _num, account in (accountman.get_accounts() if accountman else []):
-            api = account['api']
-            if api in by_provider:
-                errors.append('%s: only one account per provider is '
-                              'supported for now' % api)
-                continue
-            try:
-                # Force this media type on every account (a Kitsu account
-                # last used for manga still contributes its ANIME list to
-                # an anime sync). Providers that can't do this media type
-                # raise here and are reported, not silently dropped.
-                by_provider[api] = adapter_from_account(account, msg,
-                                                        media_type=media_type)
-            except Exception as e:
-                errors.append('%s: %s' % (api, e))
-        from hakubun.sync.relations import RelationsAtlas
-        atlas = RelationsAtlas.from_file() if media_type == 'anime' else None
-        return SyncEngine(self.store, by_provider, relations=atlas), errors
 
     # -- Preview -------------------------------------------------------
 
@@ -253,7 +224,7 @@ class MultiSyncWindow(Gtk.Window):
         self._apply_log_scroll.add(self.apply_log)
         page.pack_start(self._apply_log_scroll, False, False, 0)
 
-        self.preview_summary = Gtk.Label(xalign=0)
+        self.preview_summary = Gtk.Label(xalign=0, wrap=True)
         page.pack_start(self.preview_summary, False, False, 0)
         self._update_mode_context()
         return page
@@ -275,95 +246,24 @@ class MultiSyncWindow(Gtk.Window):
         return self._thread is not None and self._thread.is_alive()
 
     def _update_mode_context(self, *_a):
-        mode = self._current_mode()
-        primary = self.engine.primary
-        signed = (' You are signed into <b>%s</b>; changes made in the app '
-                  'count as local.' % primary.capitalize() if primary else '')
-        if mode is SyncMode.MIRROR:
-            text = ('<b>Mirror:</b> pushes local state%s over every provider '
-                    '-- remote-only changes will be overwritten.'
-                    % (' (as fed by <b>%s</b>)' % primary.capitalize()
-                       if primary else ''))
-        elif mode is SyncMode.PULL:
-            text = ('<b>Pull:</b> providers update local state; nothing is '
-                    'pushed.%s' % signed)
-        elif mode is SyncMode.REBASE:
-            text = ('<b>Rebase:</b> forces each field\'s owner (from the '
-                    'Ownership tab) onto local <i>and</i> every other '
-                    'tracker, retroactively -- the value the owner holds now '
-                    'overwrites everyone, even entries that already look in '
-                    'sync. Use it right after changing who owns a field. '
-                    'Merge/Ask/Individual fields have no single owner and '
-                    'are left alone.')
-        else:
-            text = ('<b>Merge:</b> reconciles every provider into local '
-                    'state, then pushes the result.%s' % signed)
-        self.mode_context.set_markup(text)
+        self.mode_context.set_markup(
+            present.mode_context(self._current_mode(), self.engine.primary))
 
-    @classmethod
-    def _fmt_value(cls, field, value):
-        if value is None or value == []:
-            return '—'
-        if isinstance(value, list):
-            return ', '.join(map(str, value))
-        if isinstance(value, bool):
-            return 'Yes' if value else 'No'
-        if field == 'score' and isinstance(value, float):
-            return '%g' % value
-        if field == 'status' and isinstance(value, str):
-            return value.replace('_', ' ').title()
-        return str(value)
+    def _fmt_value(self, field, value):
+        return present.fmt_value(field, value)
 
     def _fmt_target_value(self, field, value, target):
-        """What the destination will actually hold. A push's canonical
-        score is projected onto the target's scale (MAL can't hold 6.5),
-        so the preview doesn't promise something that can't happen."""
-        if target != 'local' and field == 'score' \
-                and target in self.engine.adapters:
-            info = self.engine.adapters[target].mediainfo
-            smax = info.get('score_max', 10)
-            value = normalize.provider_score(value, smax,
-                                             info.get('score_step', 1))
-            if target == 'kitsu' and smax:
-                # UI re-expression only: Kitsu's site shows half-stars on
-                # a 0-10 scale, not its raw quarter-star native value.
-                value = value * (10.0 / smax)
-        return self._fmt_value(field, value)
-
-    def _score_round_note(self, target, canonical):
-        """Suffix spelling out any rounding a score push applies to reach
-        `target`'s scale -- '' when it lands exactly, else e.g.
-        '  (8.5 rounded up to 9)'. Says what's actually being submitted
-        to the coarser sites and why (half up: 8.5 -> 9)."""
-        if canonical is None or target not in self.engine.adapters:
-            return ''
-        info = self.engine.adapters[target].mediainfo
-        smax = info.get('score_max', 10)
-        back = normalize.canonical_score(
-            normalize.provider_score(canonical, smax,
-                                     info.get('score_step', 1)), smax)
-        if back is None or abs(back - canonical) < 1e-9:
-            return ''
-        return '  (%s rounded %s to %s)' % (
-            self._fmt_value('score', canonical),
-            'up' if back > canonical else 'down',
-            self._fmt_target_value('score', canonical, target))
+        return present.fmt_target_value(self.engine.adapters, field,
+                                        value, target)
 
     def _change_label(self, change):
-        label = _FIELD_LABELS.get(change.field, change.field)
-        if change.target == 'local':
-            values = '%s -> %s' % (self._fmt_value(change.field, change.old),
-                                   self._fmt_value(change.field, change.new))
-            return ('v Pull from %s -- %s: %s' % (
-                change.source.capitalize(), label, values), _PULL_COLOR)
-        values = '%s -> %s' % (
-            self._fmt_target_value(change.field, change.old, change.target),
-            self._fmt_target_value(change.field, change.new, change.target))
-        text = '^ Push to %s -- %s: %s' % (
-            change.target.capitalize(), label, values)
-        if change.field == 'score':
-            text += self._score_round_note(change.target, change.new)
-        return (text, _PUSH_COLOR)
+        direction, text = present.change_line(self.engine.adapters, change,
+                                              self.engine.primary)
+        arrow, color = (('v', _PULL_COLOR) if direction == 'pull'
+                        else ('^', _PUSH_COLOR))
+        if change.first_sync:
+            color = _FIRST_SYNC_COLOR
+        return ('%s %s' % (arrow, text), color)
 
     def _populate_changes(self, changes):
         self._changes_store.clear()
@@ -372,14 +272,17 @@ class MultiSyncWindow(Gtk.Window):
             groups.setdefault(change.uuid, [change.title, []])[1].append(change)
         for _uid, (title, group_changes) in sorted(
                 groups.items(), key=lambda kv: kv[1][0].casefold()):
+            # Honour the plan's own selection: a first-sync overwrite is
+            # planned unticked, and ticking it must be a deliberate act.
+            states = {c.selected for c in group_changes}
             parent = self._changes_store.append(
-                None, [True, False, '%s    --  %d change(s)'
+                None, [states == {True}, len(states) > 1,
+                       '%s    --  %d change(s)'
                        % (title, len(group_changes)), None, None])
             for change in group_changes:
-                change.selected = True
                 label, color = self._change_label(change)
                 self._changes_store.append(
-                    parent, [True, False, label, color, change])
+                    parent, [change.selected, False, label, color, change])
 
     def _on_change_toggled(self, _renderer, path):
         it = self._changes_store.get_iter(path)
@@ -416,36 +319,10 @@ class MultiSyncWindow(Gtk.Window):
     # -- conflicts (decisions pane) -----------------------------------
 
     def _local_label(self):
-        return self.engine.primary.capitalize() if self.engine.primary \
-            else 'Local'
+        return present.local_label(self.engine.primary)
 
     def _conflict_why(self, conflict):
-        label = _FIELD_LABELS.get(conflict.field, conflict.field)
-        others = sorted(s for s in conflict.values if s != 'local')
-        sides = ' and '.join(
-            ['%s (%s)' % (self._local_label(),
-                          self._fmt_value(conflict.field,
-                                          conflict.values['local']))]
-            + ['%s (%s)' % (s.capitalize(),
-                            self._fmt_value(conflict.field,
-                                            conflict.values[s]))
-               for s in others])
-        why = ('%s changed in more than one place since the last sync -- %s '
-               '-- so syncing either way would overwrite someone. '
-               % (label, sides))
-        kind = conflict.policy.kind
-        if kind is PolicyKind.ASK:
-            why += ("The '%s' policy is Ask, which leaves every such tie to "
-                    'you.' % label)
-        elif kind is PolicyKind.MERGE:
-            why += ('Both sides changed at effectively the same time, so '
-                    "'newest wins' cannot break the tie.")
-        else:
-            why += ('The providers disagree and the policy does not name a '
-                    'winner among them.')
-        if conflict.note:
-            why += ' Note: %s.' % conflict.note
-        return why
+        return present.conflict_why(conflict, self.engine.primary)
 
     def _decision_card(self, conflict):
         frame = Gtk.Frame(label='%s -- %s' % (
@@ -458,8 +335,8 @@ class MultiSyncWindow(Gtk.Window):
         for source, value in sorted(conflict.values.items()):
             shown = self._fmt_value(conflict.field, value)
             if source == 'local':
-                text = ('Use %s: %s' % (self._local_label(), shown)
-                        if self.engine.primary else 'Keep yours: %s' % shown)
+                text = present.conflict_choice_label(conflict, source,
+                                                     self.engine.primary)
             elif conflict.structural:
                 # The provider's number is in ITS OWN episode structure
                 # -- adopting it raw would record a different amount as
@@ -470,7 +347,8 @@ class MultiSyncWindow(Gtk.Window):
                 row.pack_start(info, False, False, 0)
                 continue
             else:
-                text = 'Use %s: %s' % (source.capitalize(), shown)
+                text = present.conflict_choice_label(conflict, source,
+                                                     self.engine.primary)
             button = Gtk.Button(label=text)
             button.connect('clicked', lambda _b, c=conflict, s=source:
                            self._resolve_inline(c, s))
@@ -571,6 +449,12 @@ class MultiSyncWindow(Gtk.Window):
             self.preview_summary.set_text(
                 '%d show(s): %d change(s), %d conflict(s)'
                 % (len(groups), len(plan.changes), len(plan.conflicts)))
+        first_sync = sum(1 for c in plan.changes if c.first_sync)
+        if first_sync:
+            self.preview_summary.set_text(
+                '%s  --  %d first-sync overwrite(s) left unticked. %s'
+                % (self.preview_summary.get_text(), first_sync,
+                   present.FIRST_SYNC_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
@@ -641,6 +525,14 @@ class MultiSyncWindow(Gtk.Window):
         answer = dialog.run()
         dialog.destroy()
         if answer != Gtk.ResponseType.YES:
+            return
+        if self.is_busy():
+            # Resetting under a running fetch/apply would drop the
+            # tables out from under it (and block the main loop on the
+            # store lock). Ask it to stop; the user clicks again.
+            self._cancel.set()
+            self._status('Stopping the running operation first -- press '
+                         'Reset again once it has.')
             return
         self.store.reset()
         self._plan = None
@@ -795,13 +687,7 @@ class MultiSyncWindow(Gtk.Window):
 
     @staticmethod
     def _display_title(title, aliases):
-        import re
-        title = title or '?'
-        if not re.search('[A-Za-z]', title):
-            for alias in aliases or []:
-                if alias and re.search('[A-Za-z]', alias):
-                    return '%s  /  %s' % (title, alias)
-        return title
+        return present.display_title(title, aliases)
 
     def _refresh_identity(self):
         if not hasattr(self, '_identity_store'):

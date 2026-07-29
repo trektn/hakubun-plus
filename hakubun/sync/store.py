@@ -71,9 +71,6 @@ CREATE TABLE IF NOT EXISTS identity_conflicts(
 CREATE TABLE IF NOT EXISTS ownership(
     field TEXT PRIMARY KEY,
     policy TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS meta(
-    key TEXT PRIMARY KEY,
-    value TEXT);
 """
 
 
@@ -171,9 +168,21 @@ class SyncStore:
         def __enter__(self):
             s = self._store
             s._lock.acquire()
-            if s._txn_depth == 0:
-                s._conn.execute('BEGIN IMMEDIATE')
-                s._txn_failed = False
+            try:
+                if s._txn_depth == 0:
+                    # Can raise: two connections share this file by
+                    # design (the sync window's store vs the list
+                    # overlay's cached one), so a write that lands
+                    # while the other holds the write lock fails with
+                    # 'database is locked' after the busy timeout. If
+                    # __enter__ raises, __exit__ never runs -- release
+                    # here or the lock is held for the process's life
+                    # and every other thread's read blocks forever.
+                    s._conn.execute('BEGIN IMMEDIATE')
+                    s._txn_failed = False
+            except BaseException:
+                s._lock.release()
+                raise
             s._txn_depth += 1
             return s
 
@@ -224,19 +233,34 @@ class SyncStore:
         return [dict(r) for r in
                 self._exec('SELECT * FROM entities').fetchall()]
 
+    def _data_version(self):
+        """SQLite's cross-connection write counter. It changes whenever
+        ANOTHER connection commits to this database, and deliberately
+        does NOT move for this connection's own writes -- so it is
+        exactly the signal the in-process caches below cannot derive
+        themselves. Two connections share this file by design (the sync
+        window opens its own store; hakubun.sync.uibridge keeps a
+        long-lived one for the list overlay), so without this a cache
+        built once by the overlay would never again see anything the
+        sync window wrote."""
+        row = self._exec('PRAGMA data_version').fetchone()
+        return row[0] if row else None
+
     def entities_with_aliases(self):
         """[(entity_row, parsed_alias_list)], cached until any entity
-        write invalidates it. Identity resolution scans every entity
-        for EVERY unmatched fetched entry; without the cache a first
-        sync of a large second provider re-reads and re-json-parses
-        the whole table quadratically (inside the fetch transaction,
-        holding the write lock the whole time). Treat rows as
-        read-only."""
-        if self._entities_cache is None:
-            self._entities_cache = [
+        write -- by this connection or another one -- invalidates it.
+        Identity resolution scans every entity for EVERY unmatched
+        fetched entry; without the cache a first sync of a large second
+        provider re-reads and re-json-parses the whole table
+        quadratically (inside the fetch transaction, holding the write
+        lock the whole time). Treat rows as read-only."""
+        version = self._data_version()
+        if self._entities_cache is None \
+                or self._entities_cache[0] != version:
+            self._entities_cache = (version, [
                 (dict(r), _load(r['aliases']) or [])
-                for r in self._exec('SELECT * FROM entities').fetchall()]
-        return self._entities_cache
+                for r in self._exec('SELECT * FROM entities').fetchall()])
+        return self._entities_cache[1]
 
     def update_entity_meta(self, uid, **fields):
         allowed = {'title', 'year', 'total', 'status',
@@ -556,27 +580,9 @@ class SyncStore:
             sql += ' LIMIT %d' % limit
         return [self._event_row(r) for r in self._exec(sql, params)]
 
-    def last_txns(self, limit=20):
-        rows = self._exec(
-            'SELECT txn, MIN(ts) AS ts, COUNT(*) AS n FROM events'
-            " WHERE op IN ('set', 'push') GROUP BY txn ORDER BY ts DESC"
-            ' LIMIT ?', (limit,)).fetchall()
-        return [dict(r) for r in rows]
-
     @staticmethod
     def _event_row(row):
         d = dict(row)
         d['old_value'] = _load(d['old_value'])
         d['new_value'] = _load(d['new_value'])
         return d
-
-    # -- meta ----------------------------------------------------------
-
-    def meta_get(self, key, default=None):
-        row = self._exec('SELECT value FROM meta WHERE key=?',
-                         (key,)).fetchone()
-        return _load(row['value']) if row else default
-
-    def meta_set(self, key, value):
-        self._exec('INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)',
-                   (key, _dump(value)))

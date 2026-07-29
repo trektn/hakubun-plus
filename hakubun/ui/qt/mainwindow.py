@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QChe
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
+from hakubun.sync import present
 from hakubun.sync.models import SyncMode
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
@@ -1863,14 +1864,20 @@ class MainWindow(QMainWindow):
             # reuse a dead window -- that would operate on a closed
             # database. Rebuild fresh.
             self.syncwindow = existing = None
-        if existing is not None and existing.media_type != media_type:
+        # The signed-in account is the app's editing surface; the sync
+        # engine treats its changes as local intent (the "primary
+        # fold"). Switching accounts therefore changes what 'local'
+        # MEANS -- a window built for the old account would keep folding
+        # the wrong tracker's edits in and label conflicts with the
+        # wrong platform -- so it is rebuilt, exactly like a media-type
+        # change.
+        active_api = (self.account or {}).get('api') \
+            if getattr(self, 'account', None) else None
+        if existing is not None and (existing.media_type != media_type
+                                     or existing.active_api != active_api):
             existing.close()
             self.syncwindow = existing = None
         if existing is None:
-            # The signed-in account is the app's editing surface; the
-            # sync engine treats its changes as local intent.
-            active_api = (self.account or {}).get('api') \
-                if getattr(self, 'account', None) else None
             self.syncwindow = SyncWindow(None, self.accountman,
                                          active_api=active_api,
                                          media_type=media_type)
@@ -1881,9 +1888,6 @@ class MainWindow(QMainWindow):
         win.show()
         win.raise_()
         win.activateWindow()
-
-    _MULTISYNC_MODES = {'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
-                        'push': SyncMode.MIRROR}
 
     def s_sync_button(self):
         """The toolbar/menu Sync action. Classic single-account sync
@@ -1912,7 +1916,7 @@ class MainWindow(QMainWindow):
                         '(see the sync window).')
             return
 
-        mode = self._MULTISYNC_MODES.get(
+        mode = present.SETTINGS_MODES.get(
             self.config['multisync_mode'], SyncMode.MERGE)
         idx = win.mode_combo.findData(mode)
         if idx >= 0:
@@ -1944,8 +1948,11 @@ class MainWindow(QMainWindow):
             return
         media_type = self.worker.engine.data_handler.userconfig.get(
             'mediatype') or 'anime'
+        active_api = (self.account or {}).get('api') \
+            if getattr(self, 'account', None) else None
         if win is not getattr(self, 'syncwindow', None) \
-                or win.media_type != media_type:
+                or win.media_type != media_type \
+                or win.active_api != active_api:
             self.status('Multi-sync: the loaded account changed '
                         'mid-sync; results discarded. Sync again.')
             return
@@ -1958,6 +1965,17 @@ class MainWindow(QMainWindow):
             return
         if not plan.changes:
             self.status('Multi-sync: already in sync.')
+            return
+        if any(c.first_sync for c in plan.changes):
+            # First contact with at least one tracker for some field:
+            # nothing has changed since a shared base because there IS
+            # no shared base, so the "winner" is just whichever list was
+            # read first. Those rows are planned unticked; a headless
+            # Sync must never apply them on the user's behalf.
+            self._surface_syncwindow(win)
+            self.status('Multi-sync: first sync for some fields -- '
+                        'review what would be overwritten before '
+                        'applying.')
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

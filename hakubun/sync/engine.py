@@ -11,7 +11,8 @@ import json
 from hakubun.sync import conflicts as conflicts_mod
 from hakubun.sync import normalize
 from hakubun.sync.adapters import AdapterError
-from hakubun.sync.diff import BOTH, NO_BASE, PULL, eq, three_way
+from hakubun.sync.diff import (BOTH, NO_BASE, PULL, emptyish, eq,
+                               three_way)
 from hakubun.sync.history import History
 from hakubun.sync.identity import IdentityResolver
 from hakubun.sync.models import (FieldChange, FieldConflict, IdentityIssue,
@@ -213,6 +214,23 @@ class SyncEngine:
     # -- plan ----------------------------------------------------------
 
     def plan(self, mode=SyncMode.MERGE, should_cancel=None):
+        # Every scale/precision decision below reads an adapter's
+        # mediainfo, which is a live property (deliberately -- AniList's
+        # score format is only learned during a fetch). Planning reads
+        # it O(entities x fields x providers) times, so pin it for the
+        # duration: a format cannot change mid-plan, and thawing in a
+        # finally keeps the live guarantee everywhere else.
+        frozen = [a for a in self.adapters.values()
+                  if hasattr(a, 'freeze_mediainfo')]
+        for adapter in frozen:
+            adapter.freeze_mediainfo()
+        try:
+            return self._plan(mode, should_cancel)
+        finally:
+            for adapter in frozen:
+                adapter.thaw_mediainfo()
+
+    def _plan(self, mode, should_cancel):
         ownership = self.store.ownership()
         plan = SyncPlan(mode)
         plan.identity = [IdentityIssue(id=r['id'], provider=r['provider'],
@@ -274,6 +292,10 @@ class SyncEngine:
             progress_field = field == 'progress'
             states, pulls, divergent = {}, {}, {}
             p_scales, mismatched = {}, {}
+            # Providers we have no shared history with for this field
+            # (no merge base). Overwriting one of these is a first-sync
+            # coin flip, not a decision -- see FieldChange.first_sync.
+            unbased = set()
             for provider, (remote, base) in sides.items():
                 if field not in remote:
                     continue  # provider can't represent this field
@@ -304,6 +326,8 @@ class SyncEngine:
                         b_conv = self._progress_convert(b_val, r_scale,
                                                         ent_total)
                         b_val = NO_BASE if b_conv is None else b_conv
+                if b_val is NO_BASE:
+                    unbased.add(provider)
                 state = three_way(b_val, l_val, r_val)
                 states[provider] = (state, r_val, r_ts)
                 if state == PULL:
@@ -324,25 +348,6 @@ class SyncEngine:
                     title=title, note=note, structural=True))
                 continue
             if not states:
-                continue
-
-            if mode is SyncMode.REBASE:
-                # Retroactively re-establish each field's declared OWNER
-                # as the truth everywhere, ignoring the merge base: the
-                # owner's current value is forced into local and pushed
-                # over every other tracker, whether or not anything
-                # "changed" since the last sync. This is the deliberate
-                # "I just set MAL to own scores -- now go make that real
-                # on Kitsu and AniList" action; nothing here consults
-                # three_way's PULL/PUSH/BOTH verdict (which only sees
-                # divergence). Previewed and checkbox-selectable like any
-                # plan, and it still converges: pushes advance each
-                # provider's base as usual. Fields with no single owner
-                # (merge/ask/individual) have nothing to rebase to and
-                # are left alone.
-                self._plan_rebase(plan, uid, title, field, policy, l_val,
-                                  states, progress_field, p_scales,
-                                  ent_total)
                 continue
 
             # Fold the primary provider's changes in as local intent
@@ -376,6 +381,43 @@ class SyncEngine:
                     pulls = {}
                     divergent = {q: qv for q, qv in merged.items()
                                  if not eq(qv[0], p_val)}
+
+            if mode is SyncMode.REBASE:
+                # Retroactively re-establish each field's declared OWNER
+                # as the truth everywhere, ignoring the merge base: the
+                # owner's current value is forced into local and pushed
+                # over every other tracker, whether or not anything
+                # "changed" since the last sync. This is the deliberate
+                # "I just set MAL to own scores -- now go make that real
+                # on Kitsu and AniList" action; nothing here consults
+                # three_way's PULL/PUSH/BOTH verdict (which only sees
+                # divergence). Previewed and checkbox-selectable like any
+                # plan, and it still converges: pushes advance each
+                # provider's base as usual. Fields with no single owner
+                # (merge/ask/individual) have nothing to rebase to and
+                # are left alone.
+                #
+                # Deliberately placed AFTER the primary fold: 'local' for
+                # a `local`-owned field means the working tree, which
+                # includes the edit you just made in the app. Rebasing
+                # off the pre-fold database value instead would push the
+                # STALE number back over the account you are signed into
+                # -- silently reverting your own rating.
+                #
+                # Only a fold backed by a real merge base counts: with
+                # no shared history the primary's value is simply what
+                # that site happens to hold, not something the user did
+                # in the app, and treating it as intent would quietly
+                # make "rebase to local" mean "rebase to the signed-in
+                # account" on every first sync.
+                rebase_intent = (intent if intent is not None
+                                 and self.primary not in unbased else None)
+                self._plan_rebase(plan, uid, title, field, policy,
+                                  l_val if rebase_intent is not None
+                                  else orig_l, orig_l, rebase_intent,
+                                  states, progress_field, p_scales,
+                                  ent_total)
+                continue
 
             # Drop a provider's voice from divergent/pulls when it's
             # fully explained by local's current value or another
@@ -431,9 +473,18 @@ class SyncEngine:
             else:
                 effective, eff_source = orig_l, 'local'
             if not eq(effective, orig_l):
+                # Adopting a provider's value into local across a first
+                # sync overwrites whatever local held (i.e. the FIRST
+                # provider ingested) with no shared history to justify
+                # it -- same coin flip as a push, flagged the same way.
+                # Filling in a blank is never an overwrite: nobody's
+                # data is lost, so those still apply normally.
+                local_first = (eff_source in unbased
+                               and not emptyish(orig_l))
                 plan.changes.append(FieldChange(
                     uid, field, orig_l, effective, target='local',
                     source=eff_source, title=title,
+                    selected=not local_first, first_sync=local_first,
                     remote_raw=(p_scales[eff_source][0]
                                 if progress_field
                                 and eff_source in p_scales else None)))
@@ -450,7 +501,7 @@ class SyncEngine:
                 self._plan_push(plan, uid, title, field, policy,
                                 provider, r_val, effective, eff_source,
                                 progress_field, p_scales, ent_total,
-                                provenance=provenance)
+                                provenance=provenance, unbased=unbased)
 
     def _collapse_precision_redundant(self, field, l_val, group):
         """Drop a provider's value from a same-field group (divergent
@@ -505,7 +556,8 @@ class SyncEngine:
         return kept
 
     def _plan_rebase(self, plan, uid, title, field, policy, l_val,
-                     states, progress_field, p_scales, ent_total):
+                     orig_l, intent, states, progress_field, p_scales,
+                     ent_total):
         """One field, REBASE mode: force its declared owner everywhere.
 
         The authoritative value is the owner's CURRENT value -- a named
@@ -515,19 +567,28 @@ class SyncEngine:
         to the merge base (that is the whole point of rebase: re-assert
         ownership over values that already "agree" with a stale base).
         Fields owned by no one in particular (merge/ask/individual) are
-        skipped -- there is nothing to rebase them to."""
+        skipped -- there is nothing to rebase them to.
+
+        `l_val` is the working tree: the stored local value with the
+        signed-in account's own fetched edit already folded in (caller).
+        `orig_l` is the pre-fold database value, which is what a local
+        change is recorded as replacing."""
         if policy.kind is PolicyKind.PROVIDER:
             if policy.provider not in states:
                 return                       # owner lists nothing here
             effective = states[policy.provider][1]
             source = policy.provider
         elif policy.kind is PolicyKind.LOCAL:
-            effective, source = l_val, 'local'
+            effective = l_val
+            # When the fold supplied this value, credit the account it
+            # came from so apply() advances THAT provider's merge base
+            # (git: the commit records its real parent).
+            source = self.primary if intent is not None else 'local'
         else:
             return
-        if not eq(effective, l_val):
+        if not eq(effective, orig_l):
             plan.changes.append(FieldChange(
-                uid, field, l_val, effective, target='local',
+                uid, field, orig_l, effective, target='local',
                 source=source, title=title,
                 remote_raw=(p_scales[source][0] if progress_field
                             and source in p_scales else None)))
@@ -538,7 +599,7 @@ class SyncEngine:
 
     def _plan_push(self, plan, uid, title, field, policy, provider,
                    state_val, effective, source, progress_field,
-                   p_scales, ent_total, provenance=None):
+                   p_scales, ent_total, provenance=None, unbased=None):
         """Append the push of `effective` to one provider if needed.
         Progress pushes convert into the provider's own episode
         structure (completing a 4-episode listing pushes 1 to the
@@ -564,12 +625,24 @@ class SyncEngine:
         actually-authoritative write (a direct edit, a user
         resolution, or the owner itself) supersedes the value. Mirror
         mode passes provenance=None on purpose: mirror is the explicit
-        'local overwrites everyone' mode."""
+        'local overwrites everyone' mode.
+
+        `unbased` names the providers we have no merge base with for
+        this field. A push to one of those overwrites a side we share
+        no history with, so it is flagged first_sync and planned
+        UNSELECTED (see FieldChange.first_sync). Mirror and rebase pass
+        unbased=None on purpose -- both are explicit 'overwrite them'
+        instructions the user picked from the mode dropdown."""
         if policy.kind is PolicyKind.PROVIDER and policy.provider == provider:
             if source not in ('local', provider):
                 return
             if provenance in self.adapters and provenance != provider:
                 return
+        # A value the target itself supplied is never "overwriting" it,
+        # and neither is filling in a blank -- only a real value being
+        # replaced by another real value is the coin flip we guard.
+        first = (bool(unbased) and provider in unbased
+                 and source != provider)
         if progress_field and provider in p_scales:
             raw_r, r_scale = p_scales[provider]
             if eq(state_val, effective):
@@ -585,15 +658,19 @@ class SyncEngine:
                                            r_scale or '?'),
                     structural=True))
                 return
+            push_first = first and not emptyish(raw_r)
             plan.changes.append(FieldChange(
                 uid, field, raw_r, target_val, target=provider,
-                source=source, title=title))
+                source=source, title=title,
+                selected=not push_first, first_sync=push_first))
             return
         if not self.adapters[provider].values_equivalent(
                 field, state_val, effective):
+            push_first = first and not emptyish(state_val)
             plan.changes.append(FieldChange(
                 uid, field, state_val, effective, target=provider,
-                source=source, title=title))
+                source=source, title=title,
+                selected=not push_first, first_sync=push_first))
 
     def _resolve_field(self, plan, uid, title, field, policy,
                        l_val, l_ts, pulls, divergent, mode):

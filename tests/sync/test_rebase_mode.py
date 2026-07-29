@@ -63,7 +63,7 @@ def test_rebase_owner_can_pull_local_down_and_push_the_rest(store):
     store.set_ownership('score', FieldPolicy(PolicyKind.PROVIDER, 'anilist'))
 
     plan = engine.plan(mode=SyncMode.REBASE)
-    # AniList (8.5) becomes the truth: local 9.0 -> 8.5, Kitsu -> 4.25.
+    # AniList (8.5) becomes the truth: local 9.0 -> 8.5, Kitsu -> 4.5.
     # MAL is left alone because 8.5 and its current 9.0 both render as
     # MAL 9 (nothing would actually change on MAL).
     assert _pushes(plan, 'score', 'local') == [(9.0, 8.5)]
@@ -72,7 +72,7 @@ def test_rebase_owner_can_pull_local_down_and_push_the_rest(store):
     assert _pushes(plan, 'score', 'mal') == []         # 9.0/8.5 both -> MAL 9
     engine.apply(plan)
     assert store.local_get(uid)['score'][0] == 8.5
-    assert kitsu.shows['5']['my_score'] == 4.25
+    assert kitsu.shows['5']['my_score'] == 4.5
 
 
 def test_rebase_local_owner_pushes_local_out(store):

@@ -115,6 +115,16 @@ class FieldChange:
     # (e.g. a 1/1 movie completing a 4-episode listing): the provider's
     # own raw value, which is what the merge base must record.
     remote_raw: Any = None
+    # True when this change overwrites a side we have NO shared history
+    # with (no merge base for that field with that provider -- a first
+    # sync). Neither side "changed"; the winner is decided purely by
+    # whichever provider happened to be ingested first, so the value
+    # being replaced may be perfectly good data on the other tracker.
+    # Planned and shown like any change, but UNSELECTED by default:
+    # overwriting across a first sync must be opted into, never applied
+    # by a headless Sync click (docs/multisync.md, "nothing silently
+    # overwrites").
+    first_sync: bool = False
 
     def describe(self) -> str:
         return '%s  %s %s -> %s' % (self.target, self.field,

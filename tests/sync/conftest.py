@@ -24,7 +24,12 @@ MEDIAINFO = {
                                   'PAUSED': 'Paused',
                                   'DROPPED': 'Dropped',
                                   'PLANNING': 'Planning'}},
-    'kitsu': {'mediatype': 'anime', 'score_max': 5, 'score_step': 0.25,
+    # Kitsu's grid is HALF-stars: ratingTwenty (its wire format) only
+    # accepts even values, so my_score = ratingTwenty/4 always lands on
+    # a 0.5 step. Must match hakubun/lib/libkitsu*.py -- a fake that
+    # models a finer grid than the real lib silently blesses scores the
+    # API would reject.
+    'kitsu': {'mediatype': 'anime', 'score_max': 5, 'score_step': 0.5,
               'can_score': True, 'can_status': True, 'can_update': True,
               'can_date': True, 'can_tag': False,
               'statuses_dict': {'current': 'Currently Watching',

@@ -371,16 +371,22 @@ class HakubunWindow(Gtk.ApplicationWindow):
         if self._engine is None:
             return None
         media_type = self._engine.api_info['mediatype']
+        # The signed-in account is the working tree; switching accounts
+        # changes what 'local' MEANS (the primary fold), so a window
+        # built for the old one must be rebuilt just like a media-type
+        # change -- otherwise it keeps folding the wrong tracker's edits
+        # in and labels conflicts with the wrong platform.
+        active_api = self._engine.account['api']
         if self._multisync_window is not None:
-            if self._multisync_window.media_type == media_type:
+            if self._multisync_window.media_type == media_type \
+                    and self._multisync_window.active_api == active_api:
                 return self._multisync_window
             self._multisync_window.destroy()
             self._multisync_window = None
 
         from hakubun.accounts import AccountManager
         from hakubun.ui.gtk.multisyncwindow import MultiSyncWindow
-        win = MultiSyncWindow(AccountManager(),
-                              self._engine.account['api'], media_type,
+        win = MultiSyncWindow(AccountManager(), active_api, media_type,
                               transient_for=self)
         win.connect('destroy', self._on_multisync_window_destroy)
         self._multisync_window = win
@@ -416,7 +422,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
                          args=(True, True)).start()
 
     def _start_multisync(self):
-        from hakubun.sync.models import SyncMode
+        from hakubun.sync import present
         win = self._get_multisync_window()
         if win is None:
             return
@@ -434,8 +440,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
                 'Multi-sync: an operation is already running.')
             return
         mode_key = self._config.get('multisync_mode') or 'merge'
-        win.set_mode({'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
-                      'push': SyncMode.MIRROR}.get(mode_key, SyncMode.MERGE))
+        win.set_mode(present.SETTINGS_MODES.get(mode_key,
+                                                present.SyncMode.MERGE))
         self._main_view.set_status_idle('Multi-syncing (%s)...' % mode_key)
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._multisync_planned(
@@ -452,7 +458,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.set_status_idle('Multi-sync failed: %s' % error)
             return
         if win is not self._multisync_window or self._engine is None \
-                or win.media_type != self._engine.api_info['mediatype']:
+                or win.media_type != self._engine.api_info['mediatype'] \
+                or win.active_api != self._engine.account['api']:
             self._main_view.set_status_idle(
                 'Multi-sync: the loaded account changed mid-sync; '
                 'results discarded. Sync again.')
@@ -466,6 +473,16 @@ class HakubunWindow(Gtk.ApplicationWindow):
             return
         if not plan.changes:
             self._main_view.set_status_idle('Multi-sync: already in sync.')
+            return
+        if any(c.first_sync for c in plan.changes):
+            # First contact with at least one tracker for some field:
+            # there is no shared base, so the "winner" is just whichever
+            # list was read first. Those rows are planned unticked; a
+            # headless Sync must never apply them for the user.
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync: first sync for some fields -- review what '
+                'would be overwritten before applying.')
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

@@ -79,11 +79,13 @@ class IdentityResolver:
         #    the mapping sits there and would be trusted by every
         #    future fetch of that id forever, since this is the FIRST
         #    thing checked. Quarantine it and re-resolve fresh instead.
+        quarantined = False
         mapping = store.mapping_for(entry.provider, entry.provider_id)
         if mapping:
             ent = store.get_entity(mapping['uuid']) or {}
             if ent.get('media_type') == entry.media_type:
                 return mapping['uuid']
+            quarantined = True
             store.remove_mapping(entry.provider, entry.provider_id)
             store.identity_upsert(
                 entry.provider, entry.provider_id, entry.title,
@@ -147,13 +149,26 @@ class IdentityResolver:
             # mapping has since been quarantined away, ...) must reopen
             # -- carrying it over would leave a real unresolved entry
             # invisibly marked resolved forever.
-            status = ('deferred' if previous
-                      and previous['status'] == 'deferred' else 'open')
-            store.identity_upsert(entry.provider, entry.provider_id,
-                                  entry.title, askable, status=status,
-                                  entry=self._entry_payload(entry))
+            store.identity_upsert(
+                entry.provider, entry.provider_id, entry.title, askable,
+                status=self._reopen_status(entry.provider,
+                                           entry.provider_id),
+                entry=self._entry_payload(entry))
             return None
-        return self._create_entity(entry)
+        # Nothing left to ask about: this entry gets its own entity.
+        # Any question we had recorded about it is now answered, so
+        # close it -- otherwise the row stays 'open' forever (step 1
+        # returns early on every later fetch and never revisits it),
+        # the Identity tab lists an entry that IS linked, and
+        # "resolving" it again would repoint or duplicate the mapping.
+        # EXCEPT a row this very call raised by quarantining a
+        # type-mismatched mapping: that is a "your source data is
+        # wrong" warning, and re-homing the entry does not make it
+        # untrue. It stays open until the user acknowledges it.
+        uid = self._create_entity(entry)
+        if previous and not quarantined:
+            store.identity_set_status(previous['id'], 'resolved')
+        return uid
 
     def _reopen_status(self, provider, provider_id):
         """Status for re-recording a conflict: keep a live 'deferred'

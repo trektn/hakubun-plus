@@ -33,21 +33,12 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
                              QToolButton, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
 
-from hakubun import messenger, utils
-from hakubun.sync import adapters, normalize
-from hakubun.sync.adapters import adapter_from_account
-from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import (FieldChange, FieldConflict, FieldPolicy,
-                                 NormalizedEntry, PolicyKind, SyncCancelled,
-                                 SyncMode, USER_FIELDS)
+from hakubun import utils
+from hakubun.sync import adapters, present
+from hakubun.sync.models import (FieldChange, FieldPolicy, NormalizedEntry,
+                                 SyncCancelled, SyncMode, USER_FIELDS)
+from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
 from hakubun.sync.store import SyncStore
-
-_FIELD_LABELS = {
-    'score': 'Score', 'progress': 'Watched Episodes',
-    'rewatches': 'Rewatches', 'status': 'Status',
-    'notes': 'Notes', 'start_date': 'Start Date',
-    'finish_date': 'Finish Date', 'tags': 'Tags', 'favorite': 'Favorites',
-}
 
 
 class _Task(QtCore.QThread):
@@ -99,10 +90,14 @@ class SyncWindow(QDialog):
             # different files.
             from hakubun.sync import uibridge
             self.store = SyncStore(uibridge.store_path(media_type))
-            self.engine, self._adapter_errors = \
-                self._build_engine(accountman, media_type)
+            self.engine, self._adapter_errors = present.build_engine(
+                self.store, accountman, media_type)
         # The signed-in account is the app's editing surface (the
-        # working tree): its changes fold in as local intent.
+        # working tree): its changes fold in as local intent. Kept as
+        # an attribute (not just engine.primary, which stays None when
+        # the account has no adapter) so the caller can tell whether a
+        # cached window still belongs to the loaded account.
+        self.active_api = active_api
         if active_api and active_api in self.engine.adapters:
             self.engine.primary = active_api
 
@@ -124,31 +119,6 @@ class SyncWindow(QDialog):
                         'you have accounts set up for the other media '
                         'type).' % media_type)
         self._refresh_identity()
-
-    def _build_engine(self, accountman, media_type):
-        by_provider, errors = {}, []
-        msg = messenger.Messenger(None, 'Sync')
-        for num, account in accountman.get_accounts():
-            api = account['api']
-            if api in by_provider:
-                errors.append('%s: only one account per provider is '
-                              'supported for now' % api)
-                continue
-            try:
-                # Force this media type on every account (a Kitsu
-                # account last used for manga still contributes its
-                # ANIME list to an anime sync). Providers that can't do
-                # this media type at all (e.g. VNDB is VN-only) raise
-                # here and are reported, not silently dropped.
-                adapter = adapter_from_account(account, msg,
-                                               media_type=media_type)
-            except Exception as e:
-                errors.append('%s: %s' % (api, e))
-                continue
-            by_provider[api] = adapter
-        from hakubun.sync.relations import RelationsAtlas
-        atlas = RelationsAtlas.from_file() if media_type == 'anime' else None
-        return SyncEngine(self.store, by_provider, relations=atlas), errors
 
     # -- Preview -------------------------------------------------------
 
@@ -173,11 +143,8 @@ class SyncWindow(QDialog):
                 bar.addWidget(icon_label)
         bar.addWidget(QLabel('Mode:'))
         self.mode_combo = QComboBox()
-        for mode, label in ((SyncMode.MERGE, 'Merge (reconcile all)'),
-                            (SyncMode.MIRROR, 'Mirror (local pushes out)'),
-                            (SyncMode.PULL, 'Pull (providers update local)'),
-                            (SyncMode.REBASE, 'Rebase (owners overwrite all)')):
-            self.mode_combo.addItem(label, mode)
+        for mode, mode_label in present.MODES:
+            self.mode_combo.addItem(mode_label, mode)
         bar.addWidget(self.mode_combo)
         bar.addStretch()
         self.fetch_button = QPushButton('Fetch && Plan')
@@ -268,131 +235,43 @@ class SyncWindow(QDialog):
         layout.addWidget(self.apply_log)
 
         self.preview_summary = QLabel()
+        self.preview_summary.setWordWrap(True)
         layout.addWidget(self.preview_summary)
         return page
 
     def _update_mode_context(self):
-        mode = self.mode_combo.currentData()
-        primary = self.engine.primary
-        signed = (' You are signed into <b>%s</b>; changes made in the '
-                  'app count as local.' % primary.capitalize()
-                  if primary else '')
-        if mode is SyncMode.MIRROR:
-            text = ('<b>Mirror:</b> pushes local state%s over every '
-                    'provider — remote-only changes will be '
-                    'overwritten.' % (
-                        ' (as fed by <b>%s</b>, your signed-in account)'
-                        % primary.capitalize() if primary else ''))
-        elif mode is SyncMode.PULL:
-            text = ('<b>Pull:</b> providers update local state; '
-                    'nothing is pushed.%s' % signed)
-        elif mode is SyncMode.REBASE:
-            text = ('<b>Rebase:</b> forces each field\'s owner (from the '
-                    'Ownership tab) onto local <i>and</i> every other '
-                    'tracker, retroactively — the value the owner holds '
-                    'now overwrites everyone, even for entries that '
-                    'already look in sync. Use it right after changing '
-                    'who owns a field. Fields set to Merge/Ask/Individual '
-                    'have no single owner and are left alone.')
-        else:
-            text = ('<b>Merge:</b> reconciles every provider into '
-                    'local state, then pushes the result.%s' % signed)
-        self.mode_context.setText(text)
+        self.mode_context.setText(present.mode_context(
+            self.mode_combo.currentData(), self.engine.primary))
 
     # -- preview rendering --------------------------------------------
 
     _PULL_COLOR = QtGui.QColor('#4caf50')
     _PUSH_COLOR = QtGui.QColor('#42a5f5')
     _CONFLICT_COLOR = QtGui.QColor('#ff9800')
+    # First-sync overwrites: planned, previewed, but unticked -- same
+    # "needs a human" hue as a conflict, because that is what it is.
+    _FIRST_SYNC_COLOR = QtGui.QColor('#ff9800')
 
-    @classmethod
-    def _fmt_value(cls, field, value):
-        if value is None or value == []:
-            return '—'
-        if isinstance(value, list):
-            return ', '.join(map(str, value))
-        if isinstance(value, bool):
-            return 'Yes' if value else 'No'
-        if field == 'score' and isinstance(value, float):
-            return ('%g' % value)
-        if field == 'status' and isinstance(value, str):
-            return value.replace('_', ' ').title()
-        return str(value)
+    def _fmt_value(self, field, value):
+        return present.fmt_value(field, value)
 
     def _fmt_target_value(self, field, value, target):
-        """What the destination will actually end up holding. A push's
-        canonical value is unprojected -- MAL can never actually hold
-        6.5, so showing that as 'what gets pushed' is a lie about what
-        will happen, even though the field is a genuine, correctly-
-        reasoned change. Local (pulls, kept values) stays canonical,
-        since that's exactly what local state holds."""
-        if target != 'local' and field == 'score' \
-                and target in self.engine.adapters:
-            info = self.engine.adapters[target].mediainfo
-            smax = info.get('score_max', 10)
-            value = normalize.provider_score(
-                value, smax, info.get('score_step', 1))
-            if target == 'kitsu' and smax:
-                # UI-only re-expression, not a precision change: Kitsu's
-                # API stores ratings at quarter-star granularity
-                # (ratingTwenty, 0-20) on its 0-5 native scale, but
-                # kitsu.app's own list view only ever shows half-star
-                # increments -- projecting straight through the raw
-                # native scale for display would show a number ("4.25")
-                # nobody sees on Kitsu itself. Every quarter-star value
-                # doubles to an exact half-integer on a 0-10 scale
-                # (i.e. canonical units), which is what Kitsu's site
-                # actually displays -- so show that instead. The
-                # quantization above (what will actually be pushed) is
-                # unchanged; only how it's presented differs.
-                value = value * (10.0 / smax)
-        return self._fmt_value(field, value)
-
-    def _score_round_note(self, target, canonical):
-        """Suffix spelling out any rounding a score push applies to reach
-        `target`'s scale -- '' when it lands exactly, else e.g.
-        '  (8.5 rounded up to 9)'. This is the "say what you're pushing
-        and why" the coarser sites need: MAL/AniList-integer round to a
-        whole number (half up: 8.5 -> 9), Kitsu to a quarter-star. The
-        target value is shown in the same units the push row already
-        uses (Kitsu re-expressed on its 0-10 site scale)."""
-        if canonical is None or target not in self.engine.adapters:
-            return ''
-        info = self.engine.adapters[target].mediainfo
-        smax = info.get('score_max', 10)
-        back = normalize.canonical_score(
-            normalize.provider_score(canonical, smax,
-                                     info.get('score_step', 1)), smax)
-        if back is None or abs(back - canonical) < 1e-9:
-            return ''       # exact on this scale; nothing was rounded
-        shown = self._fmt_target_value('score', canonical, target)
-        return '  (%s rounded %s to %s)' % (
-            self._fmt_value('score', canonical),
-            'up' if back > canonical else 'down', shown)
+        return present.fmt_target_value(self.engine.adapters, field,
+                                        value, target)
 
     def _change_item(self, change):
-        label = _FIELD_LABELS.get(change.field, change.field)
-        if change.target == 'local':
-            values = '%s → %s' % (self._fmt_value(change.field, change.old),
-                                  self._fmt_value(change.field, change.new))
-            text = '⬇ Pull from %s — %s: %s' % (
-                change.source.capitalize(), label, values)
-            color = self._PULL_COLOR
-        else:
-            values = '%s → %s' % (
-                self._fmt_target_value(change.field, change.old,
-                                       change.target),
-                self._fmt_target_value(change.field, change.new,
-                                       change.target))
-            text = '⬆ Push to %s — %s: %s' % (
-                change.target.capitalize(), label, values)
-            if change.field == 'score':
-                text += self._score_round_note(change.target, change.new)
-            color = self._PUSH_COLOR
-        item = QTreeWidgetItem([text])
-        item.setForeground(0, color)
+        direction, text = present.change_line(self.engine.adapters, change,
+                                              self.engine.primary)
+        arrow, color = (('⬇', self._PULL_COLOR) if direction == 'pull'
+                        else ('⬆', self._PUSH_COLOR))
+        item = QTreeWidgetItem(['%s %s' % (arrow, text)])
+        item.setForeground(0, self._FIRST_SYNC_COLOR if change.first_sync
+                           else color)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+        # Honour the plan's own selection: a first-sync overwrite is
+        # planned unticked, and ticking it must be a deliberate act.
+        item.setCheckState(0, QtCore.Qt.CheckState.Checked if change.selected
+                           else QtCore.Qt.CheckState.Unchecked)
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, change)
         return item
 
@@ -418,11 +297,19 @@ class SyncWindow(QDialog):
             group.setFlags(group.flags()
                            | QtCore.Qt.ItemFlag.ItemIsUserCheckable
                            | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
-            group.setCheckState(0, QtCore.Qt.CheckState.Checked)
             for change in group_changes:
                 item = self._change_item(change)
                 group.addChild(item)
                 self._change_items.setdefault(id(change), []).append(item)
+            # Set AFTER the children so Qt's autotristate derives the
+            # header from them (a group of unticked first-sync rows must
+            # not show as fully checked).
+            states = {c.selected for c in group_changes}
+            group.setCheckState(0, QtCore.Qt.CheckState.Checked
+                                if states == {True} else
+                                QtCore.Qt.CheckState.Unchecked
+                                if states == {False} else
+                                QtCore.Qt.CheckState.PartiallyChecked)
             tree.addTopLevelItem(group)
         tree.expandAll()
 
@@ -445,44 +332,10 @@ class SyncWindow(QDialog):
                 twin.setCheckState(0, item.checkState(0))
 
     def _local_label(self):
-        """'local' is really just whatever the signed-in account fed
-        it (see the primary fold in SyncEngine._plan_entity -- local's
-        value always equals the primary's own value when a primary is
-        set). Naming it 'Local' as if it were some third, separate
-        thing is needless jargon; call it by the platform it actually
-        is. Falls back to 'Local' only when no account is signed in."""
-        return self.engine.primary.capitalize() if self.engine.primary \
-            else 'Local'
+        return present.local_label(self.engine.primary)
 
     def _conflict_why(self, conflict):
-        """Explain why this needs a human, not just what differs."""
-        label = _FIELD_LABELS.get(conflict.field, conflict.field)
-        local_label = self._local_label()
-        others = sorted(s for s in conflict.values if s != 'local')
-        sides = ' and '.join(
-            ['%s (%s)' % (local_label, self._fmt_value(
-                conflict.field, conflict.values['local']))]
-            + ['%s (%s)' % (s.capitalize(),
-                            self._fmt_value(conflict.field,
-                                            conflict.values[s]))
-               for s in others])
-        why = ('%s changed in more than one place since the last sync '
-               '— %s — so syncing either way would overwrite someone. '
-               % (label, sides))
-        kind = conflict.policy.kind
-        if kind is PolicyKind.ASK:
-            why += ("The '%s' policy is set to Ask, which leaves every "
-                    'such tie to you.' % label)
-        elif kind is PolicyKind.MERGE:
-            why += ('Both sides changed at effectively the same time, '
-                    "so 'newest wins' cannot break the tie.")
-        else:
-            why += ("The providers disagree with each other and the "
-                    "'%s' policy does not name a winner among them."
-                    % conflict.policy)
-        if conflict.note:
-            why += ' Note: %s.' % conflict.note
-        return why
+        return present.conflict_why(conflict, self.engine.primary)
 
     def _decision_card(self, conflict):
         box = QGroupBox('%s — %s' % (
@@ -496,9 +349,8 @@ class SyncWindow(QDialog):
         for source, value in sorted(conflict.values.items()):
             shown = self._fmt_value(conflict.field, value)
             if source == 'local':
-                text = ('Use %s: %s' % (self._local_label(), shown)
-                        if self.engine.primary else
-                        'Keep yours: %s' % shown)
+                text = present.conflict_choice_label(conflict, source,
+                                                     self.engine.primary)
             elif conflict.structural:
                 # The provider's number is in ITS OWN episode
                 # structure -- adopting it raw would record a
@@ -510,7 +362,8 @@ class SyncWindow(QDialog):
                 row.addWidget(info)
                 continue
             else:
-                text = 'Use %s: %s' % (source.capitalize(), shown)
+                text = present.conflict_choice_label(conflict, source,
+                                                     self.engine.primary)
             button = QPushButton(text)
             button.clicked.connect(
                 lambda _checked=False, c=conflict, s=source:
@@ -670,6 +523,12 @@ class SyncWindow(QDialog):
             self.preview_summary.setText(
                 '%d show(s): %d change(s), %d conflict(s)'
                 % (len(groups), len(plan.changes), len(plan.conflicts)))
+        first_sync = sum(1 for c in plan.changes if c.first_sync)
+        if first_sync:
+            self.preview_summary.setText(
+                '%s  —  %d first-sync overwrite(s) left unticked. %s'
+                % (self.preview_summary.text(), first_sync,
+                   present.FIRST_SYNC_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
@@ -742,8 +601,15 @@ class SyncWindow(QDialog):
             'lists are NOT touched.')
         if answer != QMessageBox.StandardButton.Yes:
             return
-        if self._task is not None and self._task.isRunning():
-            self._task.wait()
+        if self.is_busy():
+            # Never block the GUI thread waiting on a running fetch --
+            # that can be minutes of provider downloads with a frozen,
+            # unrepaintable window. Ask the worker to stop and let the
+            # user click again once it has.
+            self._cancel.set()
+            self._status('Stopping the running operation first -- press '
+                         'Reset again once it has.')
+            return
         self.store.reset()
         self._plan = None
         self.preview_tabs.clear()
@@ -917,16 +783,7 @@ class SyncWindow(QDialog):
 
     @staticmethod
     def _display_title(title, aliases):
-        """Native-script titles get a latin alias alongside, so a user
-        whose AniList title language is Native can still tell what a
-        row refers to."""
-        import re as _re
-        title = title or '?'
-        if not _re.search('[A-Za-z]', title):
-            for alias in aliases or []:
-                if alias and _re.search('[A-Za-z]', alias):
-                    return '%s  /  %s' % (title, alias)
-        return title
+        return present.display_title(title, aliases)
 
     def _refresh_identity(self):
         self.identity_tree.clear()

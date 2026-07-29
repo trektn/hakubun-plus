@@ -20,7 +20,13 @@ def test_score_to_provider_rounds():
     assert normalize.provider_score(8.5, 10, 1) == 9        # half up
     assert normalize.provider_score(2.5, 10, 1) == 3        # half up, not 2
     assert normalize.provider_score(8.4, 100, 1) == 84      # AniList
-    assert normalize.provider_score(8.4, 5, 0.25) == 4.25   # Kitsu quarter
+    assert normalize.provider_score(8.4, 5, 0.5) == 4.0     # Kitsu half-star
+    assert normalize.provider_score(8.5, 5, 0.5) == 4.5     # lands on-grid
+    # Every value Kitsu's half-star grid can hold must survive its wire
+    # format: ratingTwenty = my_score * 4 and the API rejects odd values.
+    for canonical in (x / 10 for x in range(0, 101)):
+        raw = normalize.provider_score(canonical, 5, 0.5)
+        assert (raw * 4) % 2 == 0, (canonical, raw)
     assert normalize.provider_score(None, 10, 1) == 0
     assert normalize.provider_score(11, 10, 1) == 10        # clamped
 

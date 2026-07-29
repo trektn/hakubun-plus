@@ -70,13 +70,3 @@ class History:
         return [{'ts': e['ts'], 'uuid': e['uuid'],
                  'from': e['old_value'], 'to': e['new_value'],
                  'source': e['source']} for e in events]
-
-    def rating_history(self, uid=None):
-        events = self._store.events_query(uid=uid, field='score', op='set')
-        return [{'ts': e['ts'], 'uuid': e['uuid'],
-                 'from': e['old_value'], 'to': e['new_value'],
-                 'source': e['source']} for e in events]
-
-    def field_last_change(self, uid, field):
-        events = self._store.events_query(uid=uid, field=field, limit=1)
-        return events[0] if events else None

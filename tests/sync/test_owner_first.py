@@ -32,6 +32,18 @@ def _score_pushes(plan, target):
             if c.field == 'score' and c.target == target]
 
 
+def _accept_first_sync(plan):
+    """Tick the first-sync overwrites the planner deliberately leaves
+    unticked (FieldChange.first_sync) -- the user opting in from the
+    preview. Every scenario here is a FIRST sync of three lists that
+    already disagree, so without this nothing that overwrites a real
+    value would apply, which is exactly the intended safety."""
+    accepted = [c for c in plan.changes if c.first_sync]
+    for change in accepted:
+        change.selected = True
+    return accepted
+
+
 def test_owner_converts_and_overwrites_others_never_pushing_owner(store):
     engine, mal, anilist, kitsu = _ngnl_engine(store)
     engine.primary = 'anilist'
@@ -43,10 +55,13 @@ def test_owner_converts_and_overwrites_others_never_pushing_owner(store):
     # and the others receive its score converted to their own scale.
     assert _score_pushes(plan, 'anilist') == []
     assert plan.conflicts == []
+    # First contact with MAL/Kitsu for this field: the overwrites are
+    # planned but unticked until the user says so.
+    assert _accept_first_sync(plan)
     engine.apply(plan)
     assert anilist.shows['9']['my_score'] == 85            # untouched
     assert mal.shows['1']['my_score'] == 9                 # 8.5 -> 9 (half up)
-    assert kitsu.shows['5']['my_score'] == 4.25            # 8.5 -> 4.25*
+    assert kitsu.shows['5']['my_score'] == 4.5             # 8.5 -> 4.5 stars
 
     # Converged: a second fetch/plan proposes nothing (no re-proposing).
     engine.fetch()
@@ -105,6 +120,7 @@ def test_lossy_owner_scale_still_never_re_pushes_to_owner(store):
         assert _score_pushes(plan, 'anilist') == [], cycle
         if not [c for c in plan.changes if c.field == 'score']:
             break
+        _accept_first_sync(plan)
         engine.apply(plan)
     uid = store.mapping_for('mal', '1')['uuid']
     assert anilist.shows['9']['my_score'] == 4          # owner never touched
@@ -114,15 +130,31 @@ def test_lossy_owner_scale_still_never_re_pushes_to_owner(store):
 def test_default_local_policy_is_why_the_owner_got_overwritten(store):
     """Contrast/regression: with score left on the DEFAULT (local) policy
     and a non-AniList primary, AniList -- the site the user *thinks* owns
-    the score -- is the one that gets overwritten. This is the footgun
-    the explicit owner setting exists to avoid; if a future change makes
-    'local' stop pushing to the intended owner, revisit the docs/UI that
-    tell users to set ownership."""
+    the score -- is the one that gets TARGETED for overwrite. This is the
+    footgun the explicit owner setting exists to avoid; if a future
+    change makes 'local' stop pushing to the intended owner, revisit the
+    docs/UI that tell users to set ownership.
+
+    On a FIRST sync that overwrite is planned but not armed: there is no
+    merge base with AniList, so nothing actually 'changed' -- local is
+    just whichever list was read first. The change is flagged
+    first_sync and left unticked, so an unattended Sync cannot fire it;
+    it only lands once the user ticks it in the preview."""
     engine, mal, anilist, kitsu = _ngnl_engine(store)
     engine.primary = 'mal'          # local value comes from MAL (9.0)
     # (no set_ownership: score stays on DEFAULT_OWNERSHIP -> LOCAL)
     engine.fetch()
     plan = engine.plan()
-    assert _score_pushes(plan, 'anilist') == [(8.5, 9.0)]   # owner clobbered
+    assert _score_pushes(plan, 'anilist') == [(8.5, 9.0)]   # owner targeted
+    clobber = [c for c in plan.changes
+               if c.field == 'score' and c.target == 'anilist'][0]
+    assert clobber.first_sync and not clobber.selected
+
+    # Applying as-is leaves AniList alone -- the whole point.
+    engine.apply(plan)
+    assert anilist.shows['9']['my_score'] == 85
+
+    # Ticking it is what actually clobbers the owner.
+    _accept_first_sync(plan)
     engine.apply(plan)
     assert anilist.shows['9']['my_score'] == 90             # MAL's 9 won
