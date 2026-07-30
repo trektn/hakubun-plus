@@ -36,6 +36,7 @@ from hakubun.ui.qt.details import DetailsDialog
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
 from hakubun.ui.qt.seasons import SeasonsWidget
 from hakubun.ui.qt.settings import SettingsDialog
+from hakubun.ui.qt.stats import StatisticsWidget
 from hakubun.ui.qt.util import FilterBar, getIcon
 from hakubun.ui.qt.widgets import HoverProgressBar, PlaybackBar, ScoreSlider, ShowsTableView
 from hakubun.ui.qt.workers import EngineWorker, ImageWorker
@@ -286,6 +287,28 @@ class MainWindow(QMainWindow):
             toolbar = self.addToolBar('Main')
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+            # Real Taiga's toolbar leads with a single hamburger menu
+            # button covering everything else the menu bar has -- this
+            # is additive (the menu bar stays, nothing loses its old
+            # access point), just a closer visual match for the
+            # single-toolbar look, reusing the exact same QMenu objects
+            # built above rather than duplicating their contents.
+            hamburger_menu = QMenu(self)
+            hamburger_menu.addMenu(menu_file)
+            hamburger_menu.addMenu(self.menu_services)
+            hamburger_menu.addMenu(menu_tools)
+            hamburger_menu.addMenu(menu_help)
+
+            self.hamburger_btn = QToolButton()
+            self.hamburger_btn.setIcon(getIcon('open-menu'))
+            self.hamburger_btn.setToolTip('Menu')
+            self.hamburger_btn.setMenu(hamburger_menu)
+            self.hamburger_btn.setPopupMode(
+                QToolButton.ToolButtonPopupMode.InstantPopup)
+            toolbar.addWidget(self.hamburger_btn)
+            toolbar.addSeparator()
+
             toolbar.addAction(self.action_sync)
             self.library_folders_btn = QToolButton()
             self.library_folders_btn.setText('Library folders')
@@ -666,11 +689,13 @@ class MainWindow(QMainWindow):
             self.taiga_nav.currentItemChanged.connect(self._on_taiga_nav_changed)
 
             self.seasons_widget = SeasonsWidget(self, self.worker)
+            self.stats_widget = StatisticsWidget(self, self.worker)
 
             self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
             self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
                                   self.now_playing_widget)
             self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
+            self._add_taiga_page('stats', 'Statistics', 'view-statistics', self.stats_widget)
 
             # Only the Anime List page has a "currently selected show" to
             # show quick info/actions for -- Now Playing already shows a
@@ -1932,6 +1957,7 @@ class MainWindow(QMainWindow):
                 self._rebuild_services_menu()
                 self._rebuild_library_folders_menu()
                 self.seasons_widget.set_context(self.api_info, self.mediainfo)
+                self.stats_widget.refresh()
 
             # Show tracker info
             tracker_info = self.worker.engine.tracker_status()
