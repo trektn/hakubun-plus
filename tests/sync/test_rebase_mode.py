@@ -168,3 +168,19 @@ def test_rebase_create_credits_the_actual_provider_owner(store):
     progress_create = next(c for c in plan.changes
                            if c.creates_entry and c.field == 'progress')
     assert progress_create.source == 'kitsu'
+
+
+def test_rebase_create_falls_back_to_local_when_the_owner_is_missing(store):
+    """A field owned by the very provider being created has no value
+    to draw from there -- fall back to local instead of leaving a
+    brand-new entry blank on that field."""
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    # MAL is the missing provider; make it the declared owner of
+    # status too, on top of the default LOCAL score/progress/etc.
+    store.set_ownership('status', FieldPolicy(PolicyKind.PROVIDER, 'mal'))
+    plan = engine.plan(mode=SyncMode.REBASE)
+    status_create = next(c for c in plan.changes
+                         if c.creates_entry and c.target == 'mal'
+                         and c.field == 'status')
+    assert status_create.source == 'local'
+    assert status_create.new == store.local_get(uid)['status'][0]

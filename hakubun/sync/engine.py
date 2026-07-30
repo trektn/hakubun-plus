@@ -638,9 +638,13 @@ class SyncEngine:
         from update purely by remote-snapshot presence at apply time,
         so no separate plumbing is needed there. Fields with no single
         owner (merge/ask/individual) contribute nothing, same as an
-        ordinary rebase push; a provider-owned field whose owner is
-        ALSO missing contributes nothing either (no source value to
-        read yet). Planned unselected, like first_sync -- see
+        ordinary rebase push. A provider-owned field whose declared
+        owner has nothing to give (typically because the owner IS one
+        of the providers being created -- it can't be its own source)
+        falls back to local's current value instead of leaving a brand
+        new entry with that field blank; ordinary rebase reconciles it
+        properly against the real owner once that owner actually
+        exists. Planned unselected, like first_sync -- see
         FieldChange.creates_entry."""
         missing = [p for p, (remote, _base) in sides.items() if not remote]
         if not missing:
@@ -657,6 +661,9 @@ class SyncEngine:
                 remote, _base = sides.get(policy.provider, ({}, {}))
                 val = remote.get(field, (None, 0))[0]
                 source = policy.provider
+                if val in (None, '', []):
+                    val = local.get(field, (None, 0))[0]
+                    source = 'local'
             else:
                 continue
             if val not in (None, '', []):
