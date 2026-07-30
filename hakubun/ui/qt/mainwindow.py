@@ -19,11 +19,12 @@ import os
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox,
-                             QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                             QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
-                             QTabBar, QToolButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFormLayout,
+                             QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+                             QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+                             QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
+                             QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
+                             QWidget)
 
 from hakubun import messenger
 from hakubun import utils
@@ -572,15 +573,12 @@ class MainWindow(QMainWindow):
         left_box.addRow(self.show_image)
 
         if self._taiga_mode:
-            # Taiga's sidebar only shows the picture, the mode caption,
-            # and whatever's playing (progress + play controls). Every
+            # Taiga's sidebar only shows the picture and whatever's
+            # playing (progress + play controls). Page navigation lives
+            # in the nav column (self.taiga_nav) instead of here. Every
             # other editing control (progress spinbox, score, status,
             # tags) moves into a second "Edit" tab in the Details
             # dialog instead -- see s_show_details().
-            self.taiga_mode_label = QLabel('Taiga Mode')
-            self.taiga_mode_label.setAlignment(
-                QtCore.Qt.AlignmentFlag.AlignCenter)
-            left_box.addRow(self.taiga_mode_label)
 
             # show_dec_btn/show_inc_btn are already overlaid on the bar
             # itself (see HoverProgressBar) -- just add the bar.
@@ -589,24 +587,6 @@ class MainWindow(QMainWindow):
             small_btns_hbox.addWidget(self.show_play_btn)
             small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             left_box.addRow(small_btns_hbox)
-
-            # Switches the main content area between the show list and
-            # the dedicated Now Playing screen -- see _on_view_mode.
-            self.action_view_anime_list = QPushButton('Anime List')
-            self.action_view_anime_list.setCheckable(True)
-            self.action_view_anime_list.setChecked(True)
-            self.action_view_now_playing = QPushButton('Now Playing')
-            self.action_view_now_playing.setCheckable(True)
-            self.view_mode_group = QButtonGroup(self)
-            self.view_mode_group.setExclusive(True)
-            self.view_mode_group.addButton(self.action_view_anime_list)
-            self.view_mode_group.addButton(self.action_view_now_playing)
-            self.view_mode_group.buttonClicked.connect(self._on_view_mode_changed)
-
-            view_mode_hbox = QHBoxLayout()
-            view_mode_hbox.addWidget(self.action_view_now_playing)
-            view_mode_hbox.addWidget(self.action_view_anime_list)
-            left_box.addRow(view_mode_hbox)
 
             edit_form = QFormLayout()
             edit_form.addRow(show_progress_label)
@@ -656,8 +636,6 @@ class MainWindow(QMainWindow):
             self.list_box.addWidget(self.view)
             self.list_box.addWidget(self.filter_bar_box)
 
-        main_hbox.addLayout(left_box)
-
         if self._taiga_mode:
             list_page = QWidget()
             list_page.setLayout(self.list_box)
@@ -668,11 +646,29 @@ class MainWindow(QMainWindow):
             self.now_playing_widget.playRandomRequested.connect(self.s_play_random)
 
             self.content_stack = QStackedWidget()
-            self.content_stack.addWidget(list_page)
-            self.content_stack.addWidget(self.now_playing_widget)
+            self._taiga_pages = {}
 
+            # Persistent page-navigation column, separate from the
+            # per-show info panel in left_box -- mirrors real Taiga's
+            # sidebar (Anime List / Now Playing / ... as destinations,
+            # not editing controls).
+            self.taiga_nav = QListWidget()
+            self.taiga_nav.setObjectName('taiga_nav')
+            self.taiga_nav.setFrameShape(QFrame.Shape.NoFrame)
+            self.taiga_nav.setFixedWidth(160)
+            self.taiga_nav.currentItemChanged.connect(self._on_taiga_nav_changed)
+
+            self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
+            self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
+                                  self.now_playing_widget)
+
+            main_hbox.addWidget(self.taiga_nav)
+            main_hbox.addLayout(left_box)
             main_hbox.addWidget(self.content_stack, 1)
+
+            self._set_taiga_page('list')
         else:
+            main_hbox.addLayout(left_box)
             main_hbox.addLayout(self.list_box, 1)
 
         main_layout.addLayout(top_hbox)
@@ -1490,10 +1486,36 @@ class MainWindow(QMainWindow):
         self._busy(True)
         self.worker_call('play_episode', self.r_play_episode, show, episode)
 
-    def _on_view_mode_changed(self, button):
-        self.content_stack.setCurrentWidget(
-            self.now_playing_widget if button is self.action_view_now_playing
-            else self.content_stack.widget(0))
+    def _add_taiga_page(self, key, label, icon_name, widget):
+        """Register a Taiga-mode nav destination backed by a page in
+        self.content_stack. Later phases (Seasons, Statistics) add more
+        pages through this same method."""
+        self.content_stack.addWidget(widget)
+        self._taiga_pages[key] = widget
+        item = QListWidgetItem(getIcon(icon_name), label)
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+        self.taiga_nav.addItem(item)
+
+    def _set_taiga_page(self, key):
+        """Single entry point for switching Taiga-mode pages, so the
+        nav column's selection and the content stack's current widget
+        never desync as more pages get added."""
+        widget = self._taiga_pages.get(key)
+        if widget is None:
+            return
+        self.content_stack.setCurrentWidget(widget)
+        for i in range(self.taiga_nav.count()):
+            item = self.taiga_nav.item(i)
+            if item.data(QtCore.Qt.ItemDataRole.UserRole) == key:
+                self.taiga_nav.blockSignals(True)
+                self.taiga_nav.setCurrentItem(item)
+                self.taiga_nav.blockSignals(False)
+                break
+
+    def _on_taiga_nav_changed(self, current, previous):
+        if current is None:
+            return
+        self._set_taiga_page(current.data(QtCore.Qt.ItemDataRole.UserRole))
 
     def s_play_number(self):
         if self.selected_show_id:
