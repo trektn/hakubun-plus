@@ -186,7 +186,7 @@ available_trackers = [
 
 available_parsers = [
     ('aie', 'AnimeInfoExtractor (Default)'),
-    ('anitopy', 'Anitopy (Experimental)'),
+    ('anitopy', 'Anitopy'),
     ('anitomy_ng', 'Anitomy-NG (Experimental)'),
 ]
 
