@@ -666,8 +666,18 @@ class MainWindow(QMainWindow):
                                   self.now_playing_widget)
             self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
 
+            # Only the Anime List page has a "currently selected show" to
+            # show quick info/actions for -- Now Playing already shows a
+            # full-size version of the same thing via now_playing_widget,
+            # and Seasons has no selected-show relationship at all. Kept
+            # as a widget (not added straight as a layout) so it can be
+            # hidden per-page without the empty-poster "double sidebar"
+            # look on pages it's irrelevant to.
+            self.taiga_info_panel = QWidget()
+            self.taiga_info_panel.setLayout(left_box)
+
             main_hbox.addWidget(self.taiga_nav)
-            main_hbox.addLayout(left_box)
+            main_hbox.addWidget(self.taiga_info_panel)
             main_hbox.addWidget(self.content_stack, 1)
 
             self._set_taiga_page('list')
@@ -1500,6 +1510,13 @@ class MainWindow(QMainWindow):
         item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
         self.taiga_nav.addItem(item)
 
+    # Pages where the "currently selected show" info panel makes sense.
+    # Now Playing already shows a full-size version of the same info via
+    # now_playing_widget, and pages like Seasons have no selected-show
+    # relationship at all -- showing it there is just an empty poster
+    # sitting next to the nav column.
+    _TAIGA_INFO_PANEL_PAGES = frozenset({'list'})
+
     def _set_taiga_page(self, key):
         """Single entry point for switching Taiga-mode pages, so the
         nav column's selection and the content stack's current widget
@@ -1508,6 +1525,7 @@ class MainWindow(QMainWindow):
         if widget is None:
             return
         self.content_stack.setCurrentWidget(widget)
+        self.taiga_info_panel.setVisible(key in self._TAIGA_INFO_PANEL_PAGES)
         for i in range(self.taiga_nav.count()):
             item = self.taiga_nav.item(i)
             if item.data(QtCore.Qt.ItemDataRole.UserRole) == key:
