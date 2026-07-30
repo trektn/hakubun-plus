@@ -287,28 +287,6 @@ class MainWindow(QMainWindow):
             toolbar = self.addToolBar('Main')
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-
-            # Real Taiga's toolbar leads with a single hamburger menu
-            # button covering everything else the menu bar has -- this
-            # is additive (the menu bar stays, nothing loses its old
-            # access point), just a closer visual match for the
-            # single-toolbar look, reusing the exact same QMenu objects
-            # built above rather than duplicating their contents.
-            hamburger_menu = QMenu(self)
-            hamburger_menu.addMenu(menu_file)
-            hamburger_menu.addMenu(self.menu_services)
-            hamburger_menu.addMenu(menu_tools)
-            hamburger_menu.addMenu(menu_help)
-
-            self.hamburger_btn = QToolButton()
-            self.hamburger_btn.setIcon(getIcon('open-menu'))
-            self.hamburger_btn.setToolTip('Menu')
-            self.hamburger_btn.setMenu(hamburger_menu)
-            self.hamburger_btn.setPopupMode(
-                QToolButton.ToolButtonPopupMode.InstantPopup)
-            toolbar.addWidget(self.hamburger_btn)
-            toolbar.addSeparator()
-
             toolbar.addAction(self.action_sync)
             self.library_folders_btn = QToolButton()
             self.library_folders_btn.setText('Library folders')
