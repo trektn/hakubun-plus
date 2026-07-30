@@ -96,8 +96,8 @@ All of the above is purely local (no network calls) — it can only link
 ids the fetched entries already carry or the bundled atlas already
 knows. `SyncEngine._discover_cross_ids` runs once after every fetch as
 a separate, DELIBERATELY network-calling step: for any connected
-provider whose lib exposes an exact reverse lookup (currently
-AniList's `Media(idMal:...)`, duck-typed via
+provider whose lib exposes an exact reverse lookup (AniList's
+`Media(idMal:...)`, Kitsu GraphQL's `lookupMapping`, duck-typed via
 `ProviderAdapter.supports_mal_id_lookup`), it asks whether that
 provider has an entry for each entity's already-known MAL id that it
 has no mapping for yet — the case tiers 1-5 can never reach, since
