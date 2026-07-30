@@ -55,6 +55,7 @@ trackers = [
 ]
 discord_rpc = ["pypresence>=4.2.1,<5"]
 anitopy = ["anitopy>=2.0.0,<3"]
+anitomy_ng = ["anitomy-ng>=1.0.7,<2"]
 
 [project.urls]
 Homepage = "https://github.com/trektn/hakubun-plus"
