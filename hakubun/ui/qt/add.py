@@ -16,6 +16,7 @@
 
 import html
 from datetime import date
+from functools import partial
 
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QMenu,
@@ -157,9 +158,9 @@ class AddDialog(QDialog):
             self.search_txt.setFocus()
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     def _enable_widgets(self, enable):
         self.search_btn.setEnabled(enable)
@@ -186,35 +187,51 @@ class AddDialog(QDialog):
         self.close()
 
     def s_context_menu(self, view, pos):
-        # Right-click "Move to" for a search result -- only meaningful
-        # for shows already in the user's list, since there's no status
-        # to move a not-yet-added show away from.
+        # Right-click "Move to" works for ANY search result: a show
+        # already in the list changes status; a new show is added
+        # directly WITH that status -- a one-click path that skips the
+        # Add button's confirmation dialog.
         index = view.indexAt(pos)
         if not index.isValid():
             return
 
         source_row = view.model().mapToSource(index).row()
         show = view.model().sourceModel().results[source_row]
-        if show['id'] not in self.mylist:
-            return
 
         menu = QMenu(self)
         move_to = menu.addMenu('Move to')
         for status in self.worker.engine.mediainfo['statuses']:
             action = move_to.addAction(self.statuses_dict.get(status, str(status)))
             action.triggered.connect(
-                lambda checked=False, s=status, showid=show['id']: self.s_move_to(showid, s))
+                lambda checked=False, s=status, sh=show: self.s_move_to(sh, s))
         menu.exec(view.viewport().mapToGlobal(pos))
 
-    def s_move_to(self, showid, status):
-        self.worker_call('set_status', self.r_moved, showid, status)
+    def s_move_to(self, show, status):
+        showid = show['id']
         if showid in self.mylist:
+            self.worker_call('set_status', self.r_moved, showid, status)
             self.mylist[showid]['my_status'] = status
+        else:
+            self.worker_call('add_show',
+                            partial(self.r_added_via_move, show, status),
+                            show, status)
 
     def r_moved(self, result):
         if not result['success']:
             QMessageBox.critical(
                 self, 'Error', 'Could not change the show\'s status.')
+
+    def r_added_via_move(self, show, status, result):
+        if not result['success']:
+            QMessageBox.critical(self, 'Error', 'Could not add the show.')
+            return
+        # Reflect membership immediately so the result re-renders with
+        # the in-list highlight and later "Move to" clicks take the
+        # change-status path (the models share this same mylist dict).
+        entry = dict(show)
+        entry['my_status'] = status
+        self.mylist[show['id']] = entry
+        self.set_results(self.results)
 
     def s_change_view(self, item):
         self.contents.currentWidget().getModel().setResults(None)

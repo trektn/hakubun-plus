@@ -15,6 +15,7 @@
 #
 
 import os
+import traceback
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -181,12 +182,17 @@ class EngineWorker(QtCore.QThread):
 
     def set_function(self, function, ret_function, *args, **kwargs):
         # Always called from the main thread (as is _dispatch), so plain
-        # list operations are safe. The caller's start() is a no-op while
-        # the thread is running; _dispatch starts queued calls itself.
+        # list operations are safe. Owns starting the thread: callers
+        # must NOT call start() themselves. A caller-side start() could
+        # land in the window where the previous run() has returned
+        # (isRunning() False) but its queued _call_done hasn't drained a
+        # non-empty _pending yet -- and would re-run the stale previous
+        # call (e.g. re-uploading a whole sync queue).
         if self.isRunning() or self._pending:
             self._pending.append((function, ret_function, args, kwargs))
             return
         self._set_current(function, ret_function, args, kwargs)
+        self.start()
 
     def _set_current(self, function, ret_function, args, kwargs):
         if function in self.overrides:
@@ -199,19 +205,33 @@ class EngineWorker(QtCore.QThread):
         self.kwargs = kwargs
 
     def _dispatch(self, ret_function, result):
-        if ret_function:
-            ret_function(result)
-        if self._pending:
-            # run() has already emitted; make sure the thread fully
-            # stopped before starting the next queued call.
-            self.wait()
-            self._set_current(*self._pending.pop(0))
-            self.start()
+        try:
+            if ret_function:
+                ret_function(result)
+        except Exception as e:
+            # A buggy callback must never take the app down (PyQt
+            # aborts on unhandled exceptions in slots) nor strand the
+            # calls queued behind it.
+            traceback.print_exc()
+            self._error('Internal callback error: %r' % e)
+        finally:
+            if self._pending:
+                # run() has already emitted; make sure the thread fully
+                # stopped before starting the next queued call.
+                self.wait()
+                self._set_current(*self._pending.pop(0))
+                self.start()
 
     def __del__(self):
         self.wait()
 
     def run(self):
+        if self.function is None:
+            # Defensive: every real start goes through set_function or
+            # _dispatch, which stage a call first. A stray QThread
+            # start() with nothing staged must not re-run a consumed
+            # (stale) function.
+            return
         try:
             ret = self.function(*self.args, **self.kwargs)
             self._call_done.emit(self._ret_function,
@@ -231,3 +251,9 @@ class EngineWorker(QtCore.QThread):
             # caller waiting on a result forever.
             self._error(e)
             self._call_done.emit(self._ret_function, {'success': False})
+        finally:
+            # Mark the staged call consumed. Safe: _dispatch wait()s for
+            # this thread before staging the next queued call, and the
+            # idle path only stages after isRunning() is False (i.e.
+            # after this method, finally included, has returned).
+            self.function = None

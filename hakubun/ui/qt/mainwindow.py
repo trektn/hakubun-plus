@@ -20,14 +20,16 @@ import os
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox,
-                             QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                             QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
-                             QTabBar, QToolButton, QVBoxLayout, QWidget)
+                             QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
+                             QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+                             QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
+                             QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
+                             QWidget)
 
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
+from hakubun.sync import present
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
@@ -56,6 +58,15 @@ class MainWindow(QMainWindow):
     show_lists = None
     finish = False
     was_maximized = False
+
+    # Multi-sync owner-score editing state. When the selected show's
+    # Score is owned by another provider (and the entry is shared), the
+    # bottom-bar score slider adopts that owner's rating system and its
+    # Set writes to multisync local instead of the signed-in account.
+    _score_owner_mode = None            # owning provider, or None
+    _score_editor_provider = None       # provider the slider is set for
+    _score_owner_mediainfo = {}         # {provider: mediainfo}
+    _multisync_media_type = None
 
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
@@ -173,6 +184,10 @@ class MainWindow(QMainWindow):
         self.action_airing_schedule.setStatusTip(
             'See when the airing shows in your list air next.')
         self.action_airing_schedule.triggered.connect(self.s_airing_schedule)
+        self.action_multisync = QAction('&Multi-provider Sync...', self)
+        self.action_multisync.setStatusTip(
+            'Reconcile your lists across every configured provider.')
+        self.action_multisync.triggered.connect(self.s_multisync)
         self.action_delete = QAction(getIcon('edit-delete'), '&Delete', self)
         self.action_delete.setStatusTip('Remove this show from your list.')
         self.action_delete.setShortcut(QtCore.Qt.Key.Key_Delete)
@@ -194,10 +209,9 @@ class MainWindow(QMainWindow):
         self.action_redo.triggered.connect(self.s_redo)
 
         self.action_sync = QAction(getIcon('view-refresh'), '&Sync', self)
-        self.action_sync.setStatusTip(
-            'Send changes and then retrieve remote list')
         self.action_sync.setShortcut('Ctrl+S')
-        self.action_sync.triggered.connect(lambda: self.s_send(True))
+        self.action_sync.triggered.connect(self.s_sync_button)
+        self._apply_sync_action_label()
         self.action_send = QAction('S&end changes', self)
         self.action_send.setShortcut('Ctrl+E')
         self.action_send.setStatusTip(
@@ -217,6 +231,13 @@ class MainWindow(QMainWindow):
         action_rescan_library.triggered.connect(self.s_rescan_library)
         action_open_folder = QAction('Open containing folder', self)
         action_open_folder.triggered.connect(self.s_open_folder)
+        self.action_set_folder = QAction('Set folder...', self)
+        self.action_set_folder.setStatusTip(
+            'Manually point this show at a local folder, bypassing '
+            'filename guessing -- for folders the parser can\'t match.')
+        self.action_set_folder.triggered.connect(self.s_set_folder)
+        self.action_clear_folder = QAction('Clear folder', self)
+        self.action_clear_folder.triggered.connect(self.s_clear_folder)
 
         self.action_reload = QAction('Switch &Account', self)
         self.action_reload.setStatusTip('Switch to a different account.')
@@ -265,6 +286,7 @@ class MainWindow(QMainWindow):
             menu_tools.addAction(self.action_altname)
             menu_tools.addAction(self.action_add)
             menu_tools.addAction(self.action_airing_schedule)
+            menu_tools.addAction(self.action_multisync)
 
             menu_help = menubar.addMenu('&Help')
             menu_help.addAction(action_about)
@@ -326,9 +348,12 @@ class MainWindow(QMainWindow):
         self.menu_show_context.addAction(self.action_details)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
+        self.menu_show_context.addAction(self.action_set_folder)
+        self.menu_show_context.addAction(self.action_clear_folder)
         self.menu_show_context.addAction(self.action_altname)
         self.menu_show_context.addSeparator()
         self.menu_show_context.addAction(self.action_delete)
+        self.menu_show_context.aboutToShow.connect(self._update_folder_actions)
 
         # Make icons for viewed episodes
         rect = QtCore.QSize(16, 16)
@@ -355,6 +380,10 @@ class MainWindow(QMainWindow):
             menu_list.addSeparator()
             menu_list.addAction(self.action_send)
             menu_list.addAction(self.action_retrieve)
+            menu_list.addSeparator()
+            # Menu-only on purpose: the toolbar stays reserved for the
+            # everyday actions. (Taiga mode surfaces this under Tools.)
+            menu_list.addAction(self.action_multisync)
             menu_list.addSeparator()
             menu_list.addAction(action_scan_library)
             menu_list.addAction(action_rescan_library)
@@ -522,6 +551,20 @@ class MainWindow(QMainWindow):
         self.show_score_btn.setToolTip('Set score to the value entered above')
         self.show_score_btn.clicked.connect(self.s_set_score)
         self.show_score.add_extra_widget(self.show_score_btn)
+        # Synced/Platform score-system switch (multisync): for a shared
+        # entry whose Score is owned by another tracker, flip the slider
+        # between the owner's synced rating system and this account's own
+        # system. Hidden unless the selected entry is owned elsewhere and
+        # the 'edit owned scores in owner's system' setting is on.
+        self.show_score_system = QCheckBox('Synced score')
+        self.show_score_system.setToolTip(
+            'Checked: rate this cross-tracker entry in its owner\'s synced '
+            'rating system (e.g. AniList\'s 8.4). Unchecked: rate it in '
+            'this account\'s own system.')
+        self.show_score_system.setChecked(True)
+        self.show_score_system.setVisible(False)
+        self.show_score_system.toggled.connect(
+            lambda _checked: self._resync_score_editor())
         self.show_tags_btn = QPushButton('Edit Tags...')
         self.show_tags_btn.setToolTip(
             'Open a dialog to edit your tags for this show')
@@ -608,13 +651,29 @@ class MainWindow(QMainWindow):
             view_mode_hbox.addWidget(self.action_view_anime_list)
             left_box.addRow(view_mode_hbox)
 
+            # In Taiga mode the show list has no sidebar to hang this
+            # off, and the right-click Set/Clear folder actions give no
+            # feedback about what's currently pinned -- so the Edit tab
+            # is the one place a pinned folder is visible next to the
+            # controls that change it.
+            self.taiga_folder_label = QLabel()
+            self.taiga_folder_label.setWordWrap(True)
+            self.taiga_folder_label.setTextFormat(
+                QtCore.Qt.TextFormat.PlainText)
+            self.taiga_folder_label.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.taiga_folder_label.setStyleSheet(
+                'color: palette(placeholder-text);')
+
             edit_form = QFormLayout()
             edit_form.addRow(show_progress_label)
             edit_form.addRow(self.show_progress, self.show_progress_btn)
             edit_form.addRow(show_score_label)
             edit_form.addRow(self.show_score)
+            edit_form.addRow(self.show_score_system)
             edit_form.addRow(self.show_status)
             edit_form.addRow(self.show_tags_btn)
+            edit_form.addRow('Folder:', self.taiga_folder_label)
             self.taiga_edit_widget = QWidget()
             self.taiga_edit_widget.setLayout(edit_form)
         else:
@@ -630,6 +689,7 @@ class MainWindow(QMainWindow):
             left_box.addRow(self.show_progress, self.show_progress_btn)
             left_box.addRow(show_score_label)
             left_box.addRow(self.show_score)
+            left_box.addRow(self.show_score_system)
             left_box.addRow(self.now_playing_group)
             left_box.addRow(self.show_status)
             left_box.addRow(self.show_tags_btn)
@@ -775,9 +835,9 @@ class MainWindow(QMainWindow):
         self.worker_call('unload', self.r_engine_unloaded)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     # GUI Functions
     def _get_api_config(self, api):
@@ -879,11 +939,31 @@ class MainWindow(QMainWindow):
         self._apply_view()
         self._apply_tray()
         self._apply_filter_bar()
+        self._apply_sync_action_label()
+        # Refresh the multi-sync overlay so it follows the Settings
+        # toggle immediately (on or off), instead of lingering until
+        # the next full list rebuild.
+        try:
+            self._apply_multisync_overlay(self.worker.engine.get_list())
+        except utils.HakubunError:
+            pass
         # TODO: Reload listviews?
         if self._taiga_mode:
             self._rebuild_library_folders_menu()
         if self.worker.engine.get_config('sync_on_settings_apply'):
             self.s_send(False)
+
+    def _apply_sync_action_label(self):
+        if self.config['multisync_enabled']:
+            self.action_sync.setText('&Multi-sync (BETA)')
+            self.action_sync.setStatusTip(
+                'Reconcile your list across every configured provider '
+                '(mode set in Settings > Behavior); opens for review '
+                'only if something needs your decision.')
+        else:
+            self.action_sync.setText('&Sync')
+            self.action_sync.setStatusTip(
+                'Send queued changes and download the current list.')
 
     def _apply_view(self):
         if self.config['inline_edit']:
@@ -1062,10 +1142,79 @@ class MainWindow(QMainWindow):
             self.notebook.tabData(self.notebook.currentIndex()))
         self.view.model().sourceModel().setMediaInfo(self.mediainfo)
         self.view.model().sourceModel().setShowList(showlist, altnames, library)
+        self._apply_multisync_overlay(showlist)
         self.view.resizeRowsToContents()
         self.view.setSortingEnabled(True)
 
         self.s_filter_changed()
+
+    def _apply_multisync_overlay(self, showlist, quiet=False):
+        """When multi-sync is on, display each show's reconciled
+        per-field value (episodes from one provider, rating from
+        another, ...) instead of just this account's raw value. Purely
+        a display overlay -- read-only, gated, and a no-op (identical
+        to before) whenever it's disabled or has nothing to show, so it
+        can never destabilise the main list. Edits still go to the
+        signed-in account, which multi-sync reconciles on the next
+        sync.
+
+        `quiet` refreshes the overlay in place (no model reset), so a
+        refresh triggered mid-interaction -- e.g. right after setting an
+        owned score -- doesn't drop the current selection."""
+        model = self.view.model().sourceModel()
+        # Reset owner-score editing state; re-established below when on.
+        self._score_owner_mediainfo = {}
+        self._multisync_media_type = None
+        if not self.config.get('multisync_enabled') \
+                or not getattr(self, 'account', None):
+            model.set_overlay({})
+            self._resync_score_editor()
+            return
+        try:
+            from hakubun.sync import uibridge
+            media_type = self.worker.engine.data_handler.userconfig.get(
+                'mediatype') or 'anime'
+            self._multisync_media_type = media_type
+            msg = messenger.Messenger(None, 'Overlay')
+            # Shared with the GTK front-end (hakubun.sync.uibridge) so the
+            # two UIs build the overlay identically.
+            overlay, pmi = uibridge.build_list_overlay(
+                self.accountman.get_accounts(), self.account['api'],
+                self.mediainfo, media_type, msg,
+                show_ids=[s['id'] for s in showlist])
+            self._score_owner_mediainfo = pmi
+            if quiet:
+                model.refresh_overlay(overlay)
+            else:
+                model.set_overlay(overlay)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            model.set_overlay({})   # never break the list over this
+        self._resync_score_editor()
+
+    def _resync_score_editor(self):
+        """Re-derive the bottom-bar score editor's owner-mode state from
+        the CURRENT overlay. Called after every overlay rebuild/clear so
+        the editor can never be left in a stale owner mode (owner scale
+        on the slider, no owner mediainfo behind it) -- which would
+        silently discard the next Set."""
+        if self.selected_show_id:
+            try:
+                show = self.worker.engine.get_show_info(
+                    self.selected_show_id)
+            except utils.EngineError:
+                show = None
+            if show:
+                self._set_score_editor(show)
+                return
+        # Nothing (valid) selected: drop owner mode and restore the
+        # active account's own rating system.
+        if self._score_editor_provider is not None:
+            self.show_score.setMediaInfo(self.mediainfo)
+        self._score_editor_provider = None
+        self._score_owner_mode = None
+        self.show_score_system.setVisible(False)
 
     def _init_view(self):
         # Set view options
@@ -1111,9 +1260,11 @@ class MainWindow(QMainWindow):
             self._set_default_poster()
             self.show_progress.setValue(0)
             self.show_score.setValue(0)
+            self._score_owner_mode = None
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
             self._enable_show_widgets(False)
+            self._update_folder_label()
 
             return
 
@@ -1146,7 +1297,7 @@ class MainWindow(QMainWindow):
         self.show_progress.setValue(show['my_progress'])
         self.show_status.setCurrentIndex(
             self.mediainfo['statuses'].index(show['my_status']))
-        self.show_score.setValue(show['my_score'])
+        self._set_score_editor(show)
 
         # Enable relevant buttons
         self._enable_show_widgets(True)
@@ -1178,9 +1329,50 @@ class MainWindow(QMainWindow):
 
         # Make it global
         self.selected_show_id = show['id']
+        self._update_folder_label()
 
         # Unblock signals
         self.show_status.blockSignals(False)
+
+    def _set_score_editor(self, show):
+        """Configure the bottom-bar score slider for the selected show.
+
+        For a SHARED entry whose Score is owned by another provider, the
+        slider adopts the OWNER's rating system -- so you can rate in
+        AniList's decimals (slide to 8.4) even while signed into Kitsu,
+        which only offers 0.5 steps -- seeded from local's reconciled
+        score; the Set then writes to multisync local (see s_set_score).
+        Otherwise the slider stays on the active account's own system and
+        seeds from this account's raw my_score, exactly as before -- so a
+        platform-specific entry keeps the signed-in account's steps."""
+        over = self.view.model().sourceModel().overlay_for(show['id'])
+        owner = over.get('_score_owner')
+        owner_mi = self._score_owner_mediainfo.get(owner) if owner else None
+        # The owner-system editor is only offered when the setting allows
+        # it; the Synced/Platform switch appears only for an owned entry.
+        can_synced = bool(owner_mi) and self.config.get(
+            'multisync_edit_owned_score', True)
+        self.show_score_system.setVisible(can_synced)
+        if can_synced:
+            self.show_score_system.setText(
+                'Synced score (%s)' % owner.capitalize()
+                if self.show_score_system.isChecked() else 'Platform score')
+        use_synced = can_synced and self.show_score_system.isChecked()
+        if use_synced:
+            if self._score_editor_provider != owner:
+                self.show_score.setMediaInfo(owner_mi)
+                self._score_editor_provider = owner
+            self.show_score.setValue(over.get('_score_owner_raw') or 0)
+            self._score_owner_mode = owner
+        else:
+            # Always re-apply the active account's own scale here, not
+            # only when transitioning off an owner scale: flipping the
+            # switch to Platform must reliably restore the signed-in
+            # tracker's system, regardless of any stale editor state.
+            self.show_score.setMediaInfo(self.mediainfo)
+            self._score_editor_provider = None
+            self.show_score.setValue(show['my_score'])
+            self._score_owner_mode = None
 
     def generate_episode_menus(self, menu, max_eps=1, watched_eps=0):
         bp_top = 5  # No more than this many submenus/episodes in the root menu
@@ -1425,14 +1617,63 @@ class MainWindow(QMainWindow):
                          showid or self.selected_show_id, ep if ep is not None else self.show_progress.value())
 
     def s_set_score(self, showid=None, score=None):
-        self._busy(True)
-
         if not showid:
             showid = self.selected_show_id
+
+        # Owner-mode: the bottom-bar slider adopted another provider's
+        # rating system for this shared entry, so the value the user
+        # picked is in THAT system. Persist it to multisync local (as
+        # intent) and let the next sync push it to the owner and every
+        # tracker, rather than forcing it into the signed-in account's
+        # coarser scale. Inline list edits (score passed in) are not in
+        # owner mode and keep the normal active-account path below. If
+        # the local write can't happen we ABORT rather than fall through
+        # -- the slider value is in the owner's scale and would be
+        # misread by the active account.
+        if score is None and showid == self.selected_show_id \
+                and self._score_owner_mode:
+            if not self._set_owned_score(showid, self.show_score.value()):
+                self.status('Could not set the owned score locally; '
+                            'nothing changed.')
+            return
+
+        self._busy(True)
         if score is None:
             score = self.show_score.value()
 
         self.worker_call('set_score', self.r_generic, showid, score)
+
+    def _set_owned_score(self, showid, owner_raw):
+        """Persist a score entered in the OWNER's rating system to
+        multisync local, as user intent, so the next multi-sync pushes
+        it to the owner and (per the ownership matrix) every other
+        tracker. Returns True when the score was handled here; False to
+        fall back to the normal active-account set_score path."""
+        owner = self._score_owner_mode
+        owner_mi = self._score_owner_mediainfo.get(owner)
+        media_type = self._multisync_media_type
+        if not owner or not owner_mi or not media_type:
+            return False
+        try:
+            from hakubun.sync import uibridge
+            # Shared with the GTK front-end so both write owned scores
+            # to multisync local identically.
+            if not uibridge.write_owned_score(
+                    media_type, self.account['api'], showid, owner_raw,
+                    owner_mi):
+                return False
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return False
+        # Reflect immediately: refresh the overlay in place (no model
+        # reset -> selection kept) so the list shows the new owner-system
+        # score, and say it's staged for the next sync.
+        self._apply_multisync_overlay(self.worker.engine.get_list(),
+                                      quiet=True)
+        self.status("Score set in %s's rating system; the next multi-sync "
+                    "applies it." % owner.capitalize())
+        return True
 
     def s_set_status(self, index):
         if self.selected_show_id:
@@ -1550,7 +1791,54 @@ class MainWindow(QMainWindow):
         except utils.EngineError as e:
             self.error(e.args[0])
 
-    def s_retrieve(self):
+    def s_set_folder(self):
+        if not self.selected_show_id:
+            return
+        current = self.worker.engine.get_show_folder(self.selected_show_id)
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Select folder', current or os.path.expanduser('~'))
+        if not folder:
+            return
+        # No _update_folder_label() here: set_show_folder runs on the
+        # worker thread, so the pin may not be written yet. The Edit tab
+        # only exists inside the details dialog, and s_show_details
+        # refreshes the row on the way in -- which is always after this.
+        self.worker_call('set_show_folder', self.r_library_scanned,
+                         self.selected_show_id, folder)
+
+    def s_clear_folder(self):
+        if not self.selected_show_id:
+            return
+        self.worker.engine.unset_show_folder(self.selected_show_id)
+        self._update_folder_label()
+        self.status('Folder cleared.')
+
+    def _update_folder_actions(self):
+        has_folder = bool(self.selected_show_id and self.worker.engine.get_show_folder(
+            self.selected_show_id))
+        self.action_clear_folder.setEnabled(has_folder)
+        self.action_set_folder.setText(
+            'Change folder...' if has_folder else 'Set folder...')
+
+    def _update_folder_label(self):
+        """Keep the Taiga Edit tab's Folder row in step with the pin.
+        Only exists in Taiga mode -- everywhere else the folder shows up
+        in the details view alone (see engine.get_show_details)."""
+        # getattr: _select_show can fire before the Taiga branch of the
+        # sidebar build has created this label.
+        label = getattr(self, 'taiga_folder_label', None)
+        if label is None:
+            return
+        folder = self.worker.engine.get_show_folder(self.selected_show_id) \
+            if self.selected_show_id else None
+        label.setText(folder or 'Not set')
+        label.setToolTip(folder or '')
+
+    def s_retrieve(self, result=None):
+        # `result` present because this is also used as a worker_call
+        # callback (the upload-then-retrieve chain). The old signal
+        # dispatch silently dropped extra arguments for zero-arg slots;
+        # the direct dispatch does not.
         queue = self.worker.engine.get_queue()
 
         if queue:
@@ -1593,6 +1881,7 @@ class MainWindow(QMainWindow):
 
         show = self.worker.engine.get_show_info(self.selected_show_id)
 
+        self._update_folder_label()
         edit_widget = self.taiga_edit_widget if self._taiga_mode else None
         self.detailswindow = DetailsDialog(
             None, self.worker, show, edit_widget=edit_widget)
@@ -1630,6 +1919,160 @@ class MainWindow(QMainWindow):
         self.airingwindow = AiringScheduleDialog(None, self.worker)
         self.airingwindow.setModal(True)
         self.airingwindow.show()
+
+    def _get_syncwindow(self):
+        """The one SyncWindow instance: reused (and its already-fetched
+        plan preserved) across both the manual 'Multi-provider Sync...'
+        entry and the toolbar button's headless attempt -- but only
+        for as long as the loaded account's media type doesn't change.
+        Anime and manga use separate multisync databases (independent
+        provider id spaces -- see SyncWindow.__init__), so switching
+        media type (Settings, then reloading the account) must open a
+        fresh window against the OTHER database, never keep reusing
+        the stale one."""
+        from hakubun.ui.qt.syncwindow import SyncWindow
+        media_type = self.worker.engine.data_handler.userconfig.get(
+            'mediatype') or 'anime'
+        existing = getattr(self, 'syncwindow', None)
+        if existing is not None and getattr(existing, '_closed', False):
+            # The user closed it (store already closed with it); never
+            # reuse a dead window -- that would operate on a closed
+            # database. Rebuild fresh.
+            self.syncwindow = existing = None
+        # The signed-in account is the app's editing surface; the sync
+        # engine treats its changes as local intent (the "primary
+        # fold"). Switching accounts therefore changes what 'local'
+        # MEANS -- a window built for the old account would keep folding
+        # the wrong tracker's edits in and label conflicts with the
+        # wrong platform -- so it is rebuilt, exactly like a media-type
+        # change.
+        active_api = (self.account or {}).get('api') \
+            if getattr(self, 'account', None) else None
+        if existing is not None and (existing.media_type != media_type
+                                     or existing.active_api != active_api):
+            existing.close()
+            self.syncwindow = existing = None
+        if existing is None:
+            self.syncwindow = SyncWindow(None, self.accountman,
+                                         active_api=active_api,
+                                         media_type=media_type)
+        return self.syncwindow
+
+    def s_multisync(self):
+        win = self._get_syncwindow()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def s_sync_button(self):
+        """The toolbar/menu Sync action. Classic single-account sync
+        when multi-sync is disabled in Settings > Behavior; otherwise
+        fetch+plan happens off the GUI thread and, if there's work, the
+        Sync window is surfaced to apply it WITH its progress bar and
+        Cancel button -- never behind a disabled main window (that was
+        the multi-minute 'hang')."""
+        if not self.config['multisync_enabled']:
+            self.s_send(True)
+            return
+
+        win = self._get_syncwindow()
+        if not win.engine.adapters:
+            detail = ('; '.join(win._adapter_errors)
+                      if win._adapter_errors else
+                      'no provider accounts could be loaded')
+            self.error('Multi-sync: %s.' % detail)
+            return
+        if win.is_busy():
+            # Never drop the click invisibly (the window's own guard
+            # only updates its -- possibly hidden -- status label):
+            # surface the window so its progress/status is visible.
+            self._surface_syncwindow(win)
+            self.status('Multi-sync: an operation is already running '
+                        '(see the sync window).')
+            return
+
+        (mode, plan_only) = present.settings_sync_mode(self.config)
+        idx = win.mode_combo.findData(mode)
+        if idx >= 0:
+            win.mode_combo.setCurrentIndex(idx)
+
+        # No self._busy(): the main window stays usable while the sync
+        # runs on the window's worker thread.
+        self.status('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
+        win._run(win._fetch_and_plan,
+                 lambda plan, error: self._r_multisync_planned(
+                     win, plan, error),
+                 'Fetching provider lists...')
+
+    def _surface_syncwindow(self, win):
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _r_multisync_planned(self, win, plan, error):
+        # `win` is captured from the call that started the fetch --
+        # never re-resolved via _get_syncwindow(), which can close the
+        # old window and build a fresh one against the OTHER media
+        # type's database. If the loaded account's media type changed
+        # mid-fetch, this window is no longer current: discard the
+        # stale plan rather than rendering/applying it against the
+        # wrong database.
+        if error is not None:
+            self.error('Multi-sync failed: %s' % error)
+            return
+        media_type = self.worker.engine.data_handler.userconfig.get(
+            'mediatype') or 'anime'
+        active_api = (self.account or {}).get('api') \
+            if getattr(self, 'account', None) else None
+        if win is not getattr(self, 'syncwindow', None) \
+                or win.media_type != media_type \
+                or win.active_api != active_api:
+            self.status('Multi-sync: the loaded account changed '
+                        'mid-sync; results discarded. Sync again.')
+            return
+        # Render this exact plan into the (still hidden) window.
+        win.r_planned(plan, None)
+        if plan.conflicts:
+            self._surface_syncwindow(win)
+            self.status('Multi-sync needs your decision on %d '
+                       'conflict(s).' % len(plan.conflicts))
+            return
+        (_mode, plan_only) = present.settings_sync_mode(self.config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            self._surface_syncwindow(win)
+            if not plan.changes:
+                self.status('Multi-sync: already in sync.')
+            else:
+                self.status('Multi-sync: %d change(s) planned -- review '
+                            'and apply from the sync window.'
+                            % len(plan.changes))
+            return
+        if not plan.changes:
+            self.status('Multi-sync: already in sync.')
+            return
+        if any(c.first_sync for c in plan.changes):
+            # First contact with at least one tracker for some field:
+            # nothing has changed since a shared base because there IS
+            # no shared base, so the "winner" is just whichever list was
+            # read first. Those rows are planned unticked; a headless
+            # Sync must never apply them on the user's behalf.
+            self._surface_syncwindow(win)
+            self.status('Multi-sync: first sync for some fields -- '
+                        'review what would be overwritten before '
+                        'applying.')
+            return
+        # Clean changes: apply IN the window so its progress bar, log
+        # and Cancel button are visible, and the main window is free.
+        self._surface_syncwindow(win)
+        self.status('Multi-sync: applying %d change(s) -- see the sync '
+                    'window.' % len(plan.changes))
+        win.s_apply()
 
     def s_mediatype(self, action):
         index = action.data()

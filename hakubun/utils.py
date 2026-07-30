@@ -32,7 +32,13 @@ import time
 import uuid
 from enum import Enum, auto
 
-VERSION = '0.12.2'
+try:
+    from rapidfuzz import fuzz as rapidfuzz_fuzz
+    from rapidfuzz import process as rapidfuzz_process
+except ImportError:
+    rapidfuzz_fuzz = rapidfuzz_process = None
+
+VERSION = '0.13.dev0'
 
 DATADIR = os.path.dirname(__file__) + '/data'
 
@@ -395,6 +401,75 @@ def estimate_aired_episodes(show):
     return 0
 
 
+GUESS_SHOW_CUTOFF = 0.7
+
+# Flat (choices, owners) view of the most recent tracker list, so a library scan
+# doesn't rebuild it once per filename. Keyed by identity; the strong reference
+# to the showlist keeps that id() from being recycled under us. _get_tracker_list
+# builds a fresh dict every time, so a changed list is always a cache miss.
+_guess_index = (None, None, None)
+
+
+def _title_index(showlist):
+    global _guess_index
+
+    (cached_list, choices, owners) = _guess_index
+    if cached_list is showlist:
+        return (choices, owners)
+
+    choices, owners = [], []
+    for item in showlist.values():
+        for title in item['titles']:
+            choices.append(title.lower())
+            owners.append(item)
+
+    _guess_index = (showlist, choices, owners)
+    return (choices, owners)
+
+
+def _guess_show_difflib(show_title, showlist):
+    """ Fallback matcher for when rapidfuzz isn't installed.
+
+    Same metric and same result as a plain ratio() sweep, but skips the real
+    comparison whenever difflib's cheap upper bounds already rule a title out.
+    Roughly 4x faster than the naive loop on a large list.
+
+    Note the argument order matters: difflib's ratio() is not symmetric, so the
+    query has to stay as seq1 the way the original sweep had it.
+    """
+    highest_ratio = (None, 0)
+    matcher = difflib.SequenceMatcher()
+    matcher.set_seq1(show_title.lower())
+
+    for item in showlist.values():
+        # Make sure to search through all the aliases
+        for title in item['titles']:
+            matcher.set_seq2(title.lower())
+            if matcher.real_quick_ratio() <= highest_ratio[1]:
+                continue
+            if matcher.quick_ratio() <= highest_ratio[1]:
+                continue
+            ratio = matcher.ratio()
+            if ratio > highest_ratio[1]:
+                highest_ratio = (item, ratio)
+
+    return highest_ratio
+
+
+def _guess_show_rapidfuzz(show_title, showlist):
+    (choices, owners) = _title_index(showlist)
+
+    # fuzz.ratio is difflib's ratio computed with an optimal alignment rather
+    # than difflib's greedy one, so it only ever differs on pairs far below the
+    # cutoff -- where difflib undercounts and both answers mean "no match".
+    match = rapidfuzz_process.extractOne(
+        show_title.lower(), choices, scorer=rapidfuzz_fuzz.ratio)
+
+    if not match:
+        return (None, 0)
+    return (owners[match[2]], match[1] / 100)
+
+
 def guess_show(show_title, tracker_list):
     """ Take a title and search for it fuzzily in the tracker list """
     (showlist, altnames_map) = tracker_list
@@ -406,24 +481,16 @@ def guess_show(show_title, tracker_list):
         if showid in showlist:
             return showlist[showid]
 
-    # Use difflib to see if the show title is similar to
-    # one we have in the list
-    highest_ratio = (None, 0)
-    matcher = difflib.SequenceMatcher()
-    matcher.set_seq1(show_title.lower())
-
-    # Compare to every show in our list to see which one
-    # has the most similar name
-    for item in showlist.values():
-        # Make sure to search through all the aliases
-        for title in item['titles']:
-            matcher.set_seq2(title.lower())
-            ratio = matcher.ratio()
-            if ratio > highest_ratio[1]:
-                highest_ratio = (item, ratio)
+    # Compare to every show in our list to see which one has the most
+    # similar name. This runs once per unique title in the library during a
+    # scan, against every title and alias, so it dominates scan time.
+    if rapidfuzz_fuzz:
+        highest_ratio = _guess_show_rapidfuzz(show_title, showlist)
+    else:
+        highest_ratio = _guess_show_difflib(show_title, showlist)
 
     playing_show = highest_ratio[0]
-    if highest_ratio[1] > 0.7:
+    if highest_ratio[1] > GUESS_SHOW_CUTOFF:
         return playing_show
 
 
@@ -773,9 +840,28 @@ gtk_defaults = {
     'remember_geometry': False,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'episodebar_style': 1,
     'filter_global': False,
+    # Multi-sync (same keys/semantics as qt_defaults below): the list
+    # overlay, owner-system score editing and the Sync button's
+    # headless multi-sync all gate on these.
+    'multisync_enabled': True,
+    # Which reconciliation the Sync button performs: 'merge', 'pull' or
+    # 'push' (see sync.present.SETTINGS_MODES). The legacy value
+    # 'plan_only' is still understood on read and means merge +
+    # multisync_plan_only -- see sync.present.settings_sync_mode.
+    'multisync_mode': 'merge',
+    # Never auto-apply: always fetch, plan, and surface the sync window
+    # for review, whatever the mode above says. On by default while
+    # multisync is beta -- the safe posture for anyone who hasn't
+    # audited what merge/pull/push do to their real accounts yet.
+    'multisync_plan_only': True,
+    # When on (and multisync is enabled), the sidebar score editor can
+    # edit an owned entry's score in its OWNER's rating system, toggled
+    # live via the Synced/Platform switch by the slider. Off keeps the
+    # editor on the active account's own system for every entry.
+    'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#0099CC',
         'is_playing': '#6C2DC7',
@@ -802,7 +888,7 @@ qt_defaults = {
     'last_y': 0,
     'last_width': 740,
     'last_height': 480,
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'inline_edit': True,
     'columns_state': None,
     'columns_per_api': False,
@@ -810,6 +896,11 @@ qt_defaults = {
     'episodebar_text': False,
     'filter_bar_position': 2,
     'filter_global': False,
+    'multisync_enabled': True,
+    # Same keys/semantics as config_defaults above.
+    'multisync_mode': 'merge',
+    'multisync_plan_only': True,
+    'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#D2FAFA',
         'is_playing': '#9696FA',
@@ -828,7 +919,7 @@ qt_defaults = {
 }
 
 qt_per_api_defaults = {
-    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score'],
+    'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'columns_state': None,
 }
 
@@ -863,6 +954,45 @@ def clean_synopsis(text):
     return text.strip()
 
 
+def as_utc(dt):
+    """Attach UTC to a naive datetime. The two sources of airing times
+    disagree on this: engine.get_airing_schedule builds aware UTC out of
+    AniList's airingAt, while libanilist's own 'next_ep_time' comes from
+    utcfromtimestamp() and is naive. Both mean UTC, so normalize rather
+    than letting a naive/aware subtraction raise."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+def format_airtime_delta(dt, now=None) -> str:
+    """How far off an airing time is, as a bare quantity: "3 days",
+    "5 hours", "12 minutes". Returns None once it's no longer in the
+    future, since there is no sensible quantity to name then -- callers
+    that need a label for that case should use format_relative_airtime.
+    """
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    seconds = (as_utc(dt) - as_utc(now)).total_seconds()
+
+    if seconds <= 0:
+        return None
+
+    minutes = seconds / 60
+    if minutes < 60:
+        n = max(1, round(minutes))
+        return '%d minute%s' % (n, '' if n == 1 else 's')
+
+    hours = minutes / 60
+    if hours < 24:
+        n = max(1, round(hours))
+        return '%d hour%s' % (n, '' if n == 1 else 's')
+
+    days = hours / 24
+    n = max(1, round(days))
+    return '%d day%s' % (n, '' if n == 1 else 's')
+
+
 def format_relative_airtime(dt, now=None) -> str:
     """Human-relative description of an airing time -- days out by
     default, switching to hours and then minutes as it gets closer, e.g.
@@ -870,26 +1000,28 @@ def format_relative_airtime(dt, now=None) -> str:
     the absolute time somewhere too (e.g. a tooltip), since the relative
     form alone loses precision.
     """
+    delta = format_airtime_delta(dt, now)
+    if delta is not None:
+        return 'In %s' % delta
+
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
-    seconds = (dt - now).total_seconds()
+    seconds = (as_utc(dt) - as_utc(now)).total_seconds()
+    return 'Airing now' if seconds > -1800 else 'Aired'
 
-    if seconds <= 0:
-        return 'Airing now' if seconds > -1800 else 'Aired'
 
-    minutes = seconds / 60
-    if minutes < 60:
-        n = max(1, round(minutes))
-        return 'In %d minute%s' % (n, '' if n == 1 else 's')
-
-    hours = minutes / 60
-    if hours < 24:
-        n = max(1, round(hours))
-        return 'In %d hour%s' % (n, '' if n == 1 else 's')
-
-    days = hours / 24
-    n = max(1, round(days))
-    return 'In %d day%s' % (n, '' if n == 1 else 's')
+def format_next_airing(dt, now=None) -> str:
+    """The details view's phrasing for a next-episode time: the same
+    reduced quantity the airing scheduler shows, followed by the
+    absolute local date it resolves to -- "3 days (Sat Aug 02, 2026)".
+    The scheduler can rely on its own day-grouped columns for the date;
+    a lone detail row can't, and "3 days" with no anchor is unreadable
+    a day later. Returns None when the time isn't in the future."""
+    delta = format_airtime_delta(dt, now)
+    if delta is None:
+        return None
+    local = as_utc(dt).astimezone()
+    return '%s (%s)' % (delta, local.strftime('%a %b %d, %Y'))
 
 
 def format_clock(milliseconds) -> str:
@@ -980,6 +1112,35 @@ def score_to_raw(display_score, mediainfo):
     return display_score / score_display_factor(mediainfo)
 
 
+def snap_score_to_step(raw_score, mediainfo):
+    """Quantize a raw score to the provider's own grid (score_step),
+    half up, clamped to [0, score_max].
+
+    The score widgets set their increment to the account's display step,
+    but a value can still land off-grid -- the widget was left on another
+    provider's finer scale (owner-mode editing), or the user typed one --
+    and every backend forwards the number verbatim, so an off-grid score
+    (e.g. Kitsu 4.35 when its grid is quarter-stars) reaches the API as
+    an invalid rating. Snapping here guarantees a value the provider can
+    actually store. Uses Decimal(str(...)) so binary float noise on fine
+    steps can't tip a genuine half the wrong way (mirrors
+    sync.normalize.provider_score)."""
+    import decimal
+    step = mediainfo.get('score_step') or 1
+    smax = mediainfo.get('score_max', 10)
+    if not raw_score:
+        return 0 if float(step).is_integer() else 0.0
+    raw = decimal.Decimal(str(raw_score))
+    step_d = decimal.Decimal(str(step))
+    ticks = (raw / step_d).quantize(decimal.Decimal(1),
+                                    rounding=decimal.ROUND_HALF_UP)
+    snapped = min(max(ticks * step_d, decimal.Decimal(0)),
+                  decimal.Decimal(str(smax)))
+    if float(step).is_integer():
+        return int(snapped)
+    return round(float(snapped), 2)
+
+
 def date_to_season(dt) -> str:
     """Formats a date as an anime-style 'Season Year' label, e.g. 'Winter 2009'."""
     if dt is None:
@@ -987,6 +1148,27 @@ def date_to_season(dt) -> str:
     seasons = (Season.WINTER, Season.SPRING, Season.SUMMER, Season.FALL)
     season = seasons[(dt.month - 1) // 3]
     return f'{season!s} {dt.year}'
+
+
+_RELEASE_STATUS_LABELS = {
+    Status.ONGOING: 'Airing',
+    Status.FINISHED: 'Finished',
+    Status.NOTYET: 'Upcoming',
+    Status.CANCELLED: 'Cancelled',
+}
+
+
+def release_status_label(status) -> str:
+    """Human label for a show's airing status ('Airing', 'Finished',
+    'Upcoming', ...). Shared by the list views' Release Status column;
+    same paint-path rules as get_season_label below: cheap, and never
+    mutates anything."""
+    label = _RELEASE_STATUS_LABELS.get(status)
+    if label:
+        return label
+    if status in (None, Status.UNKNOWN):
+        return '?'
+    return str(status)
 
 
 def get_season_label(show) -> str:
@@ -997,20 +1179,17 @@ def get_season_label(show) -> str:
     AniList's season/seasonYear, surfaced as a 'Season' entry in
     show['extra']) since that's authoritative, falling back to deriving
     one from start_date for backends that don't (MAL, Kitsu).
+
+    Called from the Qt models/delegates data()/paint() path, so it must
+    stay cheap -- and it must NOT write to the show dict: these dicts
+    are shared with engine threads that pickle them (save_cache), and
+    inserting a key mid-pickle raises "dictionary changed size during
+    iteration". (An earlier version memoized the label onto the show;
+    that intermittently aborted cache saves during background MAL score
+    fetches.) The computation below is a short tuple scan plus an
+    f-string -- cheap enough to redo per call.
     """
-    # Memoized on the show dict: the Qt models/delegates call this from
-    # data()/paint() on every repaint, and the label never changes for a
-    # given show. (The stamp may end up pickled into the list cache along
-    # with the show; that's harmless, it's just re-derived data.)
-    label = show.get('_season_label')
-    if label is None:
-        label = date_to_season(show.get('start_date'))
-        for key, value in show.get('extra') or []:
-            if key == 'Season' and value:
-                label = value
-                break
-        try:
-            show['_season_label'] = label
-        except TypeError:
-            pass
-    return label
+    for key, value in show.get('extra') or []:
+        if key == 'Season' and value:
+            return value
+    return date_to_season(show.get('start_date'))

@@ -150,10 +150,12 @@ class libmal(lib):
         if self.mediatype == 'manga':
             self.total_str = "num_chapters"
             self.watched_str = self.watched_send_str = "num_chapters_read"
+            self.rewatched_str = "num_times_reread"
         else:
             self.total_str = "num_episodes"
             self.watched_str = "num_episodes_watched"
             self.watched_send_str = "num_watched_episodes"  # Please fix this upstream...
+            self.rewatched_str = "num_times_rewatched"
 
         self.opener = urllib.request.build_opener()
         self.opener.addheaders = [
@@ -268,7 +270,8 @@ class libmal(lib):
         shows = {}
 
         fields = 'id,alternative_titles,title,start_date,end_date,main_picture,status,media_type,mean,' + self.total_str
-        listfields = 'score,status,start_date,finish_date,updated_at,' + self.watched_str
+        listfields = 'score,status,start_date,finish_date,updated_at,%s,%s' \
+            % (self.rewatched_str, self.watched_str)
         params = {
             'fields': '%s,list_status{%s}' % (fields, listfields),
             'limit': self.library_page_limit,
@@ -300,6 +303,7 @@ class libmal(lib):
                     'end_date': self._str2date(item['node'].get('end_date')),
                     'my_progress': item['list_status'][self.watched_str],
                     'my_score': item['list_status']['score'],
+                    'my_rewatched_times': item['list_status'].get(self.rewatched_str, 0),
                     'my_status': item['list_status']['status'],
                     'my_start_date': self._str2date(item['list_status'].get('start_date')),
                     'my_finish_date': self._str2date(item['list_status'].get('finish_date')),
@@ -378,6 +382,13 @@ class libmal(lib):
             values['start_date'] = item['my_start_date'] or ""
         if 'my_finish_date' in item:
             values['finish_date'] = item['my_finish_date'] or ""
+        if 'my_rewatched_times' in item:
+            # Anime and manga name this field differently
+            # (num_times_rewatched vs num_times_reread); sending the
+            # anime name to the manga endpoint is silently ignored by
+            # MAL, which would poison the multisync merge base with a
+            # value the remote never accepted.
+            values[self.rewatched_str] = item['my_rewatched_times']
 
         data = self._request('PATCH', self.query_url + '/%s/%d/my_list_status' % (self.mediatype, item['id']), post=values, auth=True)
 

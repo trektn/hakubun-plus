@@ -67,3 +67,42 @@ def test_real_ending_clip_with_genuine_checksum_is_still_excluded(msg):
                    "[Coalgirls]_Yuru_Yuri_OP_(1920x1080_Blu-Ray_FLAC)_"
                    "[F94F020D].mkv")
     assert w.getName() is None
+
+
+def test_episode_before_episode_title_without_a_dash(msg):
+    # From a real MPRIS tracker log. anitomy-ng folds both the episode
+    # number and the episode title into the title when the number has no
+    # dash in front of it, and emits no episode element -- so getEpisode()
+    # fell back to 1 and the file was recorded as episode 1 of Beyblade X.
+    w = parse(msg, "[HnY] Beyblade X 11 - Kadovar's Test (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+    assert w.getEpisodeNumbers(True) == (11, 11)
+
+
+def test_episode_before_a_single_word_episode_title(msg):
+    # The failure isn't about how many words the episode title has; it only
+    # ever looked intermittent because anitomy-ng recognizes some episode
+    # titles by keyword ("Episode ...") and recovers on those by accident.
+    w = parse(msg, "[HnY] Beyblade X 11 - Test (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_dashed_episode_number_still_parses(msg):
+    # The shape anitomy-ng already handles must not regress.
+    w = parse(msg, "[HnY] Beyblade X - 11 - Kadovar's Test (1080p).mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_bare_trailing_episode_number_still_parses(msg):
+    w = parse(msg, "[HnY] Beyblade X 11 (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_year_before_a_title_is_not_taken_as_an_episode(msg):
+    # A four-digit year must not be salvaged as an episode number.
+    w = parse(msg, "[Grp] Show 2011 - Movie Title (1080p).mkv")
+    assert w.getEpisode() == 1

@@ -27,9 +27,31 @@ class AnitopyWrapper():
     some edge cases that Anitopy cannot solve.
     """
 
+    # Season/type/episode token: 'S01E13', 's01e13', 'S01OVA02', ...
+    #
+    # Anchored on both sides against alphanumerics on purpose. Without
+    # the guards this happily matches INSIDE a release group -- the
+    # 'S1TH3' of '...H.265-LYS1TH3A' parsed as season 1, type 'TH',
+    # episode 3, which then rewrote the name into nonsense and made
+    # every Fate/stay night movie report episode '3A'.
+    #
+    # Case-insensitive on purpose too: lowercase 's01e13' used to slip
+    # through unrewritten and hand raw Anitopy a filename it crashes on
+    # ("'NoneType' object has no attribute 'category'"), so the whole
+    # file was dropped as unrecognized.
+    _SEASON_TOKEN = re.compile(
+        r'(?<![A-Za-z0-9])S(?P<season>[0-9]+)(?P<type>[A-Za-z]+)'
+        r'(?P<episode>[0-9]+)(?![A-Za-z0-9])', re.IGNORECASE)
+
     def __init__(self, msg, file_name):
         self.msg = msg.with_classname('Parser')
         self.original_file_name = file_name
+
+        # Episode number taken straight from an SxxEyy token, when the
+        # name had one. Authoritative: we matched it explicitly, so we
+        # do not have to hope Anitopy re-derives it from the rewritten
+        # string (it often doesn't -- see __extractEpisodeNumber).
+        self.token_episode = None
 
         file_name = self.__preProcessFileName(file_name)
         file_name = self.__trimFileName(file_name)
@@ -73,9 +95,14 @@ class AnitopyWrapper():
                 return int(Decimal(self.episode_number[-1]))
             else:
                 return int(Decimal(self.episode_number))
-        except ArithmeticError:
+        except (ArithmeticError, ValueError, TypeError):
+            # Returning None here would read as "episode 0/unknown" to
+            # callers that do arithmetic on it; 1 matches the no-episode
+            # default above and keeps the file merely unmatched rather
+            # than mis-matched.
             self.msg.warn("Unable to parse episode number '{}' of: {}"
-                              .format(self.episode_number, self.original_file_name))
+                          .format(self.episode_number, self.original_file_name))
+            return 1
 
     def getEpisodeNumbers(self, force_numbers=False):
         # Returns the episode range as a tuple
@@ -101,9 +128,20 @@ class AnitopyWrapper():
 
         return (ep_start, ep_end)
 
-    @staticmethod
-    def __preProcessFileName(file_name):
+    # A version marker that is part of the TITLE, not a version of the
+    # release: 'NieR:Automata Ver1.1a', 'Ver.2.0'. Anitopy reads the
+    # '1.1a' as the episode number and stops looking, so every episode
+    # of such a show parsed as episode 1 (or failed outright). Joining
+    # the digits into one token leaves it looking like a word instead --
+    # and 'Ver11a' actually scores HIGHER against the real list title
+    # than the truncated 'Ver1' Anitopy produced before.
+    _TITLE_VERSION = re.compile(
+        r'\bVer\.?\s?[0-9]+(?:\.[0-9]+)+[A-Za-z]?\b', re.IGNORECASE)
+
+    def __preProcessFileName(self, file_name):
         # Make some adjustments to the file name to increase parsing accuracy
+        file_name = self._TITLE_VERSION.sub(
+            lambda m: m.group().replace('.', ''), file_name)
 
         # If full path is provided to Anitopy, all [brackets with contents]
         # adjacent to the path separators should be moved to the VERY beginning.
@@ -121,20 +159,27 @@ class AnitopyWrapper():
 
         # Anitopy can parse S01E01 properly, but not S01OVA01, S01S01, S01NCOP01 etc.
         # So we'll need to break things down for the parser.
-        m = re.search(r'S(?P<season>[0-9]+)(?P<type>[A-Za-z]+)(?P<episode>[0-9]+)', file_name)
+        m = self._SEASON_TOKEN.search(file_name)
         if m:
             groups = m.groupdict()
+            kind = groups['type'].upper()
+            # Remember what the token itself said. Rewriting the name and
+            # letting Anitopy re-find the number is not good enough: for
+            # 'NieR.Automata.Ver1.1a.S01E13...' it locks onto the '1a' of
+            # the TITLE and reports episode 1, so episode 13 would be
+            # recorded as episode 1 -- a wrong update, not a failed one.
+            self.token_episode = groups['episode']
             # 'S01E01' -> 'Season 01 - 01'
-            if groups['type'] == 'E':
-                groups['type'] = ''
+            if kind == 'E':
+                kind = ''
             # 'S01S01' -> 'Season 01 Specials - 01'
-            if groups['type'] == 'S':
-                groups['type'] = 'Specials'
+            elif kind == 'S':
+                kind = 'Specials'
             # for all other cases:
             # 'S01{type}01' -> 'Season 01 {type} - 01'
             file_name = (
                 file_name[:m.start()] + 'Season ' + groups['season']
-                + ' ' + groups['type'] + ' - ' + groups['episode']
+                + ' ' + kind + ' - ' + groups['episode']
                 + file_name[m.end():])
 
         return file_name
@@ -219,12 +264,22 @@ class AnitopyWrapper():
 
         return anime_title
 
-    @staticmethod
-    def __extractEpisodeNumber(data):
+    # A part suffix on an otherwise numeric episode: '1a', '20A', '01c',
+    # 'NCOP1d'. Anime lists have no way to express them, so the part
+    # letter is dropped and the number kept.
+    _PART_SUFFIX = re.compile(r'(?<=[0-9])[A-Za-z]$')
+
+    @classmethod
+    def __stripPartSuffix(cls, value):
+        if isinstance(value, str):
+            return cls._PART_SUFFIX.sub('', value)
+        if isinstance(value, list):
+            return [cls.__stripPartSuffix(v) for v in value]
+        return value
+
+    def __extractEpisodeNumber(self, data):
         # Deal with episode related stuff that Anitopy left out
-        if 'episode_number' not in data:
-            return
-        episode_number = data['episode_number']
+        episode_number = data.get('episode_number')
 
         # Handle cases like: "[Judas] Naruto - S05E01 (186).mkv"
         # Anitopy should detect the consecutive episode number (186) properly.
@@ -234,9 +289,19 @@ class AnitopyWrapper():
             del data['episode_number_alt']
             if 'anime_season' in data:
                 del data['anime_season']
+        elif self.token_episode is not None:
+            # An explicit SxxEyy token beats whatever Anitopy inferred:
+            # we matched the episode ourselves, character for character.
+            # Only an _alt number (the absolute-numbering case above)
+            # outranks it.
+            episode_number = self.token_episode
 
-        # Unfortunately, we can't have episode numbers like 1A, 1B, 1C etc.
-        if isinstance(data['episode_number'], str):
-            episode_number = re.sub(r'ABCabc', r'', episode_number)
+        if episode_number is None:
+            return None
 
-        return episode_number
+        # Unfortunately, we can't have episode numbers like 1A, 1B, 1C
+        # etc. NOTE: this used to be re.sub(r'ABCabc', '', ...) -- a
+        # LITERAL six-character pattern that never matched anything, so
+        # the stripping had simply never worked and every part-numbered
+        # file failed with "Unable to parse episode number '1a'".
+        return self.__stripPartSuffix(episode_number)

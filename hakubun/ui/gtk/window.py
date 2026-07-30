@@ -66,6 +66,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._main_view = None
         self._modals = []
         self._airing_window = None
+        self._multisync_window = None
 
         self._account = None
         self._engine = None
@@ -249,6 +250,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
 
         add_action('search', self._on_search)
         add_action('airing_schedule', self._on_airing_schedule)
+        add_action('multisync', self._on_multisync)
         add_action('synchronize', self._on_synchronize)
         add_action('upload', self._on_upload)
         add_action('download', self._on_download)
@@ -358,6 +360,45 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._airing_window = None
         self._on_modal_destroy(modal_window)
 
+    def _on_multisync(self, action, param):
+        win = self._get_multisync_window()
+        if win is not None:
+            win.present()
+
+    def _get_multisync_window(self):
+        """The one MultiSyncWindow instance, built (but NOT presented)
+        on demand. Reused unless the media type changed: anime and
+        manga use separate databases, so a stale window would be the
+        wrong one (mirrors the Qt front-end's _get_syncwindow)."""
+        if self._engine is None:
+            return None
+        media_type = self._engine.api_info['mediatype']
+        # The signed-in account is the working tree; switching accounts
+        # changes what 'local' MEANS (the primary fold), so a window
+        # built for the old one must be rebuilt just like a media-type
+        # change -- otherwise it keeps folding the wrong tracker's edits
+        # in and labels conflicts with the wrong platform.
+        active_api = self._engine.account['api']
+        if self._multisync_window is not None:
+            if self._multisync_window.media_type == media_type \
+                    and self._multisync_window.active_api == active_api:
+                return self._multisync_window
+            self._multisync_window.destroy()
+            self._multisync_window = None
+
+        from hakubun.accounts import AccountManager
+        from hakubun.ui.gtk.multisyncwindow import MultiSyncWindow
+        win = MultiSyncWindow(AccountManager(), active_api, media_type,
+                              transient_for=self)
+        win.connect('destroy', self._on_multisync_window_destroy)
+        self._multisync_window = win
+        self._modals.append(win)
+        return win
+
+    def _on_multisync_window_destroy(self, modal_window):
+        self._multisync_window = None
+        self._on_modal_destroy(modal_window)
+
     def _on_now_playing_toggled(self, button):
         self._content_stack.set_visible_child_name(
             'now_playing' if button.get_active() else 'list')
@@ -369,8 +410,106 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._play_episode(show_id, episode)
 
     def _on_synchronize(self, action, param):
+        # When multi-sync is enabled (Settings > Behavior), Sync
+        # reconciles every configured provider instead of the classic
+        # single-account upload+download -- mirroring the Qt front-end's
+        # s_sync_button. Fetch+plan runs on the sync window's worker
+        # thread; the window is only surfaced when something needs the
+        # user (a conflict) or to show apply progress, and the main
+        # window stays live throughout.
+        if self._config.get('multisync_enabled') and self._engine is not None:
+            self._start_multisync()
+            return
         threading.Thread(target=self._synchronization_task,
                          args=(True, True)).start()
+
+    def _start_multisync(self):
+        from hakubun.sync import present
+        win = self._get_multisync_window()
+        if win is None:
+            return
+        if not win.engine.adapters:
+            detail = ('; '.join(win._adapter_errors)
+                      if win._adapter_errors else
+                      'no provider accounts could be loaded')
+            self._error_dialog('Multi-sync: %s.' % detail)
+            return
+        if win.is_busy():
+            # Never drop the click invisibly: surface the window so its
+            # progress/status is visible.
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync: an operation is already running.')
+            return
+        (mode, plan_only) = present.settings_sync_mode(self._config)
+        win.set_mode(mode)
+        self._main_view.set_status_idle('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
+        win._run(win._fetch_and_plan,
+                 lambda plan, error: self._multisync_planned(
+                     win, plan, error),
+                 'Fetching provider lists...')
+
+    def _multisync_planned(self, win, plan, error):
+        # Runs on the GLib main loop (the window's _done). `win` is
+        # captured from the call that started the fetch: if the loaded
+        # account or its media type changed meanwhile, this window is
+        # no longer current -- discard the stale plan rather than
+        # rendering/applying it against the wrong database.
+        from hakubun.sync import present
+        if error is not None:
+            self._main_view.set_status_idle('Multi-sync failed: %s' % error)
+            return
+        if win is not self._multisync_window or self._engine is None \
+                or win.media_type != self._engine.api_info['mediatype'] \
+                or win.active_api != self._engine.account['api']:
+            self._main_view.set_status_idle(
+                'Multi-sync: the loaded account changed mid-sync; '
+                'results discarded. Sync again.')
+            return
+        win.r_planned(plan, None)
+        if plan.conflicts:
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync needs your decision on %d conflict(s).'
+                % len(plan.conflicts))
+            return
+        (_mode, plan_only) = present.settings_sync_mode(self._config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            win.present()
+            if not plan.changes:
+                self._main_view.set_status_idle(
+                    'Multi-sync: already in sync.')
+            else:
+                self._main_view.set_status_idle(
+                    'Multi-sync: %d change(s) planned -- review and '
+                    'apply from the sync window.' % len(plan.changes))
+            return
+        if not plan.changes:
+            self._main_view.set_status_idle('Multi-sync: already in sync.')
+            return
+        if any(c.first_sync for c in plan.changes):
+            # First contact with at least one tracker for some field:
+            # there is no shared base, so the "winner" is just whichever
+            # list was read first. Those rows are planned unticked; a
+            # headless Sync must never apply them for the user.
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync: first sync for some fields -- review what '
+                'would be overwritten before applying.')
+            return
+        # Clean changes: apply IN the window so its progress bar, log
+        # and Cancel button are visible, and the main window is free.
+        win.present()
+        self._main_view.set_status_idle(
+            'Multi-sync: applying %d change(s) -- see the sync window.'
+            % len(plan.changes))
+        win.s_apply()
 
     def _on_upload(self, action, param):
         threading.Thread(target=self._synchronization_task,
@@ -511,6 +650,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._modals.append(win)
 
     def _on_settings_saved(self, _settings_window):
+        # Rebuild the list so the multi-sync overlay follows the
+        # Settings toggle immediately (on or off).
+        if self._main_view is not None:
+            self._main_view.populate_all_pages()
         if self._engine.get_config('sync_on_settings_apply'):
             threading.Thread(target=self._synchronization_task,
                              args=(True, False)).start()
@@ -671,6 +814,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._open_website(*data)
         elif event_type == ShowEventType.OPEN_FOLDER:
             self._open_folder(*data)
+        elif event_type == ShowEventType.SET_FOLDER:
+            self._set_folder(*data)
+        elif event_type == ShowEventType.CLEAR_FOLDER:
+            self._clear_folder(*data)
         elif event_type == ShowEventType.COPY_TITLE:
             self._copy_title(*data)
         elif event_type == ShowEventType.CHANGE_ALTERNATIVE_TITLE:
@@ -780,6 +927,42 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._engine.open_show_folder(show_id)
         except utils.EngineError as e:
             self._error_dialog_idle(e.args[0])
+
+    def _set_folder(self, show_id):
+        show = self._engine.get_show_info(show_id)
+        current = self._engine.get_show_folder(show_id)
+        dialog = Gtk.FileChooserDialog(
+            title='Select folder for %s' % show['title'],
+            parent=self, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        if current:
+            dialog.set_filename(current)
+        response = dialog.run()
+        folder = dialog.get_filename() if response == Gtk.ResponseType.OK else None
+        dialog.destroy()
+        if not folder:
+            return
+        threading.Thread(target=self._set_folder_task,
+                         args=(show_id, folder)).start()
+
+    def _set_folder_task(self, show_id, folder):
+        # Manually pointing a show at a folder bypasses filename
+        # guessing for it -- the escape hatch for a folder the parser
+        # can't (or shouldn't have to) make sense of. Mirrors
+        # _scanfiles_task: runs off the main thread since it walks the
+        # folder immediately, same as any other library scan.
+        self._set_buttons_sensitive_idle(False)
+        try:
+            self._engine.set_show_folder(show_id, folder)
+        except utils.HakubunError as e:
+            self._error_dialog_idle(e)
+        finally:
+            self._set_buttons_sensitive_idle(True)
+
+    def _clear_folder(self, show_id):
+        self._engine.unset_show_folder(show_id)
+        self._main_view.set_status_idle('Folder cleared.')
 
     def _copy_title(self, show_id):
         show = self._engine.get_show_info(show_id)

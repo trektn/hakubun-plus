@@ -22,6 +22,84 @@ from hakubun import utils
 DRAG_TARGETS = [Gtk.TargetEntry.new('application/x-hakubun-showid', 0, 0)]
 
 
+def _fmt_owner_score(value):
+    """Format an owner-system score for the Score cell -- '8.4', '8',
+    '8.5' -- trimming trailing zeros so it reads the way the owner shows
+    it, not '8.40'."""
+    return ("%.2f" % value).rstrip('0').rstrip('.')
+
+
+def overlay_cells(show, over, decimals, factor):
+    """Compute a row's display cells, applying the multi-sync overlay
+    entry `over` (or None) on top of the show's own values.
+
+    Pure (no GTK), so it's unit-tested directly. The overlay lets the
+    list show reconciled per-field state -- episodes from one provider,
+    an owned Score in the OWNER's rating system -- while signed into a
+    different account. Returns a dict:
+      my_progress    reconciled progress (feeds the bar + colour)
+      my_score       reconciled score in the ACTIVE scale (float; sorts)
+      episodes_str   'watched / total'
+      score_str      owner-system text when Score is owned elsewhere
+                     ('8.4'), else the active-scale text ('4.0')
+      score_italic   True when the Score cell is a reconciled/owned value
+      score_owner    owning provider, '' when Score is not owned elsewhere
+      synced_score_str  dedicated 'Synced Score' column: the owner-system
+                     score for a SHARED (owned-elsewhere) entry ('8.4'),
+                     '–' when owned-elsewhere but unrated, '' for a
+                     platform-specific entry (nothing else owns it, so it
+                     has no synced score) -- lets the column itself say
+                     whether a row is cross-tracker or platform-specific
+      percent        progress %
+      my_start_date / my_finish_date  reconciled dates (or the show's own)
+    """
+    my_progress = show['my_progress']
+    my_score = show['my_score']
+    my_start = show['my_start_date']
+    my_finish = show['my_finish_date']
+    score_italic = False
+    score_owner = ''
+    if over:
+        if over.get('my_progress') is not None:
+            my_progress = over['my_progress']
+        if over.get('my_score') is not None:
+            my_score = over['my_score']
+            score_italic = True
+        if 'my_start_date' in over:
+            my_start = over['my_start_date']
+        if 'my_finish_date' in over:
+            my_finish = over['my_finish_date']
+        if over.get('_score_owner'):
+            score_owner = over['_score_owner']
+    # Score text: the owner's own system when owned elsewhere (the whole
+    # point -- 8.4 vs Kitsu's 8.5), else this account's scaled rendering.
+    if over and over.get('_score_display') is not None:
+        score_str = _fmt_owner_score(over['_score_display'])
+        score_italic = True
+    else:
+        score_str = "%0.*f" % (decimals, my_score * factor)
+    # Synced Score column: only a SHARED entry (owned on another tracker)
+    # has a "synced" score, shown in the OWNER's own system; a platform-
+    # specific entry leaves it blank, so the column reads as the
+    # owned-vs-platform-specific indicator itself.
+    if over and over.get('_score_owner'):
+        disp = over.get('_score_display')
+        synced_score_str = _fmt_owner_score(disp) if disp is not None else '–'
+    else:
+        synced_score_str = ''
+    episodes_str = "{} / {}".format(my_progress, show['total'] or '?')
+    if show['total'] and my_progress <= show['total']:
+        percent = (float(my_progress) / show['total']) * 100
+    else:
+        percent = 0
+    return {'my_progress': my_progress, 'my_score': my_score,
+            'episodes_str': episodes_str, 'score_str': score_str,
+            'score_italic': score_italic, 'score_owner': score_owner,
+            'synced_score_str': synced_score_str,
+            'percent': percent, 'my_start_date': my_start,
+            'my_finish_date': my_finish}
+
+
 class ShowListStore(Gtk.ListStore):
     __cols = (
         ('id', int),
@@ -47,6 +125,15 @@ class ShowListStore(Gtk.ListStore):
         ('type', str),
         ('platform-score', str),
         ('mal-score', str),
+        # Multi-sync display overlay (appended last so every existing
+        # hard-coded column index stays valid): a Pango style so the
+        # Score cell can be italicised when it shows a reconciled/owned
+        # value, and the owning provider's name for that cell's tooltip.
+        ('score-style', int),
+        ('score-owner', str),
+        # Dedicated 'Synced Score' column text (index 25): the owner-
+        # system reconciled score for a shared entry, '' otherwise.
+        ('synced-score', str),
     )
 
     def __init__(self, decimals=0, factor=1, colors=dict()):
@@ -57,7 +144,17 @@ class ShowListStore(Gtk.ListStore):
         # Score column matches what the sidebar shows, e.g. Kitsu's raw
         # 0-5/.25 scale displayed as 0-10/.5.
         self.factor = factor
+        # {show_id: {my_field: reconciled value, ...}} -- the multi-sync
+        # display overlay, applied when rows are (re)built. Empty = the
+        # list shows each account's own values, unchanged.
+        self.overlay = {}
         self.set_sort_column_id(1, Gtk.SortType.ASCENDING)
+
+    def set_overlay(self, overlay):
+        """Install the multi-sync display overlay. Takes effect on the
+        next populate/append; call apply_overlay_to_rows(shows) to refresh
+        existing rows in place (keeping the selection)."""
+        self.overlay = overlay or {}
 
     @staticmethod
     def format_date(date):
@@ -80,10 +177,15 @@ class ShowListStore(Gtk.ListStore):
         except ValueError:
             return None
 
-    def _get_color(self, show, eps):
+    def _get_color(self, show, eps, my_progress=None):
+        # my_progress override lets the 'new episode' highlight key off
+        # the reconciled progress the overlay is displaying, not the
+        # account's own raw value.
+        if my_progress is None:
+            my_progress = show['my_progress']
         if show.get('queued'):
             return self.colors['is_queued']
-        elif eps and max(eps) > show['my_progress']:
+        elif eps and max(eps) > my_progress:
             return self.colors['new_episode']
         elif show['status'] == utils.Status.AIRING:
             return self.colors['is_airing']
@@ -93,18 +195,13 @@ class ShowListStore(Gtk.ListStore):
             return None
 
     def append(self, show, altname=None, eps=None):
-        episodes_str = "{} / {}".format(show['my_progress'],
-                                        show['total'] or '?')
-        if show['total'] and show['my_progress'] <= show['total']:
-            progress = (float(show['my_progress']) / show['total']) * 100
-        else:
-            progress = 0
+        cells = overlay_cells(show, self.overlay.get(show['id']),
+                              self.decimals, self.factor)
 
         title_str = show['title']
         if altname:
             title_str += " [%s]" % altname
 
-        score_str = "%0.*f" % (self.decimals, show['my_score'] * self.factor)
         aired_eps = utils.estimate_aired_episodes(show)
 
         if eps:
@@ -114,23 +211,23 @@ class ShowListStore(Gtk.ListStore):
 
         start_date = self.format_date(show['start_date'])
         end_date = self.format_date(show['end_date'])
-        my_start_date = self.format_date(show['my_start_date'])
-        my_finish_date = self.format_date(show['my_finish_date'])
+        my_start_date = self.format_date(cells['my_start_date'])
+        my_finish_date = self.format_date(cells['my_finish_date'])
         my_last_update_dt = show.get('my_last_update')
         my_last_update = utils.format_local_time(my_last_update_dt)
         my_last_update_timestamp = my_last_update_dt.timestamp() if my_last_update_dt is not None else 0
 
         row = [show['id'],
                title_str,
-               show['my_progress'],
-               show['my_score'],
-               episodes_str,
-               score_str,
+               cells['my_progress'],
+               cells['my_score'],
+               cells['episodes_str'],
+               cells['score_str'],
                show['total'],
                aired_eps,
                available_eps,
-               self._get_color(show, available_eps),
-               progress,
+               self._get_color(show, available_eps, cells['my_progress']),
+               cells['percent'],
                start_date,
                end_date,
                my_start_date,
@@ -143,6 +240,10 @@ class ShowListStore(Gtk.ListStore):
                str(show['type']),
                show.get('platform_score') or '-',
                show.get('mal_score') or '-',
+               Pango.Style.ITALIC if cells['score_italic']
+               else Pango.Style.NORMAL,
+               cells['score_owner'],
+               cells['synced_score_str'],
                ]
         super().append(row)
 
@@ -159,16 +260,14 @@ class ShowListStore(Gtk.ListStore):
                 if int(row[0]) == show['id']:
                     break
         if row and int(row[0]) == show['id']:
-            episodes_str = "{} / {}".format(show['my_progress'],
-                                            show['total'] or '?')
-            row[2] = show['my_progress']
-            row[4] = episodes_str
-
-            score_str = "%0.*f" % (self.decimals, show['my_score'] * self.factor)
-
-            row[3] = show['my_score']
-            row[5] = score_str
-            row[9] = self._get_color(show, row[8])
+            cells = overlay_cells(show, self.overlay.get(show['id']),
+                                  self.decimals, self.factor)
+            row[2] = cells['my_progress']
+            row[4] = cells['episodes_str']
+            row[3] = cells['my_score']
+            row[5] = cells['score_str']
+            row[9] = self._get_color(show, row[8], cells['my_progress'])
+            row[10] = cells['percent']
             row[15] = show['my_status']
 
             my_last_update = show['my_last_update']
@@ -179,9 +278,44 @@ class ShowListStore(Gtk.ListStore):
             row[20] = str(show['type'])
             row[21] = show.get('platform_score') or '-'
             row[22] = show.get('mal_score') or '-'
+            row[23] = (Pango.Style.ITALIC if cells['score_italic']
+                       else Pango.Style.NORMAL)
+            row[24] = cells['score_owner']
+            row[25] = cells['synced_score_str']
         return
 
         # print("Warning: Show ID not found in ShowView (%d)" % show['id'])
+
+    def apply_overlay_to_rows(self, shows):
+        """Re-apply the current overlay to the existing rows in place --
+        no clear/repopulate, so the selection survives. Used right after
+        an owner-score edit rebuilds the overlay.
+
+        Recomputes every overlay-affected cell through overlay_cells(),
+        so a row whose overlay entry DISAPPEARED (back in sync, overlay
+        cleared on failure, mapping removed) is restored to the
+        account's own values instead of keeping a stale italic
+        owner-score. `shows` is the engine's current show list (the raw
+        values to restore from)."""
+        by_id = {show['id']: show for show in shows}
+        for row in self:
+            show = by_id.get(int(row[0]))
+            if show is None:
+                continue
+            cells = overlay_cells(show, self.overlay.get(show['id']),
+                                  self.decimals, self.factor)
+            row[2] = cells['my_progress']
+            row[3] = cells['my_score']
+            row[4] = cells['episodes_str']
+            row[5] = cells['score_str']
+            row[9] = self._get_color(show, row[8], cells['my_progress'])
+            row[10] = cells['percent']
+            row[13] = self.format_date(cells['my_start_date'])
+            row[14] = self.format_date(cells['my_finish_date'])
+            row[23] = (Pango.Style.ITALIC if cells['score_italic']
+                       else Pango.Style.NORMAL)
+            row[24] = cells['score_owner']
+            row[25] = cells['synced_score_str']
 
     def update_title(self, show, altname=None):
         for row in self:
@@ -285,6 +419,7 @@ class ShowTreeView(Gtk.TreeView):
             ('Type', 20),
             ('Platform Score', 21),
             ('MAL Score', 22),
+            ('Synced Score', 25),
         )
 
         for (name, sort) in self.available_columns:
@@ -347,9 +482,13 @@ class ShowTreeView(Gtk.TreeView):
             self.cols['Percent'].add_attribute(renderer_percent, 'eps', 8)
         renderer_percent.set_fixed_size(100, -1)
 
-        renderer = Gtk.CellRendererText()
-        self.cols['Score'].pack_start(renderer, False)
-        self.cols['Score'].add_attribute(renderer, 'text', 5)
+        renderer_score = Gtk.CellRendererText()
+        self.cols['Score'].pack_start(renderer_score, False)
+        self.cols['Score'].add_attribute(renderer_score, 'text', 5)
+        # Italicise the Score when it shows a reconciled/owned value
+        # (multi-sync), mirroring the Qt list's italic cue. Col 23 holds
+        # the Pango style per row (ITALIC when overlaid, else NORMAL).
+        self.cols['Score'].add_attribute(renderer_score, 'style', 23)
         renderer = Gtk.CellRendererText()
         self.cols['Start'].pack_start(renderer, False)
         self.cols['Start'].add_attribute(renderer, 'text', 11)
@@ -377,6 +516,13 @@ class ShowTreeView(Gtk.TreeView):
         renderer = Gtk.CellRendererText()
         self.cols['MAL Score'].pack_start(renderer, False)
         self.cols['MAL Score'].add_attribute(renderer, 'text', 22)
+        # Synced Score: the reconciled score in the owner's own system
+        # (col 25). Italicised via the same per-row Pango style as the
+        # Score cell (col 23), since it too is a reconciled/owned value.
+        renderer_synced = Gtk.CellRendererText()
+        self.cols['Synced Score'].pack_start(renderer_synced, False)
+        self.cols['Synced Score'].add_attribute(renderer_synced, 'text', 25)
+        self.cols['Synced Score'].add_attribute(renderer_synced, 'style', 23)
 
     def _on_drag_data_get(self, widget, drag_context, data, info, time):
         model, treeiter = self.get_selection().get_selected()
@@ -443,6 +589,24 @@ class ShowTreeView(Gtk.TreeView):
             return True
         elif col is self.cols['Last updated']:
             tip.set_text(gv('last-updated'))
+            renderer = next(iter(col.get_cells()))
+            self.set_tooltip_cell(tip, path, col, renderer)
+            return True
+        elif col is self.cols['Score']:
+            owner = gv('score-owner')
+            if not owner:
+                return False
+            tip.set_text('Score owned by %s, shown in its rating system'
+                         % owner.capitalize())
+            renderer = next(iter(col.get_cells()))
+            self.set_tooltip_cell(tip, path, col, renderer)
+            return True
+        elif col is self.cols['Synced Score']:
+            owner = gv('score-owner')
+            tip.set_text(
+                'Synced from %s, in its rating system' % owner.capitalize()
+                if owner else
+                'Platform-specific entry — not synced to another tracker')
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
             return True

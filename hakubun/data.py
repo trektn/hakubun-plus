@@ -55,7 +55,7 @@ class Data:
     config = dict()
     meta = {'lastget': 0, 'lastsend': 0, 'version': '', 'apiversion': '',
             'altnames': {}, 'library': {}, 'library_cache': {},
-            'library_scan_signature': None, }
+            'library_scan_signature': None, 'show_folders': {}, }
 
     autosend_timer = None
 
@@ -487,6 +487,19 @@ class Data:
                 # before _info_schema existed would otherwise crash the
                 # loader thread here.
                 if info is not None:
+                    # Stamp the entry as current so the staleness check
+                    # above stops re-firing: without this, every request
+                    # for the show re-calls request_info just to catch
+                    # this NotImplementedError again. Stamp a copy and
+                    # swap it in whole, so a concurrent pickle of the
+                    # infocache never sees a dict change size mid-
+                    # iteration.
+                    if (info.get('_info_schema') != self.info_schema
+                            or info.get('_details_pending')):
+                        info = dict(info)
+                        info.pop('_details_pending', None)
+                        info['_info_schema'] = self.info_schema
+                        self.infocache[showid] = info
                     return self._sanitized_info(info)
                 raise utils.DataError(
                     "Show details aren't supported by this API.")
@@ -562,6 +575,21 @@ class Data:
 
     def library_scan_signature_save(self, signature):
         self.meta['library_scan_signature'] = signature
+
+    def show_folder_get(self, showid):
+        return self.meta['show_folders'].get(showid)
+
+    def show_folder_set(self, showid, path):
+        self.meta['show_folders'][showid] = path
+        self._save_meta()
+
+    def show_folder_clear(self, showid):
+        if showid in self.meta['show_folders']:
+            del self.meta['show_folders'][showid]
+            self._save_meta()
+
+    def show_folders_get(self):
+        return self.meta['show_folders']
 
     def get_show_attr(self, show, key):
         return show.get(key)

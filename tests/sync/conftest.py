@@ -1,0 +1,197 @@
+"""Shared fixtures: fake provider libs behind the real adapters."""
+
+import pytest
+
+from hakubun import utils
+from hakubun.sync.adapters import ProviderAdapter
+from hakubun.sync.engine import SyncEngine
+from hakubun.sync.store import SyncStore
+
+MEDIAINFO = {
+    'mal': {'mediatype': 'anime', 'score_max': 10, 'score_step': 1,
+            'can_score': True, 'can_status': True, 'can_update': True,
+            'can_date': True, 'can_tag': False,
+            'statuses_dict': {'watching': 'Watching',
+                              'completed': 'Completed',
+                              'on_hold': 'On hold',
+                              'dropped': 'Dropped',
+                              'plan_to_watch': 'Plan to Watch'}},
+    'anilist': {'mediatype': 'anime', 'score_max': 100, 'score_step': 1,
+                'can_score': True, 'can_status': True, 'can_update': True,
+                'can_date': True, 'can_tag': True,
+                'statuses_dict': {'CURRENT': 'Watching',
+                                  'COMPLETED': 'Completed',
+                                  'PAUSED': 'Paused',
+                                  'DROPPED': 'Dropped',
+                                  'PLANNING': 'Planning'}},
+    # Kitsu's grid is HALF-stars: ratingTwenty (its wire format) only
+    # accepts even values, so my_score = ratingTwenty/4 always lands on
+    # a 0.5 step. Must match hakubun/lib/libkitsu*.py -- a fake that
+    # models a finer grid than the real lib silently blesses scores the
+    # API would reject.
+    'kitsu': {'mediatype': 'anime', 'score_max': 5, 'score_step': 0.5,
+              'can_score': True, 'can_status': True, 'can_update': True,
+              'can_date': True, 'can_tag': False,
+              'statuses_dict': {'current': 'Currently Watching',
+                                'completed': 'Completed',
+                                'on_hold': 'On Hold',
+                                'dropped': 'Dropped',
+                                'planned': 'Want to Watch'}},
+}
+
+
+class FakeLib:
+    """Duck-typed lib/ instance: in-memory shows, failure injection."""
+
+    def __init__(self, provider, shows=None, mediatype='anime',
+                extra_info=None, mal_id_index=None):
+        self.provider = provider
+        self.mediatype = mediatype       # real libs expose this
+        self.shows = {str(s['id']): dict(s) for s in (shows or [])}
+        self.updates = []          # update_show items received
+        self.fail_fetch = False
+        self.fail_update = False
+        # Raise a rate-limit APIError on the first N update_show calls,
+        # then succeed -- to exercise the adapter's 429 retry loop.
+        self.rate_limit_first = 0
+        self.rate_limit_retry_after = None
+        # Overrides/additions merged onto MEDIAINFO for this instance
+        # only (e.g. {'can_add': False}) -- media_info() is read live
+        # per adapters.mediainfo, never cached from __init__.
+        self.extra_info = extra_info or {}
+        # {mal_id: this provider's own media id}: an AniList-like exact
+        # reverse lookup. Only attached (as an instance attribute, so
+        # hasattr(lib, 'find_by_mal_id') is False when unset) for fakes
+        # that opt in -- most providers (MAL itself, a plain Kitsu fake
+        # without this) genuinely don't support it.
+        self.mal_id_lookups = []   # every mal_id find_by_mal_id was asked
+        if mal_id_index is not None:
+            self._mal_id_index = mal_id_index
+            self.find_by_mal_id = self._find_by_mal_id
+
+    def _find_by_mal_id(self, mal_id):
+        self.mal_id_lookups.append(mal_id)
+        if self.fail_fetch:
+            raise utils.APIError('%s is down' % self.provider)
+        return self._mal_id_index.get(int(mal_id))
+
+    def media_info(self):
+        info = dict(MEDIAINFO[self.provider])
+        info.update(self.extra_info)
+        return info
+
+    def check_credentials(self):
+        if self.fail_fetch:
+            raise utils.APIError('%s is down' % self.provider)
+        return True
+
+    def fetch_list(self):
+        if self.fail_fetch:
+            raise utils.APIError('%s is down' % self.provider)
+        return {k: dict(v) for k, v in self.shows.items()}
+
+    def update_show(self, item):
+        if self.fail_update:
+            raise utils.APIError('%s rejected the update' % self.provider)
+        if self.rate_limit_first > 0:
+            self.rate_limit_first -= 1
+            err = utils.APIError('%s rate limit (429): Too Many Requests'
+                                 % self.provider)
+            err.rate_limited = True
+            err.retry_after = self.rate_limit_retry_after
+            raise err
+        # Every real lib (libmal, libanilist, libkitsu, ...) does
+        # exactly this -- item['title'] for a log line, unconditional.
+        # A minimal {id, my_*} patch dict with no title crashes here
+        # with a bare KeyError('title'); replicate that so a caller
+        # that forgets to supply one is actually caught by the suite.
+        _ = item['title']
+        # And libanilist's _date2dict reads .year/.month/.day off date
+        # values (guarding TypeError/ValueError but NOT AttributeError,
+        # so a canonical ISO *string* escapes as "'str' object has no
+        # attribute 'year'"). Replicate that quirk too: this fake being
+        # more lenient than the real libs is exactly how the 'title'
+        # bug shipped past 91 green tests.
+        for key in ('my_start_date', 'my_finish_date'):
+            if item.get(key) is not None:
+                _ = item[key].year
+        if self.provider == 'kitsu':
+            # Both real Kitsu backends address the update by the
+            # library-entry id -- item['my_id'], read unconditionally
+            # (REST: PATCH /library-entries/<my_id>; GraphQL:
+            # str(item['my_id'])) -- and a None would go to the API as
+            # a garbage id. Require it present and real.
+            if not item['my_id']:
+                raise utils.APIError('kitsu update without a '
+                                     'library-entry id')
+        self.updates.append(dict(item))
+        self.shows.setdefault(str(item['id']), {'id': item['id']})
+        self.shows[str(item['id'])].update(item)
+
+    def add_show(self, item):
+        """Create a new library entry. Mirrors the real libs: MAL's
+        add_show returns None (media id alone addresses it); AniList
+        and both Kitsu backends return the new library-entry id."""
+        if self.fail_update:
+            raise utils.APIError('%s rejected the add' % self.provider)
+        _ = item['title']   # same unconditional read as update_show
+        showid = str(item['id'])
+        self.shows[showid] = dict(item)
+        if self.provider == 'mal':
+            return None
+        new_id = 'new-%s' % showid
+        self.shows[showid]['my_id'] = new_id
+        return new_id
+
+    def search(self, criteria, method=None):
+        return [dict(s) for s in self.shows.values()
+                if criteria.lower() in s.get('title', '').lower()]
+
+    def logout(self):
+        pass
+
+
+def show(provider, sid, title, progress=0, score=0, status=None,
+         total=12, airing=1, **extra):
+    """Provider-scale show dict in trackma shape. my_id mirrors the
+    library-entry id real fetches carry (Kitsu addresses updates by
+    it, so the fake requires it back on update)."""
+    defaults = {'mal': 'watching', 'anilist': 'CURRENT', 'kitsu': 'current'}
+    return {'id': sid, 'title': title, 'my_id': 'entry-%s' % sid,
+            'my_progress': progress,
+            'my_score': score, 'my_status': status or defaults[provider],
+            'my_rewatched_times': 0,
+            'my_start_date': None, 'my_finish_date': None,
+            'total': total, 'status': airing, **extra}
+
+
+@pytest.fixture(autouse=True)
+def _clear_uibridge_caches():
+    """uibridge caches constructed adapters and open stores (display-
+    overlay hot path); tests monkeypatch adapter_from_account and use
+    per-test database paths, so the caches must never carry anything
+    across tests."""
+    from hakubun.sync import uibridge
+
+    def clear():
+        uibridge._adapter_cache.clear()
+        for store in uibridge._store_cache.values():
+            store.close()
+        uibridge._store_cache.clear()
+
+    clear()
+    yield
+    clear()
+
+
+@pytest.fixture
+def store():
+    s = SyncStore(':memory:')
+    yield s
+    s.close()
+
+
+def make_engine(store, libs):
+    adapters = {name: ProviderAdapter(name, lib)
+                for name, lib in libs.items()}
+    return SyncEngine(store, adapters)

@@ -95,7 +95,7 @@ class libkitsu_graphql(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -117,7 +117,7 @@ class libkitsu_graphql(lib):
             'planned': 'Plan to Read'
         },
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
     }
 
     oauth_url = 'https://kitsu.app/api/oauth/token'
@@ -371,6 +371,7 @@ class libkitsu_graphql(lib):
                   rating
                   status
                   progress
+                  reconsumeCount
                   startedAt
                   finishedAt
                   updatedAt
@@ -407,6 +408,7 @@ class libkitsu_graphql(lib):
                     'my_id': entry['id'],
                     'my_progress': entry['progress'] or 0,
                     'my_score': float(rating) / 4.0 if rating else 0.0,
+                    'my_rewatched_times': entry.get('reconsumeCount') or 0,
                     'my_status': self._status_from_gql(entry['status']),
                     'my_start_date': self._iso2date(entry['startedAt']),
                     'my_finish_date': self._iso2date(entry['finishedAt']),
@@ -500,6 +502,31 @@ class libkitsu_graphql(lib):
 
         return infolist
 
+    def find_by_mal_id(self, mal_id):
+        """Exact reverse lookup: Kitsu's own media id for a given MAL
+        id, or None if Kitsu has no entry for it at all. Uses
+        lookupMapping, the same mapping data legacy Kitsu's REST fetch
+        already reads forward (media -> its MAL id, see libkitsu.py);
+        this is the other direction. Used by multisync's cross-provider
+        discovery (hakubun.sync.engine.SyncEngine._discover_cross_ids)
+        to find where a show already linked via another provider's
+        published MAL id also lives on Kitsu, even if it was never
+        independently matched by title."""
+        self.check_credentials()
+        site = ('MYANIMELIST_MANGA' if self.mediatype == 'manga'
+               else 'MYANIMELIST_ANIME')
+        query = '''
+        query ($id: ID!, $site: MappingExternalSiteEnum!) {
+          lookupMapping(externalId: $id, externalSite: $site) {
+            ... on Anime { id }
+            ... on Manga { id }
+          }
+        }'''
+        data = self._gql(query, {'id': str(mal_id), 'site': site},
+                         auth=True)
+        media = data['lookupMapping']
+        return media['id'] if media else None
+
     # -- Writing ----------------------------------------------------------
 
     def add_show(self, item):
@@ -569,10 +596,15 @@ class libkitsu_graphql(lib):
         of only syncing progress/status/rating."""
         if 'my_progress' in item:
             input_fields['progress'] = item['my_progress']
+        if 'my_rewatched_times' in item:
+            input_fields['reconsumeCount'] = item['my_rewatched_times']
         if 'my_status' in item:
             input_fields['status'] = self._status_to_gql(item['my_status'])
         if 'my_score' in item:
-            # Same 1-20 scale as the REST ratingTwenty field; 0 clears it.
+            # ratingTwenty is a 2-20 scale; Kitsu's star rating system
+            # only accepts EVEN values (half-stars). my_score is on a
+            # 0-5/0.5 grid (score_step) so my_score*4 is always even here;
+            # 0 clears it.
             input_fields['rating'] = int(item['my_score'] * 4) or None
 
     def _check_mutation_errors(self, payload, action):
