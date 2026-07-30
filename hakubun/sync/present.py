@@ -177,6 +177,14 @@ def change_line(adapters, change, primary=None):
         text = '%s %s — %s: %s' % (verb, label(change.target), name, values)
         if change.field == 'score':
             text += score_round_note(adapters, change.target, change.new)
+        if change.creates_entry:
+            # old is always None for a create (nothing existed to diff
+            # against), so the value's ORIGIN isn't inferable the way a
+            # push's old->new transition normally hints at it -- say it
+            # plainly.
+            text += ' (from %s)' % (
+                local_label(primary) if change.source == 'local'
+                else label(change.source))
         direction = 'push'
     if change.first_sync:
         text += FIRST_SYNC_NOTE

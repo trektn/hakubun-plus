@@ -126,6 +126,10 @@ def test_rebase_creates_missing_entry_on_a_connected_provider(store):
     score_create = next(c for c in creates if c.field == 'score')
     assert score_create.old is None
     assert score_create.new == 8.0   # Kitsu 4/5 stars -> canonical 8.0
+    # score defaults to the LOCAL policy: source says so, not the
+    # provider that happened to seed local (Kitsu) -- "where did this
+    # come from" must be answerable from the change alone.
+    assert score_create.source == 'local'
 
     for c in creates:
         c.selected = True
@@ -152,3 +156,15 @@ def test_rebase_add_skips_provider_without_can_add(store):
     engine.fetch()
     plan = engine.plan(mode=SyncMode.REBASE)
     assert [c for c in plan.changes if c.creates_entry] == []
+
+
+def test_rebase_create_credits_the_actual_provider_owner(store):
+    """A provider-owned field's create value is attributed to that
+    provider, not blanket-labeled 'local' -- the UI's 'from %s' note
+    (present.change_line) reads change.source directly."""
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    store.set_ownership('progress', FieldPolicy(PolicyKind.PROVIDER, 'kitsu'))
+    plan = engine.plan(mode=SyncMode.REBASE)
+    progress_create = next(c for c in plan.changes
+                           if c.creates_entry and c.field == 'progress')
+    assert progress_create.source == 'kitsu'

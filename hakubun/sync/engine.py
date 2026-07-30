@@ -583,26 +583,31 @@ class SyncEngine:
         missing = [p for p, (remote, _base) in sides.items() if not remote]
         if not missing:
             return
-        values = {}
+        values = {}   # field -> (value, source) -- source shown in the
+                      # UI so "where did this come from" is never a
+                      # guess: 'local' for a local-owned field, the
+                      # owning provider's name for a provider-owned one.
         for field, policy in ownership.items():
             if policy.kind is PolicyKind.LOCAL:
                 val = local.get(field, (None, 0))[0]
+                source = 'local'
             elif policy.kind is PolicyKind.PROVIDER:
                 remote, _base = sides.get(policy.provider, ({}, {}))
                 val = remote.get(field, (None, 0))[0]
+                source = policy.provider
             else:
                 continue
             if val not in (None, '', []):
-                values[field] = val
+                values[field] = (val, source)
         if not values:
             return
         for provider in missing:
             if not self.adapters[provider].mediainfo.get('can_add', True):
                 continue
-            for field, val in values.items():
+            for field, (val, source) in values.items():
                 plan.changes.append(FieldChange(
                     uid, field, None, val, target=provider,
-                    source='local', title=title,
+                    source=source, title=title,
                     selected=False, creates_entry=True))
 
     def _plan_rebase(self, plan, uid, title, field, policy, l_val,
