@@ -260,7 +260,7 @@ def test_both_front_ends_describe_a_plan_identically(store):
 
     direction, text = present.change_line(engine.adapters, change, 'mal')
     assert direction == 'push'
-    assert text.startswith('Push to Anilist — Score:')
+    assert text.startswith('Push to Anilist, Score:')
     assert present.FIRST_SYNC_NOTE in text      # says why it is unticked
     assert present.local_label('mal') == 'Mal'
     assert present.local_label(None) == 'Local'

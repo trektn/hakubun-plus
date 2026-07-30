@@ -115,16 +115,16 @@ survive), and entities **accumulate aliases** — every title any
 provider reports, merged on every fetch and link — so an entity created
 with a native title still matches a romaji entry via the shared alias.
 
-Identity conflict workflow (per unresolved entry — UI mock is the spec):
+Identity conflict workflow (per unresolved entry; UI mock is the spec):
 
 ```
 Kitsu: Ghost in the Shell (2026)
 Possible matches: MAL ID 12345, AniList ID 67890
 
-( ) Keep Kitsu-only        — do not sync this entry elsewhere
-( ) Search manually        — find the MAL/AniList entry by search
-( ) Create mappings later  — keep watching for new matches (defer)
-( ) Ignore this title      — never ask again
+( ) Keep Kitsu-only:        do not sync this entry elsewhere
+( ) Search manually:        find the MAL/AniList entry by search
+( ) Create mappings later:  keep watching for new matches (defer)
+( ) Ignore this title:      never ask again
 ```
 
 Confirming a candidate stores the mapping permanently

@@ -71,7 +71,7 @@ def local_label(primary):
 def fmt_value(field, value):
     """A canonical value as the user should read it."""
     if value is None or value == []:
-        return '—'
+        return '-'
     if isinstance(value, list):
         return ', '.join(map(str, value))
     if isinstance(value, bool):
@@ -134,26 +134,21 @@ def score_round_note(adapters, target, canonical):
 # Appended to a change's text when it would overwrite a side we have no
 # shared history with (FieldChange.first_sync). Such rows are planned
 # unchecked; this says why, so an unticked box doesn't read as a glitch.
-FIRST_SYNC_NOTE = ('   — first sync: no shared history with this '
-                   'tracker, tick to overwrite it')
+FIRST_SYNC_NOTE = (' (first sync: no shared history with this tracker; '
+                   'tick to overwrite it)')
 
 FIRST_SYNC_HELP = (
-    'Some changes are unticked: this is the first sync for those fields, '
-    'so there is no shared history to say which side is newer — the value '
-    'that would win is just whichever tracker was read first. Review and '
-    'tick the ones you actually want, or use Rebase/Mirror to declare a '
-    'winner deliberately.')
-
-# Appended to a change's text when it creates a NEW library entry on the
-# target provider (FieldChange.creates_entry) instead of updating one
-# that's already there -- Rebase only, see SyncEngine._plan_rebase_add.
-CREATES_ENTRY_NOTE = ('   — adds this show to %s (no entry there yet), '
-                      'tick to create it')
+    'Some changes are unticked because this is the first sync for those '
+    'fields: with no shared history, there is no way to tell which side '
+    'is newer, so the value that would win is just whichever tracker '
+    'happened to be read first. Review them and tick the ones you '
+    'actually want, or use Rebase or Mirror to declare a winner '
+    'deliberately.')
 
 CREATES_ENTRY_HELP = (
-    'Some changes are unticked: they would ADD this show to a tracker '
-    'that doesn\'t have it yet, not just update an existing entry. '
-    'Review and tick the ones you actually want.')
+    'Some changes are unticked because they would add this show to a '
+    'tracker that does not have it yet, not just update an existing '
+    'entry. Review them and tick the ones you actually want.')
 
 
 def change_line(adapters, change, primary=None):
@@ -165,7 +160,7 @@ def change_line(adapters, change, primary=None):
                               fmt_value(change.field, change.new))
         source = (local_label(primary) if change.source == 'local'
                   else label(change.source))
-        text = 'Pull from %s — %s: %s' % (source, name, values)
+        text = 'Pull from %s, %s: %s' % (source, name, values)
         direction = 'pull'
     else:
         values = '%s → %s' % (
@@ -174,22 +169,20 @@ def change_line(adapters, change, primary=None):
             fmt_target_value(adapters, change.field, change.new,
                              change.target))
         verb = 'Add to' if change.creates_entry else 'Push to'
-        text = '%s %s — %s: %s' % (verb, label(change.target), name, values)
+        text = '%s %s, %s: %s' % (verb, label(change.target), name, values)
         if change.field == 'score':
             text += score_round_note(adapters, change.target, change.new)
         if change.creates_entry:
             # old is always None for a create (nothing existed to diff
             # against), so the value's ORIGIN isn't inferable the way a
             # push's old->new transition normally hints at it -- say it
-            # plainly.
-            text += ' (from %s)' % (
-                local_label(primary) if change.source == 'local'
-                else label(change.source))
+            # plainly, in the same parenthetical that invites the tick.
+            source_label = (local_label(primary) if change.source == 'local'
+                            else label(change.source))
+            text += ' (from %s; tick to create the entry)' % source_label
         direction = 'push'
     if change.first_sync:
         text += FIRST_SYNC_NOTE
-    if change.creates_entry:
-        text += CREATES_ENTRY_NOTE % label(change.target)
     return direction, text
 
 
@@ -203,7 +196,7 @@ def conflict_why(conflict, primary=None):
         + ['%s (%s)' % (label(s), fmt_value(conflict.field,
                                             conflict.values[s]))
            for s in others])
-    why = ('%s changed in more than one place since the last sync — %s — '
+    why = ('%s changed in more than one place since the last sync (%s), '
            'so syncing either way would overwrite someone. ' % (name, sides))
     kind = conflict.policy.kind
     if kind is PolicyKind.ASK:
@@ -235,27 +228,25 @@ def mode_context(mode, primary=None):
     naming the signed-in account (mirror without that context is a
     footgun). Uses <b>/<i> markup, which both Qt rich text and Pango
     render."""
-    signed = (' You are signed into <b>%s</b>; changes made in the app '
-              'count as local.' % label(primary) if primary else '')
+    signed = (' You are signed into <b>%s</b>; changes you make in the '
+              'app count as local.' % label(primary) if primary else '')
     if mode is SyncMode.MIRROR:
-        return ('<b>Mirror:</b> pushes local state%s over every provider '
-                '— remote-only changes will be overwritten.'
-                % (' (as fed by <b>%s</b>, your signed-in account)'
-                   % label(primary) if primary else ''))
+        return ('<b>Mirror:</b> pushes local state out to every provider. '
+                'Remote-only changes are overwritten.%s' % signed)
     if mode is SyncMode.PULL:
         return ('<b>Pull:</b> providers update local state; nothing is '
                 'pushed.%s' % signed)
     if mode is SyncMode.REBASE:
-        return ('<b>Rebase:</b> forces each field\'s owner (from the '
-                'Ownership tab) onto local <i>and</i> every other '
-                'tracker, retroactively — the value the owner holds now '
-                'overwrites everyone, even for entries that already look '
-                'in sync. Use it right after changing who owns a field. '
-                'Fields set to Merge/Ask/Individual have no single owner '
-                'and are left alone. It also ADDS the show to any '
-                'connected tracker that doesn\'t have it yet, using the '
-                'owned fields\' current values — those additions are '
-                'planned unticked, opt in per show.')
+        return ('<b>Rebase:</b> forces each field\'s declared owner (set '
+                'in the Ownership tab) onto local <i>and</i> every other '
+                'tracker, even for entries that already look in sync. Use '
+                'it right after changing who owns a field, to make that '
+                'change take effect immediately. Fields set to Merge, '
+                'Ask, or Individual have no single owner and are left '
+                'alone. Rebase also adds the show to any connected '
+                'tracker that does not have it yet, using the owned '
+                "fields' current values; those additions are planned "
+                'unticked, so you opt in per show.')
     return ('<b>Merge:</b> reconciles every provider into local state, '
             'then pushes the result.%s' % signed)
 
