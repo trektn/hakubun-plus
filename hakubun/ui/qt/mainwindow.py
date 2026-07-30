@@ -40,6 +40,12 @@ from hakubun.ui.qt.util import FilterBar, getIcon
 from hakubun.ui.qt.widgets import HoverProgressBar, PlaybackBar, ScoreSlider, ShowsTableView
 from hakubun.ui.qt.workers import EngineWorker, ImageWorker
 
+# Not a real version bump -- just a build identifier for this working
+# branch, so it's obvious at a glance (in About) whether you're running
+# this in-progress Taiga-mode revamp or an actual release build.
+DEV_BUILD_ID = 'retaiga'
+
+
 class MainWindow(QMainWindow):
     """
     Main GUI class
@@ -1692,7 +1698,8 @@ class MainWindow(QMainWindow):
         # QIcon set on QApplication near the top of __init__) -- About
         # gets the fuller "Hakubun+" wordmark instead, since it has the
         # room to show it.
-        QMessageBox.about(self, 'About %s %s' % (self.app_name, utils.VERSION),
+        version = '%s-%s' % (utils.VERSION, DEV_BUILD_ID)
+        QMessageBox.about(self, 'About %s %s' % (self.app_name, version),
                           ('<p align="center"><img src="%s" width="128" height="128"></p>'
                           '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
                           '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
@@ -1702,7 +1709,7 @@ class MainWindow(QMainWindow):
                           'both licensed under the Mozilla Public License 2.0.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
-                              utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
+                              utils.DATADIR + '/about_logo.png', self.app_name, version))
 
     def s_about_qt(self):
         QMessageBox.aboutQt(self, 'About Qt')
