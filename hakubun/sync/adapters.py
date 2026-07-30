@@ -185,6 +185,22 @@ class ProviderAdapter:
         return [normalize.normalize_show(self.name, show, self.mediainfo)
                 for show in results]
 
+    def supports_mal_id_lookup(self):
+        return hasattr(self.lib, 'find_by_mal_id')
+
+    def resolve_by_mal_id(self, mal_id, cancel=None):
+        """Exact reverse lookup (SyncEngine._discover_cross_ids): does
+        THIS provider have an entry for a MAL id already known from
+        elsewhere? Returns the provider's own media id (str), or None
+        when the provider genuinely doesn't have it -- distinct from
+        `supports_mal_id_lookup()` being False, which means "can't even
+        ask". Paced/rate-limited like push()/add(); a real failure
+        (auth, network, rate limit) raises AdapterError, same as those."""
+        if not self.supports_mal_id_lookup():
+            return None
+        found = self._send(self.lib.find_by_mal_id, mal_id, cancel, None)
+        return str(found) if found is not None else None
+
     # -- outbound ------------------------------------------------------
 
     def _sleep(self, seconds, cancel):
