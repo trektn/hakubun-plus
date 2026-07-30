@@ -30,7 +30,6 @@ from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
 from hakubun.sync import present
-from hakubun.sync.models import SyncMode
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
@@ -1992,15 +1991,15 @@ class MainWindow(QMainWindow):
                         '(see the sync window).')
             return
 
-        mode = present.SETTINGS_MODES.get(
-            self.config['multisync_mode'], SyncMode.MERGE)
+        (mode, plan_only) = present.settings_sync_mode(self.config)
         idx = win.mode_combo.findData(mode)
         if idx >= 0:
             win.mode_combo.setCurrentIndex(idx)
 
         # No self._busy(): the main window stays usable while the sync
         # runs on the window's worker thread.
-        self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
+        self.status('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._r_multisync_planned(
                      win, plan, error),
@@ -2039,6 +2038,21 @@ class MainWindow(QMainWindow):
             self.status('Multi-sync needs your decision on %d '
                        'conflict(s).' % len(plan.conflicts))
             return
+        (_mode, plan_only) = present.settings_sync_mode(self.config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            self._surface_syncwindow(win)
+            if not plan.changes:
+                self.status('Multi-sync: already in sync.')
+            else:
+                self.status('Multi-sync: %d change(s) planned -- review '
+                            'and apply from the sync window.'
+                            % len(plan.changes))
+            return
         if not plan.changes:
             self.status('Multi-sync: already in sync.')
             return
@@ -2052,13 +2066,6 @@ class MainWindow(QMainWindow):
             self.status('Multi-sync: first sync for some fields -- '
                         'review what would be overwritten before '
                         'applying.')
-            return
-        if self.config['multisync_mode'] == present.SETTINGS_PLAN_ONLY:
-            # Beta-safe default: never apply on the user's behalf, no
-            # matter how clean the plan -- just show what would happen.
-            self._surface_syncwindow(win)
-            self.status('Multi-sync: %d change(s) planned -- review and '
-                        'apply from the sync window.' % len(plan.changes))
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

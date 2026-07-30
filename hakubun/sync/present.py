@@ -38,15 +38,29 @@ MODES = ((SyncMode.MERGE, 'Merge (reconcile all)'),
 SETTINGS_MODES = {'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
                   'push': SyncMode.MIRROR}
 
-# A fourth Settings-page choice, deliberately NOT a SyncMode: fetch+plan
-# still runs (under Merge, the most conservative reconciliation), but
-# the Sync button/action always surfaces the window for manual review
-# and never calls s_apply() on the user's behalf -- unlike Merge/Pull/
-# Push, which auto-apply clean (non-conflicting, non-first-sync)
-# changes headlessly. Multisync is beta; this is the safe posture for
-# anyone who hasn't audited what those three actually do to their real
-# accounts yet, hence the default (see utils.config_defaults).
+# Legacy multisync_mode value, kept only so existing configs keep
+# working. It used to be a fourth entry in Settings' Mode dropdown,
+# which forced a choice between reviewing changes and choosing a
+# reconciliation -- you could have Merge, or you could have review, but
+# not "review my pulls". Reviewing is orthogonal to which mode runs, so
+# it is now its own checkbox (multisync_plan_only) and this value reads
+# back as merge + review, which is exactly what it always did.
 SETTINGS_PLAN_ONLY = 'plan_only'
+
+
+def settings_sync_mode(config):
+    """Settings' multi-sync configuration as (SyncMode, plan_only).
+
+    plan_only means: fetch and plan as normal, then always surface the
+    sync window for manual review and never call s_apply() on the user's
+    behalf -- unlike the auto-applying path, which pushes clean
+    (non-conflicting, non-first-sync) changes headlessly.
+    """
+    mode_key = config.get('multisync_mode') or 'merge'
+    if mode_key == SETTINGS_PLAN_ONLY:
+        return (SyncMode.MERGE, True)
+    return (SETTINGS_MODES.get(mode_key, SyncMode.MERGE),
+            bool(config.get('multisync_plan_only', True)))
 
 
 def field_label(field):

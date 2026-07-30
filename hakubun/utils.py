@@ -847,10 +847,16 @@ gtk_defaults = {
     # overlay, owner-system score editing and the Sync button's
     # headless multi-sync all gate on these.
     'multisync_enabled': True,
-    # 'plan_only' (never auto-apply, always surface the plan for
-    # review) is the safe default while multisync is beta -- see
-    # sync.present.SETTINGS_PLAN_ONLY.
-    'multisync_mode': 'plan_only',
+    # Which reconciliation the Sync button performs: 'merge', 'pull' or
+    # 'push' (see sync.present.SETTINGS_MODES). The legacy value
+    # 'plan_only' is still understood on read and means merge +
+    # multisync_plan_only -- see sync.present.settings_sync_mode.
+    'multisync_mode': 'merge',
+    # Never auto-apply: always fetch, plan, and surface the sync window
+    # for review, whatever the mode above says. On by default while
+    # multisync is beta -- the safe posture for anyone who hasn't
+    # audited what merge/pull/push do to their real accounts yet.
+    'multisync_plan_only': True,
     # When on (and multisync is enabled), the sidebar score editor can
     # edit an owned entry's score in its OWNER's rating system, toggled
     # live via the Synced/Platform switch by the slider. Off keeps the
@@ -891,10 +897,9 @@ qt_defaults = {
     'filter_bar_position': 2,
     'filter_global': False,
     'multisync_enabled': True,
-    # 'plan_only' (never auto-apply, always surface the plan for
-    # review) is the safe default while multisync is beta -- see
-    # sync.present.SETTINGS_PLAN_ONLY.
-    'multisync_mode': 'plan_only',
+    # Same keys/semantics as config_defaults above.
+    'multisync_mode': 'merge',
+    'multisync_plan_only': True,
     'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#D2FAFA',
