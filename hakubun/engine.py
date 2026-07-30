@@ -100,6 +100,11 @@ class Engine:
     ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co'
     AIRING_SCHEDULE_BATCH = 50
 
+    # How long a cached next-airing answer stays good. An episode airs
+    # once a week, so an hour is nowhere near stale enough to mislead,
+    # and it keeps repeated details opens off the network.
+    NEXT_AIRING_CACHE_SECONDS = 3600
+
     def __init__(self, account=None, message_handler=None, accountnum=None):
         self.msg = messenger.Messenger(message_handler, self.name)
 
@@ -109,6 +114,14 @@ class Engine:
         # somewhere more durable than a status-bar message that's about
         # to be overwritten by "Ready.".
         self.parser_fallback_warning = None
+
+        # mal id -> (fetched_at, episode, aware UTC airing time), or
+        # (fetched_at, None, None) for a show AniList has no schedule
+        # for. Shared by get_airing_schedule and the per-show lookup the
+        # details view does, so opening details for a show right after
+        # viewing the schedule costs nothing -- and so a "no schedule"
+        # answer isn't re-asked on every single open.
+        self._next_airing_cache = {}
 
         # Utility parameter to get the account from the account manager
         if accountnum:
@@ -644,11 +657,111 @@ class Engine:
             except Exception as e:
                 self.msg.debug("Couldn't fetch MAL score for details: %s" % e)
 
+        # Everything below is appended to 'extra', which both UIs (and
+        # the CLI) render generically as label/value rows -- so a row
+        # added here shows up in all of them without UI-side work.
+        rows = []
+
         if show.get('mal_score'):
+            rows.append(('MAL Score', show['mal_score']))
+
+        # Phrased as a full sentence-fragment label because the value is
+        # a duration, not a fact about the show: "Next episode will air
+        # in: 3 days (Sat Aug 02, 2026)".
+        try:
+            next_airing = self.get_next_airing(show)
+        except Exception as e:
+            self.msg.debug("Couldn't resolve next airing for details: %s" % e)
+            next_airing = None
+        if next_airing:
+            (episode, airing_at) = next_airing
+            when = utils.format_next_airing(airing_at)
+            if when:
+                rows.append(('Next episode will air in', when))
+                if episode:
+                    rows.append(('Next episode', str(episode)))
+
+        # A manually pinned folder (set_show_folder) is otherwise
+        # invisible once set -- nothing in the list marks a show as
+        # pinned, so the details view is where you find out.
+        folder = self.get_show_folder(show['id'])
+        if folder:
+            rows.append(('Folder', folder))
+
+        if rows:
             details = dict(details)
-            details['extra'] = list(details.get('extra') or []) + \
-                [('MAL Score', show['mal_score'])]
+            details['extra'] = list(details.get('extra') or []) + rows
         return details
+
+    def _mal_id_of(self, show):
+        """The show's MAL id, which is what AniList's public API is
+        queried by.
+
+        'mal_id' is only ever populated by the MAL-score cross-reference
+        feature (see fetch_mal_scores), which exists for accounts on a
+        *different* backend -- it's never set for an actual MAL account,
+        since there was never anything to cross-reference against. For
+        MAL accounts, 'id' already *is* the MAL id, so use that instead
+        of treating every show as unresolvable.
+        """
+        if self.api_info.get('shortname') == 'mal':
+            return show.get('id')
+        return show.get('mal_id')
+
+    def _cache_next_airing(self, mal_id, episode, airing_at):
+        self._next_airing_cache[mal_id] = (
+            time.time(), episode, airing_at)
+
+    def get_next_airing(self, show):
+        """When **show**'s next episode airs, as (episode, aware UTC
+        datetime), or None if it isn't airing / nothing knows.
+
+        Three sources, cheapest first: the show dict itself (AniList
+        accounts get 'next_ep_time' with the list, for free), this
+        session's cache (populated by get_airing_schedule and by earlier
+        calls here), and finally a single-show query against AniList's
+        public API by MAL id -- the same cross-reference the airing
+        schedule uses, so it works on every backend.
+        """
+        if show.get('status') != utils.Status.AIRING:
+            return None
+
+        if show.get('next_ep_time'):
+            return (show.get('next_ep_number'),
+                    utils.as_utc(show['next_ep_time']))
+
+        mal_id = self._mal_id_of(show)
+        if not mal_id:
+            return None
+
+        cached = self._next_airing_cache.get(mal_id)
+        if cached and time.time() - cached[0] < self.NEXT_AIRING_CACHE_SECONDS:
+            return (cached[1], cached[2]) if cached[2] else None
+
+        query = '''
+        query ($id: Int) {
+          Media(idMal: $id, type: ANIME) {
+            nextAiringEpisode { airingAt episode }
+          }
+        }'''
+        try:
+            data = self._anilist_public_query(query, {'id': mal_id})
+        except utils.HakubunError as e:
+            # A details view is not worth failing over a schedule
+            # lookup; the row is simply omitted.
+            self.msg.debug("Couldn't fetch airing time for details: %s" % e)
+            return None
+
+        media = (data.get('data') or {}).get('Media') or {}
+        next_ep = media.get('nextAiringEpisode')
+        if not next_ep:
+            self._cache_next_airing(mal_id, None, None)
+            return None
+
+        airing_at = datetime.datetime.fromtimestamp(
+            next_ep['airingAt'], tz=datetime.timezone.utc)
+        self._cache_next_airing(mal_id, next_ep['episode'], airing_at)
+        return (next_ep['episode'], airing_at)
 
     def get_airing_schedule(self):
         """
@@ -660,17 +773,7 @@ class Engine:
         without a resolvable mal_id, or that AniList doesn't have a
         schedule for, are silently skipped.
         """
-        # 'mal_id' is only ever populated by the MAL-score cross-reference
-        # feature (see fetch_mal_scores), which exists for accounts on a
-        # *different* backend -- it's never set for an actual MAL account,
-        # since there was never anything to cross-reference against. For
-        # MAL accounts, 'id' already *is* the MAL id, so use that instead
-        # of leaving every show filtered out below.
-        is_mal_account = self.api_info.get('shortname') == 'mal'
-
-        def mal_id_of(show):
-            return show['id'] if is_mal_account else show.get('mal_id')
-
+        mal_id_of = self._mal_id_of
         shows = [s for s in self.data_handler.get().values()
                 if mal_id_of(s) and s.get('status') == utils.Status.AIRING]
         if not shows:
@@ -712,15 +815,21 @@ class Engine:
             for media in page.get('media') or []:
                 next_ep = media.get('nextAiringEpisode')
                 if not next_ep:
+                    # Remember the negative answer too, so the details
+                    # view doesn't go ask again one show at a time.
+                    self._cache_next_airing(media['idMal'], None, None)
                     continue
                 show = by_mal_id.get(media['idMal'])
                 if not show:
                     continue
+                airing_at = datetime.datetime.fromtimestamp(
+                    next_ep['airingAt'], tz=datetime.timezone.utc)
+                self._cache_next_airing(
+                    media['idMal'], next_ep['episode'], airing_at)
                 schedule.append({
                     'show': show,
                     'episode': next_ep['episode'],
-                    'airing_at': datetime.datetime.fromtimestamp(
-                        next_ep['airingAt'], tz=datetime.timezone.utc),
+                    'airing_at': airing_at,
                 })
 
         schedule.sort(key=lambda entry: entry['airing_at'])

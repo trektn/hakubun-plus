@@ -30,7 +30,6 @@ from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
 from hakubun.sync import present
-from hakubun.sync.models import SyncMode
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
@@ -652,6 +651,20 @@ class MainWindow(QMainWindow):
             view_mode_hbox.addWidget(self.action_view_anime_list)
             left_box.addRow(view_mode_hbox)
 
+            # In Taiga mode the show list has no sidebar to hang this
+            # off, and the right-click Set/Clear folder actions give no
+            # feedback about what's currently pinned -- so the Edit tab
+            # is the one place a pinned folder is visible next to the
+            # controls that change it.
+            self.taiga_folder_label = QLabel()
+            self.taiga_folder_label.setWordWrap(True)
+            self.taiga_folder_label.setTextFormat(
+                QtCore.Qt.TextFormat.PlainText)
+            self.taiga_folder_label.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.taiga_folder_label.setStyleSheet(
+                'color: palette(placeholder-text);')
+
             edit_form = QFormLayout()
             edit_form.addRow(show_progress_label)
             edit_form.addRow(self.show_progress, self.show_progress_btn)
@@ -660,6 +673,7 @@ class MainWindow(QMainWindow):
             edit_form.addRow(self.show_score_system)
             edit_form.addRow(self.show_status)
             edit_form.addRow(self.show_tags_btn)
+            edit_form.addRow('Folder:', self.taiga_folder_label)
             self.taiga_edit_widget = QWidget()
             self.taiga_edit_widget.setLayout(edit_form)
         else:
@@ -1250,6 +1264,7 @@ class MainWindow(QMainWindow):
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
             self._enable_show_widgets(False)
+            self._update_folder_label()
 
             return
 
@@ -1314,6 +1329,7 @@ class MainWindow(QMainWindow):
 
         # Make it global
         self.selected_show_id = show['id']
+        self._update_folder_label()
 
         # Unblock signals
         self.show_status.blockSignals(False)
@@ -1783,6 +1799,10 @@ class MainWindow(QMainWindow):
             self, 'Select folder', current or os.path.expanduser('~'))
         if not folder:
             return
+        # No _update_folder_label() here: set_show_folder runs on the
+        # worker thread, so the pin may not be written yet. The Edit tab
+        # only exists inside the details dialog, and s_show_details
+        # refreshes the row on the way in -- which is always after this.
         self.worker_call('set_show_folder', self.r_library_scanned,
                          self.selected_show_id, folder)
 
@@ -1790,6 +1810,7 @@ class MainWindow(QMainWindow):
         if not self.selected_show_id:
             return
         self.worker.engine.unset_show_folder(self.selected_show_id)
+        self._update_folder_label()
         self.status('Folder cleared.')
 
     def _update_folder_actions(self):
@@ -1798,6 +1819,20 @@ class MainWindow(QMainWindow):
         self.action_clear_folder.setEnabled(has_folder)
         self.action_set_folder.setText(
             'Change folder...' if has_folder else 'Set folder...')
+
+    def _update_folder_label(self):
+        """Keep the Taiga Edit tab's Folder row in step with the pin.
+        Only exists in Taiga mode -- everywhere else the folder shows up
+        in the details view alone (see engine.get_show_details)."""
+        # getattr: _select_show can fire before the Taiga branch of the
+        # sidebar build has created this label.
+        label = getattr(self, 'taiga_folder_label', None)
+        if label is None:
+            return
+        folder = self.worker.engine.get_show_folder(self.selected_show_id) \
+            if self.selected_show_id else None
+        label.setText(folder or 'Not set')
+        label.setToolTip(folder or '')
 
     def s_retrieve(self, result=None):
         # `result` present because this is also used as a worker_call
@@ -1846,6 +1881,7 @@ class MainWindow(QMainWindow):
 
         show = self.worker.engine.get_show_info(self.selected_show_id)
 
+        self._update_folder_label()
         edit_widget = self.taiga_edit_widget if self._taiga_mode else None
         self.detailswindow = DetailsDialog(
             None, self.worker, show, edit_widget=edit_widget)
@@ -1955,15 +1991,15 @@ class MainWindow(QMainWindow):
                         '(see the sync window).')
             return
 
-        mode = present.SETTINGS_MODES.get(
-            self.config['multisync_mode'], SyncMode.MERGE)
+        (mode, plan_only) = present.settings_sync_mode(self.config)
         idx = win.mode_combo.findData(mode)
         if idx >= 0:
             win.mode_combo.setCurrentIndex(idx)
 
         # No self._busy(): the main window stays usable while the sync
         # runs on the window's worker thread.
-        self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
+        self.status('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._r_multisync_planned(
                      win, plan, error),
@@ -2002,6 +2038,21 @@ class MainWindow(QMainWindow):
             self.status('Multi-sync needs your decision on %d '
                        'conflict(s).' % len(plan.conflicts))
             return
+        (_mode, plan_only) = present.settings_sync_mode(self.config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            self._surface_syncwindow(win)
+            if not plan.changes:
+                self.status('Multi-sync: already in sync.')
+            else:
+                self.status('Multi-sync: %d change(s) planned -- review '
+                            'and apply from the sync window.'
+                            % len(plan.changes))
+            return
         if not plan.changes:
             self.status('Multi-sync: already in sync.')
             return
@@ -2015,13 +2066,6 @@ class MainWindow(QMainWindow):
             self.status('Multi-sync: first sync for some fields -- '
                         'review what would be overwritten before '
                         'applying.')
-            return
-        if self.config['multisync_mode'] == present.SETTINGS_PLAN_ONLY:
-            # Beta-safe default: never apply on the user's behalf, no
-            # matter how clean the plan -- just show what would happen.
-            self._surface_syncwindow(win)
-            self.status('Multi-sync: %d change(s) planned -- review and '
-                        'apply from the sync window.' % len(plan.changes))
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

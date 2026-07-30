@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorD
                              QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.sync import present
 from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.themedcolorpicker import ThemedColorPicker
 from hakubun.ui.qt.util import FilterBar, getColor, getIcon
@@ -442,14 +443,21 @@ class SettingsDialog(QDialog):
             'Turn this off to fall back to the classic single-account '
             'sync.')
         self.multisync_mode = QComboBox()
-        self.multisync_mode.addItem(
-            'Fetch & Plan only (review before applying)', 'plan_only')
         self.multisync_mode.addItem('Merge (reconcile every provider)',
                                     'merge')
         self.multisync_mode.addItem('Pull (providers update local)',
                                     'pull')
         self.multisync_mode.addItem('Push (local overwrites providers)',
                                     'push')
+        self.multisync_plan_only = QCheckBox(
+            'Fetch && plan only (review before applying)')
+        self.multisync_plan_only.setToolTip(
+            'Sync fetches every provider and works out what would '
+            'change in the mode above, then always opens the sync '
+            'window so you can review and apply it yourself. Turn this '
+            'off to let Sync apply clean changes headlessly -- '
+            'conflicts and first-time syncs still always stop for '
+            'review either way.')
         self.multisync_edit_owned_score = QCheckBox(
             'Edit owned scores in the owner\'s rating system')
         self.multisync_edit_owned_score.setToolTip(
@@ -461,12 +469,15 @@ class SettingsDialog(QDialog):
         self.multisync_enabled.toggled.connect(
             self.multisync_mode.setEnabled)
         self.multisync_enabled.toggled.connect(
+            self.multisync_plan_only.setEnabled)
+        self.multisync_enabled.toggled.connect(
             self.multisync_edit_owned_score.setEnabled)
         g_sync_layout = QVBoxLayout()
         g_sync_layout.addWidget(self.multisync_enabled)
         mode_row = QFormLayout()
         mode_row.addRow('Mode:', self.multisync_mode)
         g_sync_layout.addLayout(mode_row)
+        g_sync_layout.addWidget(self.multisync_plan_only)
         g_sync_layout.addWidget(self.multisync_edit_owned_score)
         g_sync.setLayout(g_sync_layout)
 
@@ -805,10 +816,16 @@ class SettingsDialog(QDialog):
         self.inline_edit.setChecked(self.config['inline_edit'])
         self.filter_global.setChecked(self.config['filter_global'])
         self.multisync_enabled.setChecked(self.config['multisync_enabled'])
+        # A config still on the retired 'plan_only' mode resolves to
+        # merge + the review checkbox, which is what it always meant.
+        (mode, plan_only) = present.settings_sync_mode(self.config)
+        mode_key = next((k for k, v in present.SETTINGS_MODES.items()
+                         if v == mode), 'merge')
         self.multisync_mode.setCurrentIndex(
-            max(0, self.multisync_mode.findData(
-                self.config['multisync_mode'])))
+            max(0, self.multisync_mode.findData(mode_key)))
         self.multisync_mode.setEnabled(self.config['multisync_enabled'])
+        self.multisync_plan_only.setChecked(plan_only)
+        self.multisync_plan_only.setEnabled(self.config['multisync_enabled'])
         self.multisync_edit_owned_score.setChecked(
             self.config['multisync_edit_owned_score'])
         self.multisync_edit_owned_score.setEnabled(
@@ -948,6 +965,8 @@ class SettingsDialog(QDialog):
         self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
         self.config['multisync_mode'] = self.multisync_mode.itemData(
             self.multisync_mode.currentIndex())
+        self.config['multisync_plan_only'] = \
+            self.multisync_plan_only.isChecked()
         self.config['multisync_edit_owned_score'] = \
             self.multisync_edit_owned_score.isChecked()
 
