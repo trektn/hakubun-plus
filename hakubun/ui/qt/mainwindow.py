@@ -1977,6 +1977,13 @@ class MainWindow(QMainWindow):
                         'review what would be overwritten before '
                         'applying.')
             return
+        if self.config['multisync_mode'] == present.SETTINGS_PLAN_ONLY:
+            # Beta-safe default: never apply on the user's behalf, no
+            # matter how clean the plan -- just show what would happen.
+            self._surface_syncwindow(win)
+            self.status('Multi-sync: %d change(s) planned -- review and '
+                        'apply from the sync window.' % len(plan.changes))
+            return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.
         self._surface_syncwindow(win)

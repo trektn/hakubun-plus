@@ -442,6 +442,8 @@ class SettingsDialog(QDialog):
             'Turn this off to fall back to the classic single-account '
             'sync.')
         self.multisync_mode = QComboBox()
+        self.multisync_mode.addItem(
+            'Fetch & Plan only (review before applying)', 'plan_only')
         self.multisync_mode.addItem('Merge (reconcile every provider)',
                                     'merge')
         self.multisync_mode.addItem('Pull (providers update local)',

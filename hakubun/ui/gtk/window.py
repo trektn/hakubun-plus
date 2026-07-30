@@ -484,6 +484,15 @@ class HakubunWindow(Gtk.ApplicationWindow):
                 'Multi-sync: first sync for some fields -- review what '
                 'would be overwritten before applying.')
             return
+        from hakubun.sync import present
+        if self._config.get('multisync_mode') == present.SETTINGS_PLAN_ONLY:
+            # Beta-safe default: never apply on the user's behalf, no
+            # matter how clean the plan -- just show what would happen.
+            win.present()
+            self._main_view.set_status_idle(
+                'Multi-sync: %d change(s) planned -- review and apply '
+                'from the sync window.' % len(plan.changes))
+            return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.
         win.present()

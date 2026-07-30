@@ -307,7 +307,7 @@ class SettingsWindow(Gtk.Window):
             self.config['multisync_enabled'])
         if not self.combo_multisync_mode.set_active_id(
                 self.config['multisync_mode']):
-            self.combo_multisync_mode.set_active_id('merge')
+            self.combo_multisync_mode.set_active_id('plan_only')
         self.combo_multisync_mode.set_sensitive(
             self.config['multisync_enabled'])
         self.checkbox_multisync_edit_owned_score.set_active(
@@ -631,7 +631,7 @@ class SettingsWindow(Gtk.Window):
         self.config['multisync_enabled'] = \
             self.checkbox_multisync_enabled.get_active()
         self.config['multisync_mode'] = \
-            self.combo_multisync_mode.get_active_id() or 'merge'
+            self.combo_multisync_mode.get_active_id() or 'plan_only'
         self.config['multisync_edit_owned_score'] = \
             self.checkbox_multisync_edit_owned_score.get_active()
 

@@ -38,6 +38,16 @@ MODES = ((SyncMode.MERGE, 'Merge (reconcile all)'),
 SETTINGS_MODES = {'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
                   'push': SyncMode.MIRROR}
 
+# A fourth Settings-page choice, deliberately NOT a SyncMode: fetch+plan
+# still runs (under Merge, the most conservative reconciliation), but
+# the Sync button/action always surfaces the window for manual review
+# and never calls s_apply() on the user's behalf -- unlike Merge/Pull/
+# Push, which auto-apply clean (non-conflicting, non-first-sync)
+# changes headlessly. Multisync is beta; this is the safe posture for
+# anyone who hasn't audited what those three actually do to their real
+# accounts yet, hence the default (see utils.config_defaults).
+SETTINGS_PLAN_ONLY = 'plan_only'
+
 
 def field_label(field):
     return FIELD_LABELS.get(field, field)
