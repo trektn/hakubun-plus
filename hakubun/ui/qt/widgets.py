@@ -333,6 +333,13 @@ class AddCardView(QListView):
     def getModel(self):
         return self.model().sourceModel()
 
+    def set_mylist(self, mylist):
+        """See AddListDelegate.set_mylist -- refreshes in-list tinting
+        for a view that outlives a single search (Taiga mode's Seasons
+        page), instead of the one-shot snapshot a modal takes."""
+        self.itemDelegate().set_mylist(mylist)
+        self.viewport().update()
+
 
 class AddTableDetailsView(QSplitter):
     """ This is a splitter widget that contains a table and

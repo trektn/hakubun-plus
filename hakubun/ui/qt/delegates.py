@@ -34,6 +34,13 @@ class AddListDelegate(QStyledItemDelegate):
 
         super().__init__(parent)
 
+    def set_mylist(self, mylist):
+        """Refresh the "already in my list" highlighting. AddDialog is a
+        modal that only ever needs one snapshot, but a persistent page
+        (e.g. Taiga mode's Seasons page) outlives adds/status changes
+        and needs to keep this current."""
+        self.mylist = mylist or {}
+
     def _get_extra(self, extra, key):
         for k, v in extra:
             if k == key:

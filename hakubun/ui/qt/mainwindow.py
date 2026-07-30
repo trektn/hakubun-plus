@@ -34,6 +34,7 @@ from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
 from hakubun.ui.qt.details import DetailsDialog
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
+from hakubun.ui.qt.seasons import SeasonsWidget
 from hakubun.ui.qt.settings import SettingsDialog
 from hakubun.ui.qt.util import FilterBar, getIcon
 from hakubun.ui.qt.widgets import HoverProgressBar, PlaybackBar, ScoreSlider, ShowsTableView
@@ -658,9 +659,12 @@ class MainWindow(QMainWindow):
             self.taiga_nav.setFixedWidth(160)
             self.taiga_nav.currentItemChanged.connect(self._on_taiga_nav_changed)
 
+            self.seasons_widget = SeasonsWidget(self, self.worker)
+
             self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
             self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
                                   self.now_playing_widget)
+            self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
 
             main_hbox.addWidget(self.taiga_nav)
             main_hbox.addLayout(left_box)
@@ -1902,6 +1906,7 @@ class MainWindow(QMainWindow):
             if self._taiga_mode:
                 self._rebuild_services_menu()
                 self._rebuild_library_folders_menu()
+                self.seasons_widget.set_context(self.api_info, self.mediainfo)
 
             # Show tracker info
             tracker_info = self.worker.engine.tracker_status()
