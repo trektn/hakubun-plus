@@ -103,6 +103,13 @@ class Engine:
     def __init__(self, account=None, message_handler=None, accountnum=None):
         self.msg = messenger.Messenger(message_handler, self.name)
 
+        # Set by start() if the configured title_parser couldn't be
+        # imported and a fallback was used instead -- checked once by the
+        # UI after the first successful load so it can surface this
+        # somewhere more durable than a status-bar message that's about
+        # to be overwritten by "Ready.".
+        self.parser_fallback_warning = None
+
         # Utility parameter to get the account from the account manager
         if accountnum:
             account = accounts.AccountManager().get_account(accountnum)
@@ -406,22 +413,42 @@ class Engine:
                 self.msg.warn("Error parsing anime-relations.txt!")
                 self.msg.debug("{}".format(e))
 
-        # Determine parser library
-        try:
-            self.msg.debug(self.name, "Initializing parser...")
-            self.parser_class = get_parser_class(self.msg, self.config['title_parser'])
-        except ImportError as e:
-            self.msg.warn(self.name, "Couldn't import specified parser: {}; {}".format(
-                self.config['title_parser'], e))
-            self.msg.warn(self.name, "Falling back to aie...")
-            self.parser_class = get_parser_class(self.msg, "aie")
+        # Determine parser library. If the configured parser can't be
+        # imported (an optional dependency isn't installed), cascade down
+        # through progressively more basic parsers rather than jumping
+        # straight to aie -- e.g. anitomy_ng missing should still try
+        # anitopy before giving up, not skip past a perfectly good parser
+        # the user may already have installed.
+        parser_fallback_chain = {
+            'anitomy_ng': 'anitopy',
+            'anitopy': 'aie',
+        }
+        requested_parser = self.config['title_parser']
+        parser_name = requested_parser
+        while True:
+            try:
+                self.msg.debug(self.name, "Initializing parser...")
+                self.parser_class = get_parser_class(self.msg, parser_name)
+                break
+            except ImportError as e:
+                self.msg.warn(self.name, "Couldn't import specified parser: {}; {}".format(
+                    parser_name, e))
+                next_parser = parser_fallback_chain.get(parser_name, 'aie')
+                self.msg.warn(self.name, "Falling back to {}...".format(next_parser))
+                parser_name = next_parser
+
+        if parser_name != requested_parser:
+            self.parser_fallback_warning = (
+                "Couldn't load the configured title parser '{}' (its optional "
+                "dependency isn't installed); using '{}' instead.".format(
+                    requested_parser, parser_name))
             # Also correct the config value in memory (not persisted to
             # disk), not just self.parser_class -- the tracker looks up
             # config['title_parser'] independently when it starts (see
             # TrackerBase.__init__), and would otherwise retry the same
             # broken import and fail with a misleading "couldn't import
             # the tracker" instead of this already-explained parser issue.
-            self.config['title_parser'] = 'aie'
+            self.config['title_parser'] = parser_name
 
         # Rescan library if necessary
         if self.config['library_autoscan']:

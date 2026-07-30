@@ -60,6 +60,10 @@ class MainWindow(QMainWindow):
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
         self.debug = debug
+        # r_engine_loaded fires on every account/mediatype reload, not
+        # just the initial start -- only show the parser-fallback dialog
+        # once per session, not on every switch.
+        self._parser_fallback_shown = False
 
         # Load QT specific configuration
         self.configfile = utils.to_config_path('ui-qt.json')
@@ -1829,6 +1833,15 @@ class MainWindow(QMainWindow):
 
     def r_engine_loaded(self, result):
         if result['success']:
+            # The status bar already shows the underlying warning, but it's
+            # transient and gets overwritten within the same startup
+            # sequence -- easy to miss even when printed to console. Show
+            # it once, durably, as an actual dialog.
+            parser_warning = self.worker.engine.parser_fallback_warning
+            if parser_warning and not self._parser_fallback_shown:
+                self._parser_fallback_shown = True
+                QMessageBox.warning(self, 'Title parser fallback', parser_warning)
+
             showlist = self.worker.engine.get_list()
             altnames = self.worker.engine.altnames()
             library = self.worker.engine.library()
