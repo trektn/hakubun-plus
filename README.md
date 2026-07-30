@@ -36,6 +36,16 @@ There isn't a single "best" tracker. Each has different goals and strengths.
 | [**Trackma**](https://github.com/z411/trackma) | You prefer a **CLI-first** workflow, are building wrappers or automation around it, or simply want to support the original project and its maintainers. |
 | [**Hakubun+**](https://github.com/trektn/hakubun-plus) | The same as Hakubun but you also want features not available elsewhere, such as the **airing schedule** or **MAL score** additions. It should work across platforms, including Windows, but Windows is not tested. Expect it to be less stable than all of these other options on *nix or Windows. |
 
+Screenshots
+-----------
+
+<p align="center">
+  <img src="assets/screenshot-qt-list-search.png" width="49%" alt="Qt: list and search"/>
+  <img src="assets/screenshot-gtk-list-search.png" width="49%" alt="GTK: list and search"/>
+  <img src="assets/screenshot-airing-schedule.png" width="49%" alt="Airing schedule window"/>
+  <img src="assets/screenshot-qt-now-playing.png" width="49%" alt="Qt: Now Playing"/>
+  <img src="assets/screenshot-taiga-mode.png" width="49%" alt="Taiga mode"/>
+</p>
 
 Currently supported websites
 ----------------------------
