@@ -71,6 +71,10 @@ class MainWindow(QMainWindow):
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
         self.debug = debug
+        # r_engine_loaded fires on every account/mediatype reload, not
+        # just the initial start -- only show the parser-fallback dialog
+        # once per session, not on every switch.
+        self._parser_fallback_shown = False
 
         # Load QT specific configuration
         self.configfile = utils.to_config_path('ui-qt.json')
@@ -2013,8 +2017,9 @@ class MainWindow(QMainWindow):
                           '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
                           '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
                           '<p>Thanks to all contributors. To see all contributors see AUTHORS file.</p>'
-                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a>, '
-                          'licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a> and '
+                          '<a href="https://github.com/tylergibbs2/anitomy-ng">anitomy-ng</a>, '
+                          'both licensed under the Mozilla Public License 2.0.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
                               utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
@@ -2192,6 +2197,15 @@ class MainWindow(QMainWindow):
 
     def r_engine_loaded(self, result):
         if result['success']:
+            # The status bar already shows the underlying warning, but it's
+            # transient and gets overwritten within the same startup
+            # sequence -- easy to miss even when printed to console. Show
+            # it once, durably, as an actual dialog.
+            parser_warning = self.worker.engine.parser_fallback_warning
+            if parser_warning and not self._parser_fallback_shown:
+                self._parser_fallback_shown = True
+                QMessageBox.warning(self, 'Title parser fallback', parser_warning)
+
             showlist = self.worker.engine.get_list()
             altnames = self.worker.engine.altnames()
             library = self.worker.engine.library()

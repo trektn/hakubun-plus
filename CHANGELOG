@@ -27,6 +27,13 @@ Unreleased (0.13)
 - New feature: After every fetch, multisync asks any provider with an exact reverse-lookup API (AniList's id-by-MAL-id lookup, and Kitsu GraphQL's lookupMapping) whether it has an entity whose MAL id is already known from elsewhere but was never independently matched by title -- e.g. a show only added on Kitsu now also gets linked (and, under Rebase, offered as an add) on AniList, not just MAL, and the reverse for a show only added on MAL/AniList and Kitsu GraphQL.
 - Improvement: Rebase's create step now fills in a provider-owned field even when that provider IS the one being created (it has nothing to draw from yet) by falling back to local's current value, instead of leaving the field blank on the new entry.
 - Bugfix: (Qt) Switching accounts while a stale async tracker callback (playing/episode-changed) for the PREVIOUS account was still in flight crashed the whole app (KeyError in ShowListModel.update, since setShowList had already rebuilt id_map for the new account); it's now a harmless no-op.
+- New feature: (GTK) Added the Parser choice to Settings > Library, at parity with Qt -- GTK previously had no way to select Anitopy or Anitomy-NG at all.
+
+v0.12.2
+- New feature: New experimental `anitomy_ng` title parser option (Qt Settings), a pure-Rust filename parser bundled as a required dependency. Faster than the existing Anitopy parser and handles version-numbered titles (e.g. "NieR:Automata Ver1.1a") and season-folder-plus-junk naming patterns more accurately, at the cost of being newer and less battle-tested.
+- Bugfix: The default AnimeInfoExtractor parser had no awareness of path separators, so a full relative path (e.g. "Show S01/Show S01E05.mkv") often left a literal "/" and a duplicated title in the extracted show name. Parent/child duplicate-title stripping now runs before parsing.
+- Improvement: The "Anitopy" parser option no longer carries an "(Experimental)" label in the Qt Settings dropdown, reflecting its production track record; "Anitomy-NG" carries that label instead as the newer option.
+- Legal: Added THIRD_PARTY_NOTICES.md documenting MPL 2.0 attribution for the anitomy-ng and Anitopy parser dependencies and their upstream origins (Anitomy, anitomy-rs).
 
 v0.12.1
 - New feature: Tracker auto-detect in GTK, at parity with Qt -- the "Local" radio was renamed "Auto-detect (recommended)" and now correctly writes `tracker_type: auto` (it previously wrote an unrecognized 'local' value that happened to fall through to the same guessing logic anyway). Auto-detection now also tries MPRIS first before falling back to inotify/polling, since it needs no search directories configured and works with any MPRIS-capable player.

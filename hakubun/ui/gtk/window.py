@@ -99,6 +99,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.connect('success', self._on_main_view_success)
             self._main_view.connect(
                 'error-fatal', self._on_main_view_error_fatal)
+            self._main_view.connect(
+                'parser-fallback-warning', self._on_main_view_parser_fallback_warning)
             self._main_view.connect('show-action', self._on_show_action)
 
             # The filter bar lives directly below the header bar (outside
@@ -662,7 +664,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
         about.set_authors(["See AUTHORS file"])
         about.add_credit_section(
             "Filename parsing",
-            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy"])
+            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy",
+             "anitomy-ng (MPL-2.0) https://github.com/tylergibbs2/anitomy-ng"])
         # The window/tray icon is the plain hanko mark (see
         # Gtk.Window.set_default_icon_from_file) -- About gets the fuller
         # "Hakubun+" wordmark instead, since it has the room to show it.
@@ -726,6 +729,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
     def _on_main_view_error_fatal(self, main_view, error_msg):
         self._show_accounts_idle(switch=False, forget=True)
         self._error_dialog_idle(error_msg)
+
+    def _on_main_view_parser_fallback_warning(self, main_view, warning_msg):
+        self._error_dialog_idle(warning_msg, Gtk.MessageType.WARNING)
 
     def _error_dialog_idle(self, msg, icon=Gtk.MessageType.ERROR):
         # Thread safe

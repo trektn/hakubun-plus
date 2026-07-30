@@ -40,6 +40,8 @@ class MainView(Gtk.Box):
                     ()),
         'error-fatal': (GObject.SignalFlags.RUN_FIRST, None,
                         (str,)),
+        'parser-fallback-warning': (GObject.SignalFlags.RUN_FIRST, None,
+                                    (str,)),
         'show-action': (GObject.SignalFlags.RUN_FIRST, None,
                         (int, object)),
     }
@@ -200,6 +202,10 @@ class MainView(Gtk.Box):
         except utils.HakubunFatal as e:
             self.emit('error-fatal', e)
             return
+
+        if self._engine.parser_fallback_warning:
+            self.emit('parser-fallback-warning',
+                     self._engine.parser_fallback_warning)
 
         GLib.idle_add(self._update_widgets)
 
