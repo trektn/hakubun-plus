@@ -1649,8 +1649,9 @@ class MainWindow(QMainWindow):
                           '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
                           '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
                           '<p>Thanks to all contributors. To see all contributors see AUTHORS file.</p>'
-                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a>, '
-                          'licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a> and '
+                          '<a href="https://github.com/tylergibbs2/anitomy-ng">anitomy-ng</a>, '
+                          'both licensed under the Mozilla Public License 2.0.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
                               utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))

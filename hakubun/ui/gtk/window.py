@@ -527,7 +527,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
         about.set_authors(["See AUTHORS file"])
         about.add_credit_section(
             "Filename parsing",
-            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy"])
+            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy",
+             "anitomy-ng (MPL-2.0) https://github.com/tylergibbs2/anitomy-ng"])
         # The window/tray icon is the plain hanko mark (see
         # Gtk.Window.set_default_icon_from_file) -- About gets the fuller
         # "Hakubun+" wordmark instead, since it has the room to show it.
