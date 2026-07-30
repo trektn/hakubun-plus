@@ -144,6 +144,17 @@ FIRST_SYNC_HELP = (
     'tick the ones you actually want, or use Rebase/Mirror to declare a '
     'winner deliberately.')
 
+# Appended to a change's text when it creates a NEW library entry on the
+# target provider (FieldChange.creates_entry) instead of updating one
+# that's already there -- Rebase only, see SyncEngine._plan_rebase_add.
+CREATES_ENTRY_NOTE = ('   — adds this show to %s (no entry there yet), '
+                      'tick to create it')
+
+CREATES_ENTRY_HELP = (
+    'Some changes are unticked: they would ADD this show to a tracker '
+    'that doesn\'t have it yet, not just update an existing entry. '
+    'Review and tick the ones you actually want.')
+
 
 def change_line(adapters, change, primary=None):
     """(direction, text) for one FieldChange. `direction` is 'pull' or
@@ -162,12 +173,15 @@ def change_line(adapters, change, primary=None):
                              change.target),
             fmt_target_value(adapters, change.field, change.new,
                              change.target))
-        text = 'Push to %s — %s: %s' % (label(change.target), name, values)
+        verb = 'Add to' if change.creates_entry else 'Push to'
+        text = '%s %s — %s: %s' % (verb, label(change.target), name, values)
         if change.field == 'score':
             text += score_round_note(adapters, change.target, change.new)
         direction = 'push'
     if change.first_sync:
         text += FIRST_SYNC_NOTE
+    if change.creates_entry:
+        text += CREATES_ENTRY_NOTE % label(change.target)
     return direction, text
 
 
@@ -230,7 +244,10 @@ def mode_context(mode, primary=None):
                 'overwrites everyone, even for entries that already look '
                 'in sync. Use it right after changing who owns a field. '
                 'Fields set to Merge/Ask/Individual have no single owner '
-                'and are left alone.')
+                'and are left alone. It also ADDS the show to any '
+                'connected tracker that doesn\'t have it yet, using the '
+                'owned fields\' current values — those additions are '
+                'planned unticked, opt in per show.')
     return ('<b>Merge:</b> reconciles every provider into local state, '
             'then pushes the result.%s' % signed)
 

@@ -265,7 +265,8 @@ class SyncWindow(QDialog):
         arrow, color = (('⬇', self._PULL_COLOR) if direction == 'pull'
                         else ('⬆', self._PUSH_COLOR))
         item = QTreeWidgetItem(['%s %s' % (arrow, text)])
-        item.setForeground(0, self._FIRST_SYNC_COLOR if change.first_sync
+        item.setForeground(0, self._FIRST_SYNC_COLOR
+                           if change.first_sync or change.creates_entry
                            else color)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
         # Honour the plan's own selection: a first-sync overwrite is
@@ -529,6 +530,12 @@ class SyncWindow(QDialog):
                 '%s  —  %d first-sync overwrite(s) left unticked. %s'
                 % (self.preview_summary.text(), first_sync,
                    present.FIRST_SYNC_HELP))
+        creates = sum(1 for c in plan.changes if c.creates_entry)
+        if creates:
+            self.preview_summary.setText(
+                '%s  —  %d new-entry add(s) left unticked. %s'
+                % (self.preview_summary.text(), creates,
+                   present.CREATES_ENTRY_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]

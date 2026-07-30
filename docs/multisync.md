@@ -298,6 +298,14 @@ Record history         sync/history.py    — event log, undo, stats
   it true everywhere now." Manual-only (the sync-window Preview), never
   a background/auto mode; previewed and checkbox-selectable like any
   plan, and it still converges (pushes advance each provider's base).
+  Rebase is also the only mode that calls `add_show`: for any connected,
+  *mapped* provider with no remote row at all (identity resolution knows
+  the id — typically from another provider's published cross-id, see
+  §"IDs first" below — but that provider's own fetch has never actually
+  listed the entry), it bundles every owned field's current value into
+  one create call there. Planned unselected like a first-sync overwrite
+  (`FieldChange.creates_entry`): adding a new library entry to a real
+  account is opted into per show, never applied by a headless Sync.
 
 ### Diff semantics (per entity, per synced field, per mapped provider)
 

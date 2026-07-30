@@ -43,7 +43,8 @@ MEDIAINFO = {
 class FakeLib:
     """Duck-typed lib/ instance: in-memory shows, failure injection."""
 
-    def __init__(self, provider, shows=None, mediatype='anime'):
+    def __init__(self, provider, shows=None, mediatype='anime',
+                extra_info=None):
         self.provider = provider
         self.mediatype = mediatype       # real libs expose this
         self.shows = {str(s['id']): dict(s) for s in (shows or [])}
@@ -54,9 +55,15 @@ class FakeLib:
         # then succeed -- to exercise the adapter's 429 retry loop.
         self.rate_limit_first = 0
         self.rate_limit_retry_after = None
+        # Overrides/additions merged onto MEDIAINFO for this instance
+        # only (e.g. {'can_add': False}) -- media_info() is read live
+        # per adapters.mediainfo, never cached from __init__.
+        self.extra_info = extra_info or {}
 
     def media_info(self):
-        return dict(MEDIAINFO[self.provider])
+        info = dict(MEDIAINFO[self.provider])
+        info.update(self.extra_info)
+        return info
 
     def check_credentials(self):
         if self.fail_fetch:
@@ -105,6 +112,21 @@ class FakeLib:
         self.updates.append(dict(item))
         self.shows.setdefault(str(item['id']), {'id': item['id']})
         self.shows[str(item['id'])].update(item)
+
+    def add_show(self, item):
+        """Create a new library entry. Mirrors the real libs: MAL's
+        add_show returns None (media id alone addresses it); AniList
+        and both Kitsu backends return the new library-entry id."""
+        if self.fail_update:
+            raise utils.APIError('%s rejected the add' % self.provider)
+        _ = item['title']   # same unconditional read as update_show
+        showid = str(item['id'])
+        self.shows[showid] = dict(item)
+        if self.provider == 'mal':
+            return None
+        new_id = 'new-%s' % showid
+        self.shows[showid]['my_id'] = new_id
+        return new_id
 
     def search(self, criteria, method=None):
         return [dict(s) for s in self.shows.values()

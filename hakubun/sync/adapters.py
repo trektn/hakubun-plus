@@ -208,25 +208,11 @@ class ProviderAdapter:
             self._sleep(gap, cancel)
         self._last_push = time.time()
 
-    def push(self, provider_id, changes, title=None, my_id=None,
-            on_wait=None, cancel=None):
-        """Push canonical {field: value} changes to the provider.
-
-        Returns the provider-scale values actually sent (what the
-        remote is expected to hold afterwards, e.g. the rounded score).
-        Unsupported fields are silently projected out.
-
-        `my_id` is the provider's library-entry id (persisted from the
-        last fetch as remote-state '_my_id'): Kitsu, both backends,
-        addresses updates by it -- item['my_id'], read unconditionally
-        -- while MAL/AniList only use the media id.
-
-        Pushes are paced per provider and retried on a rate-limit
-        (429) response, waiting the server's Retry-After when given.
-        `on_wait(provider, seconds, attempt)` reports a wait; `cancel`
-        (a `() -> bool`) aborts (raising SyncCancelled) between/within
-        waits.
-        """
+    def _build_item(self, provider_id, changes, title=None, my_id=None):
+        """{field: value} -> (lib item dict, {field: provider-scale value
+        actually included}). Shared by push() and add(): both send the
+        same per-field conversions/capability gating to the lib, just
+        through a different lib call (update vs create)."""
         item = {'id': self._coerce_id(provider_id),
                 'my_id': my_id}
         sent = {}
@@ -267,22 +253,27 @@ class ProviderAdapter:
                 # No lib exposes notes yet; kept in the model for the
                 # 'individual' policy and future adapters.
                 continue
-        if not sent:
-            return {}
-        # Every lib's update_show()/delete_show() logs item['title']
-        # (purely informational -- the actual API payload is built
-        # from id/my_* only) but accesses it unconditionally, so a
-        # missing key crashes the whole push with a bare
+        # Every lib's update_show()/add_show()/delete_show() logs
+        # item['title'] (purely informational -- the actual API payload
+        # is built from id/my_* only) but accesses it unconditionally,
+        # so a missing key crashes the whole call with a bare
         # KeyError('title') ("Apply failed: 'title'"). This adapter's
         # item is a minimal {id, my_*} patch with no title of its own;
         # the caller (SyncEngine.apply, from FieldChange.title) is
         # expected to supply the show's title for logging.
         item['title'] = title or ''
+        return item, sent
+
+    def _send(self, lib_call, item, cancel, on_wait):
+        """Retry wrapper shared by push()/add(): paces per provider and
+        retries on a rate-limit (429) response, waiting the server's
+        Retry-After when given. `on_wait(provider, seconds, attempt)`
+        reports a wait; `cancel` (a `() -> bool`) aborts (raising
+        SyncCancelled) between/within waits. Returns lib_call's result."""
         for attempt in range(_RATE_LIMIT_RETRIES + 1):
             self._pace(cancel)   # may raise SyncCancelled
             try:
-                self.lib.update_show(item)
-                return sent
+                return lib_call(item)
             except utils.APIError as e:
                 if is_rate_limited(e) and attempt < _RATE_LIMIT_RETRIES:
                     wait = getattr(e, 'retry_after', None) \
@@ -307,6 +298,45 @@ class ProviderAdapter:
                                   % (self.name, type(e).__name__, e)) from e
         raise AdapterError('%s: still rate limited after %d retries'
                           % (self.name, _RATE_LIMIT_RETRIES))
+
+    def push(self, provider_id, changes, title=None, my_id=None,
+            on_wait=None, cancel=None):
+        """Push canonical {field: value} changes to an EXISTING entry.
+
+        Returns the provider-scale values actually sent (what the
+        remote is expected to hold afterwards, e.g. the rounded score).
+        Unsupported fields are silently projected out.
+
+        `my_id` is the provider's library-entry id (persisted from the
+        last fetch as remote-state '_my_id'): Kitsu, both backends,
+        addresses updates by it -- item['my_id'], read unconditionally
+        -- while MAL/AniList only use the media id.
+        """
+        item, sent = self._build_item(provider_id, changes, title, my_id)
+        if not sent:
+            return {}
+        self._send(self.lib.update_show, item, cancel, on_wait)
+        return sent
+
+    def add(self, provider_id, changes, title=None, on_wait=None,
+           cancel=None):
+        """Create a NEW library entry (see SyncEngine._plan_rebase_add:
+        REBASE additionally creates the show on any connected, mapped
+        provider that doesn't have it yet). Same shape as push(), but
+        calls the lib's add_show(); no my_id since there's no existing
+        entry to address.
+
+        Returns (sent, my_id): `my_id` is the provider's new
+        library-entry id when it reports one (Kitsu, both backends),
+        None otherwise (MAL/AniList key updates on the media id alone --
+        there's no separate library-entry id to learn)."""
+        if not self.mediainfo.get('can_add', True):
+            return {}, None
+        item, sent = self._build_item(provider_id, changes, title)
+        if not sent:
+            return {}, None
+        new_id = self._send(self.lib.add_show, item, cancel, on_wait)
+        return sent, (str(new_id) if new_id is not None else None)
 
     def values_equivalent(self, field, a, b):
         """True when two canonical values project to the same value on

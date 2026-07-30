@@ -284,6 +284,9 @@ class SyncEngine:
                     m['provider_id'], {}),
                 snapshot['base'].get((uid, provider), {}))
 
+        if mode is SyncMode.REBASE:
+            self._plan_rebase_add(plan, uid, title, ownership, sides, local)
+
         ent_total = ent.get('total')
         for field, policy in ownership.items():
             if policy.kind is PolicyKind.INDIVIDUAL:
@@ -555,6 +558,53 @@ class SyncEngine:
             survivors.append(r_val)
         return kept
 
+    def _plan_rebase_add(self, plan, uid, title, ownership, sides, local):
+        """REBASE-only: create the show on every connected, MAPPED
+        provider that doesn't have it yet -- an empty remote snapshot
+        for that provider (`sides[provider][0]`) despite a mapping
+        existing means identity resolution knows the id (e.g. a
+        provider-published cross-id another provider's fetch recorded
+        pre-emptively, see identity._record_external_ids) but that
+        provider's own fetch has never actually listed an entry there.
+        Ordinary rebase pushes (_plan_rebase/_plan_push below) can never
+        reach these: they only iterate `states`, which by construction
+        only contains providers with SOME remote row to diff against.
+
+        Bundles every owned field's CURRENT authoritative value (the
+        same value an ordinary rebase would push to an existing entry)
+        into one create per missing provider -- apply() tells create
+        from update purely by remote-snapshot presence at apply time,
+        so no separate plumbing is needed there. Fields with no single
+        owner (merge/ask/individual) contribute nothing, same as an
+        ordinary rebase push; a provider-owned field whose owner is
+        ALSO missing contributes nothing either (no source value to
+        read yet). Planned unselected, like first_sync -- see
+        FieldChange.creates_entry."""
+        missing = [p for p, (remote, _base) in sides.items() if not remote]
+        if not missing:
+            return
+        values = {}
+        for field, policy in ownership.items():
+            if policy.kind is PolicyKind.LOCAL:
+                val = local.get(field, (None, 0))[0]
+            elif policy.kind is PolicyKind.PROVIDER:
+                remote, _base = sides.get(policy.provider, ({}, {}))
+                val = remote.get(field, (None, 0))[0]
+            else:
+                continue
+            if val not in (None, '', []):
+                values[field] = val
+        if not values:
+            return
+        for provider in missing:
+            if not self.adapters[provider].mediainfo.get('can_add', True):
+                continue
+            for field, val in values.items():
+                plan.changes.append(FieldChange(
+                    uid, field, None, val, target=provider,
+                    source='local', title=title,
+                    selected=False, creates_entry=True))
+
     def _plan_rebase(self, plan, uid, title, field, policy, l_val,
                      orig_l, intent, states, progress_field, p_scales,
                      ent_total):
@@ -805,18 +855,32 @@ class SyncEngine:
                 if mapping is None:
                     done += 1   # counted in total_steps; keep it honest
                     continue
-                report('Pushing to %s: %s (%s)...' % (
-                    provider.capitalize(), chs[0].title,
-                    ', '.join(c.field for c in chs)))
                 remote = self.store.remote_get(provider,
                                                mapping['provider_id'])
+                # No remote row at all means this provider has never
+                # actually listed the entry (see _plan_rebase_add): the
+                # mapping only records an id someone else claimed for
+                # it. Create it there instead of trying to update an
+                # entry that doesn't exist.
+                creating = not remote
                 my_id = (remote.get('_my_id') or (None, None))[0]
+                report('%s to %s: %s (%s)...' % (
+                    'Adding' if creating else 'Pushing',
+                    provider.capitalize(), chs[0].title,
+                    ', '.join(c.field for c in chs)))
                 try:
-                    sent = adapter.push(mapping['provider_id'],
-                                        {c.field: c.new for c in chs},
-                                        title=chs[0].title, my_id=my_id,
-                                        on_wait=on_wait,
-                                        cancel=should_cancel)
+                    if creating:
+                        sent, new_my_id = adapter.add(
+                            mapping['provider_id'],
+                            {c.field: c.new for c in chs},
+                            title=chs[0].title, on_wait=on_wait,
+                            cancel=should_cancel)
+                    else:
+                        sent = adapter.push(mapping['provider_id'],
+                                            {c.field: c.new for c in chs},
+                                            title=chs[0].title, my_id=my_id,
+                                            on_wait=on_wait,
+                                            cancel=should_cancel)
                 except SyncCancelled:
                     cancelled = True
                     break
@@ -842,16 +906,22 @@ class SyncEngine:
                             # back OVER local. Record nothing.
                             continue
                         value = sent[c.field]
+                        op = 'add' if creating else 'push'
                         self.history.record(txn, uid, c.field, c.old,
-                                            value, provider, op='push')
+                                            value, provider, op=op)
                         self.store.base_set(uid, provider, c.field, value)
                         self.store.remote_set_all(
                             provider, mapping['provider_id'],
                             {c.field: value})
                         pushed += 1
+                    if creating and sent and new_my_id is not None:
+                        self.store.remote_set_all(
+                            provider, mapping['provider_id'],
+                            {'_my_id': new_my_id})
                 done += 1
-                report('Pushed to %s: %s.' % (provider.capitalize(),
-                                              chs[0].title))
+                report('%s to %s: %s.' % ('Added' if creating else 'Pushed',
+                                          provider.capitalize(),
+                                          chs[0].title))
         if cancelled:
             report('Sync cancelled -- %d push(es) done, the rest '
                    're-plan.' % pushed)

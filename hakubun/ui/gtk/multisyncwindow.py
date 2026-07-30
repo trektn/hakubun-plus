@@ -261,7 +261,7 @@ class MultiSyncWindow(Gtk.Window):
                                               self.engine.primary)
         arrow, color = (('v', _PULL_COLOR) if direction == 'pull'
                         else ('^', _PUSH_COLOR))
-        if change.first_sync:
+        if change.first_sync or change.creates_entry:
             color = _FIRST_SYNC_COLOR
         return ('%s %s' % (arrow, text), color)
 
@@ -455,6 +455,12 @@ class MultiSyncWindow(Gtk.Window):
                 '%s  --  %d first-sync overwrite(s) left unticked. %s'
                 % (self.preview_summary.get_text(), first_sync,
                    present.FIRST_SYNC_HELP))
+        creates = sum(1 for c in plan.changes if c.creates_entry)
+        if creates:
+            self.preview_summary.set_text(
+                '%s  --  %d new-entry add(s) left unticked. %s'
+                % (self.preview_summary.get_text(), creates,
+                   present.CREATES_ENTRY_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
