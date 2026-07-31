@@ -576,16 +576,33 @@ class MainWindow(QMainWindow):
             # Notes/Folder (also on real Taiga's equivalent screen),
             # there's no engine support for those at all, so they're
             # left out rather than faked.
+            #
+            # A checkbox gates each date, matching real Taiga's own
+            # dialog -- QDateEdit has no "empty" state, so without this
+            # an unset date (e.g. "Date completed" on a show still being
+            # watched) would otherwise always show *some* date and look
+            # like it was actually recorded. Unchecked = disabled/unset,
+            # checked = editable and committed via set_dates(). Note the
+            # engine only supports setting a date, not clearing one (see
+            # set_dates()'s docstring), so unchecking never tries to
+            # clear it server-side -- it just stops implying a date
+            # exists locally.
+            self.show_start_date_check = QCheckBox()
+            self.show_start_date_check.setToolTip('Whether a start date is recorded')
             self.show_start_date = QDateEdit()
             self.show_start_date.setCalendarPopup(True)
             self.show_start_date.setDisplayFormat('yyyy-MM-dd')
             self.show_start_date.setToolTip('Date you started watching this show')
+            self.show_start_date_check.toggled.connect(self.s_toggle_start_date)
             self.show_start_date.dateChanged.connect(self.s_set_start_date)
 
+            self.show_finish_date_check = QCheckBox()
+            self.show_finish_date_check.setToolTip('Whether a completion date is recorded')
             self.show_finish_date = QDateEdit()
             self.show_finish_date.setCalendarPopup(True)
             self.show_finish_date.setDisplayFormat('yyyy-MM-dd')
             self.show_finish_date.setToolTip('Date you finished watching this show')
+            self.show_finish_date_check.toggled.connect(self.s_toggle_finish_date)
             self.show_finish_date.dateChanged.connect(self.s_set_finish_date)
 
         # Hidden entirely until something's actually playing -- see
@@ -668,10 +685,17 @@ class MainWindow(QMainWindow):
             edit_form.addWidget(QLabel('Status:'), 2, 0)
             edit_form.addWidget(self.show_status, 2, 1)
 
+            start_date_row = QHBoxLayout()
+            start_date_row.addWidget(self.show_start_date_check)
+            start_date_row.addWidget(self.show_start_date)
+            finish_date_row = QHBoxLayout()
+            finish_date_row.addWidget(self.show_finish_date_check)
+            finish_date_row.addWidget(self.show_finish_date)
+
             edit_form.addWidget(QLabel('Date started:'), 3, 0)
-            edit_form.addWidget(self.show_start_date, 3, 1)
+            edit_form.addLayout(start_date_row, 3, 1)
             edit_form.addWidget(QLabel('Date completed:'), 3, 2)
-            edit_form.addWidget(self.show_finish_date, 3, 3)
+            edit_form.addLayout(finish_date_row, 3, 3)
 
             edit_form.addWidget(self.show_tags_btn, 4, 0, 1, 4)
             edit_form.setRowStretch(5, 1)
@@ -962,8 +986,12 @@ class MainWindow(QMainWindow):
         self.show_status.setEnabled(enable)
         if self._taiga_mode:
             date_enabled = bool(self.mediainfo and self.mediainfo.get('can_date') and enable)
-            self.show_start_date.setEnabled(date_enabled)
-            self.show_finish_date.setEnabled(date_enabled)
+            self.show_start_date_check.setEnabled(date_enabled)
+            self.show_finish_date_check.setEnabled(date_enabled)
+            # The date picker itself only unlocks once its checkbox says
+            # a date actually exists -- see _select_show/s_toggle_*_date.
+            self.show_start_date.setEnabled(date_enabled and self.show_start_date_check.isChecked())
+            self.show_finish_date.setEnabled(date_enabled and self.show_finish_date_check.isChecked())
         self.action_play_next.setEnabled(enable)
         self.action_play_dialog.setEnabled(enable)
         self.action_altname.setEnabled(enable)
@@ -1327,13 +1355,23 @@ class MainWindow(QMainWindow):
             # doesn't itself trigger s_set_start_date/s_set_finish_date
             # (dateChanged fires on programmatic setDate() too, not
             # just user interaction).
-            for widget, key in ((self.show_start_date, 'my_start_date'),
-                                (self.show_finish_date, 'my_finish_date')):
+            for check, widget, key in (
+                    (self.show_start_date_check, self.show_start_date, 'my_start_date'),
+                    (self.show_finish_date_check, self.show_finish_date, 'my_finish_date')):
+                check.blockSignals(True)
                 widget.blockSignals(True)
                 date = show.get(key)
-                widget.setDate(
-                    QtCore.QDate(date.year, date.month, date.day) if date
-                    else QtCore.QDate.currentDate())
+                if date:
+                    check.setChecked(True)
+                    widget.setDate(QtCore.QDate(date.year, date.month, date.day))
+                else:
+                    # No date recorded -- default the (disabled) picker
+                    # to today only as a starting point for if the user
+                    # checks the box, not as a claim this date is set.
+                    check.setChecked(False)
+                    widget.setDate(QtCore.QDate.currentDate())
+                widget.setEnabled(bool(date))
+                check.blockSignals(False)
                 widget.blockSignals(False)
 
         # Enable relevant buttons
@@ -1644,6 +1682,21 @@ class MainWindow(QMainWindow):
             self.worker_call(
                 'set_dates', self.r_generic, self.selected_show_id,
                 finish_date=qdate.toPyDate())
+
+    def s_toggle_start_date(self, checked):
+        self.show_start_date.setEnabled(checked)
+        # Checking it on records whatever date is currently showing
+        # (defaults to today -- see _select_show) as the start date.
+        # Unchecking never clears it server-side (the engine can't --
+        # see set_dates()), it just stops showing a date that was never
+        # actually confirmed.
+        if checked:
+            self.s_set_start_date(self.show_start_date.date())
+
+    def s_toggle_finish_date(self, checked):
+        self.show_finish_date.setEnabled(checked)
+        if checked:
+            self.s_set_finish_date(self.show_finish_date.date())
 
     def s_undo(self):
         self._busy(True)
