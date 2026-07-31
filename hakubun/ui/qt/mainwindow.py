@@ -22,7 +22,7 @@ from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFormLayout,
                              QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                              QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-                             QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
+                             QProgressBar, QPushButton, QSizePolicy, QSpinBox, QStackedWidget, QStyle,
                              QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
                              QWidget)
 
@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
                           action_scan_library, action_rescan_library):
                 self.addAction(action)
 
-            toolbar = self.addToolBar('Main')
+            self.taiga_toolbar = toolbar = self.addToolBar('Main')
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             toolbar.addAction(self.action_sync)
@@ -639,27 +639,43 @@ class MainWindow(QMainWindow):
             left_box.addRow(self.show_status)
             left_box.addRow(self.show_tags_btn)
 
-        filter_bar_box_layout.addWidget(
-            QLabel('Search:' if self._taiga_mode else 'Filter:'))
-        filter_bar_box_layout.addWidget(self.show_filter)
-        filter_bar_box_layout.addWidget(QLabel('Invert'))
-        filter_bar_box_layout.addWidget(self.show_filter_invert)
-        filter_bar_box_layout.addWidget(QLabel('Case Sensitive'))
-        filter_bar_box_layout.addWidget(self.show_filter_casesens)
-        self.filter_bar_box.setLayout(filter_bar_box_layout)
+        if self._taiga_mode:
+            # Real Taiga's search box lives in the toolbar, top-right --
+            # not a separate row above/below the list, and with no
+            # Invert/Case Sensitive toggles (not part of Taiga's UI at
+            # all). The underlying proxy model still defaults to
+            # non-inverted, case-insensitive filtering; show_filter_invert/
+            # show_filter_casesens are simply never shown or checked in
+            # this mode, so they stay at that default.
+            self.show_filter.setFixedWidth(200)
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            self.taiga_toolbar.addWidget(spacer)
+            self.taiga_toolbar.addWidget(self.show_filter)
 
-        if self.config['filter_bar_position'] is FilterBar.PositionHidden:
             self.list_box.addWidget(self.notebook)
             self.list_box.addWidget(self.view)
-            self.filter_bar_box.hide()
-        elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
-            self.list_box.addWidget(self.filter_bar_box)
-            self.list_box.addWidget(self.notebook)
-            self.list_box.addWidget(self.view)
-        elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
-            self.list_box.addWidget(self.notebook)
-            self.list_box.addWidget(self.view)
-            self.list_box.addWidget(self.filter_bar_box)
+        else:
+            filter_bar_box_layout.addWidget(QLabel('Filter:'))
+            filter_bar_box_layout.addWidget(self.show_filter)
+            filter_bar_box_layout.addWidget(QLabel('Invert'))
+            filter_bar_box_layout.addWidget(self.show_filter_invert)
+            filter_bar_box_layout.addWidget(QLabel('Case Sensitive'))
+            filter_bar_box_layout.addWidget(self.show_filter_casesens)
+            self.filter_bar_box.setLayout(filter_bar_box_layout)
+
+            if self.config['filter_bar_position'] is FilterBar.PositionHidden:
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+                self.filter_bar_box.hide()
+            elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
+                self.list_box.addWidget(self.filter_bar_box)
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+            elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+                self.list_box.addWidget(self.filter_bar_box)
 
         if self._taiga_mode:
             list_page = QWidget()
@@ -947,6 +963,11 @@ class MainWindow(QMainWindow):
                 self.tray.setIcon(self.windowIcon())
 
     def _apply_filter_bar(self):
+        if self._taiga_mode:
+            # Taiga mode's search box lives permanently in the toolbar,
+            # not the classic filter_bar_box -- filter_bar_position
+            # isn't applicable here.
+            return
         self.list_box.removeWidget(self.filter_bar_box)
         self.list_box.removeWidget(self.notebook)
         self.list_box.removeWidget(self.view)
