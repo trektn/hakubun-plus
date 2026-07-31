@@ -6,6 +6,36 @@ from hakubun import utils
 from hakubun.ui.qt.thumbs import ThumbManager
 from hakubun.ui.qt.util import IN_LIST_COLOR, getColor, getIcon
 
+# Taiga's release-status dot (Anime List, leftmost column): green while
+# airing, blue once finished, red before it's aired -- fixed colors
+# rather than theme-relative ones, matching Taiga's own convention.
+_RELEASE_STATUS_DOT_COLORS = {
+    utils.Status.ONGOING: '#4CAF50',
+    utils.Status.FINISHED: '#2196F3',
+    utils.Status.NOTYET: '#F44336',
+}
+_release_status_dot_cache = {}
+
+
+def _release_status_dot(status):
+    color_hex = _RELEASE_STATUS_DOT_COLORS.get(status)
+    if not color_hex:
+        return None
+
+    pixmap = _release_status_dot_cache.get(color_hex)
+    if pixmap is None:
+        pixmap = QtGui.QPixmap(10, 10)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(color_hex))
+        painter.drawEllipse(0, 0, 10, 10)
+        painter.end()
+        _release_status_dot_cache[color_hex] = pixmap
+
+    return pixmap
+
 
 class ShowListModel(QtCore.QAbstractTableModel):
     """
@@ -29,11 +59,17 @@ class ShowListModel(QtCore.QAbstractTableModel):
     COL_TYPE = 14
     COL_PLATFORM_SCORE = 15
     COL_MAL_SCORE = 16
+    # Appended rather than inserted at the front, so existing COL_*
+    # indices (several of which are hardcoded elsewhere, e.g.
+    # ShowsTableDelegate's column-4 check for COL_PERCENT) don't shift.
+    # Taiga mode moves it to the front visually via
+    # horizontalHeader().moveSection() instead.
+    COL_RELEASE_STATUS = 17
 
     columns = ['ID', 'Title', 'Progress', 'Score',
                'Percent', 'Next Episode', 'Start date', 'End date',
                'My start', 'My finish', 'Tags', 'Status', 'Last updated', 'Season',
-               'Type', 'Platform Score', 'MAL Score']
+               'Type', 'Platform Score', 'MAL Score', '']
 
     editable_columns = [COL_MY_PROGRESS, COL_MY_SCORE]
 
@@ -233,6 +269,8 @@ class ShowListModel(QtCore.QAbstractTableModel):
         elif role == QtCore.Qt.ItemDataRole.DecorationRole:
             if column == ShowListModel.COL_TITLE and show['id'] in self.playing:
                 return getIcon('media-playback-start')
+            elif column == ShowListModel.COL_RELEASE_STATUS:
+                return _release_status_dot(show.get('status'))
         elif role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
             if column in [ShowListModel.COL_MY_PROGRESS, ShowListModel.COL_MY_SCORE]:
                 return QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter

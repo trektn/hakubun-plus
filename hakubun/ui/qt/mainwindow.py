@@ -34,6 +34,7 @@ from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
 from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.details import DetailsDialog
+from hakubun.ui.qt.models import ShowListModel
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
 from hakubun.ui.qt.seasons import SeasonsWidget
 from hakubun.ui.qt.settings import SettingsDialog
@@ -1129,6 +1130,20 @@ class MainWindow(QMainWindow):
         else:
             self.view.horizontalHeader().resizeSection(3, 70)
             self.view.horizontalHeader().resizeSection(4, 100)
+
+        if self._taiga_mode:
+            # Real Taiga's leftmost column is a small airing-status dot
+            # (green/blue/red) -- it has an empty header and is never
+            # in visible_columns, so the hide-loop above always hides
+            # it; show and reposition it here instead, after any
+            # restored column state, so a remembered layout from before
+            # this column existed can't leave it hidden or misplaced.
+            dot_col = ShowListModel.COL_RELEASE_STATUS
+            header = self.view.horizontalHeader()
+            self.view.setColumnHidden(dot_col, False)
+            header.setSectionResizeMode(dot_col, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(dot_col, 20)
+            header.moveSection(header.visualIndex(dot_col), 0)
 
     def _set_default_poster(self):
         # With no show selected, fill the poster box with a placeholder
