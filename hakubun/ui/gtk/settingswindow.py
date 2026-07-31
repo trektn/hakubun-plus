@@ -59,6 +59,7 @@ class SettingsWindow(Gtk.Window):
     btn_file_chooser_executable = Gtk.Template.Child()
     checkbox_player_reuse_mpv = Gtk.Template.Child()
     combo_title_parser = Gtk.Template.Child()
+    checkbox_use_subminer = Gtk.Template.Child()
     listbox_directories = Gtk.Template.Child()
     btn_add_directory = Gtk.Template.Child()
     checkbox_library_startup = Gtk.Template.Child()
@@ -217,6 +218,15 @@ class SettingsWindow(Gtk.Window):
         if not self.combo_title_parser.set_active_id(
                 self.engine.get_config('title_parser')):
             self.combo_title_parser.set_active_id('aie')
+        if utils.subminer_available():
+            self.checkbox_use_subminer.set_active(
+                self.engine.get_config('use_subminer'))
+        else:
+            self.checkbox_use_subminer.set_active(False)
+            self.checkbox_use_subminer.set_sensitive(False)
+            self.checkbox_use_subminer.set_tooltip_text(
+                'SubMiner was not found on PATH. Install it to enable '
+                'this option.')
         self.checkbox_library_startup.set_active(
             self.engine.get_config('library_autoscan'))
         self.checkbox_library_entire_list.set_active(
@@ -518,6 +528,9 @@ class SettingsWindow(Gtk.Window):
             'player', self.btn_file_chooser_executable.get_filename() or '')
         self.engine.set_config('player_reuse_mpv_instance',
                                self.checkbox_player_reuse_mpv.get_active())
+        if self.checkbox_use_subminer.get_sensitive():
+            self.engine.set_config('use_subminer',
+                                   self.checkbox_use_subminer.get_active())
         self.engine.set_config(
             'title_parser',
             self.combo_title_parser.get_active_id() or 'aie')

@@ -259,6 +259,17 @@ class SettingsDialog(QDialog):
             'Only applies when the player above is mpv. Hands off playback '
             'to the already-running mpv window via its IPC socket instead '
             'of starting a new process each time.')
+        self.player_use_subminer = QCheckBox()
+        if utils.subminer_available():
+            self.player_use_subminer.setToolTip(
+                'Opens episodes with SubMiner (detected on PATH) instead '
+                'of the player configured above. SubMiner launches mpv '
+                'itself with a sentence-mining overlay.')
+        else:
+            self.player_use_subminer.setEnabled(False)
+            self.player_use_subminer.setToolTip(
+                'SubMiner was not found on PATH. Install it to enable '
+                'this option.')
         lbl_searchdirs = QLabel('Media directories')
         lbl_searchdirs.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.searchdirs = QListWidget()
@@ -296,23 +307,27 @@ class SettingsDialog(QDialog):
         g_playnext_layout.addWidget(
             self.player_reuse_mpv,               2, 2, 1, 1)
         g_playnext_layout.addWidget(
-            lbl_searchdirs,                      3, 0, 1, 1)
+            QLabel('Open episodes with SubMiner'), 3, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.searchdirs,                     3, 1, 1, 1)
+            self.player_use_subminer,            3, 2, 1, 1)
+        g_playnext_layout.addWidget(
+            lbl_searchdirs,                      4, 0, 1, 1)
+        g_playnext_layout.addWidget(
+            self.searchdirs,                     4, 1, 1, 1)
         g_playnext_layout.addLayout(
-            self.searchdirs_buttons,             3, 2, 1, 1)
+            self.searchdirs_buttons,             4, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Rescan Library at startup'), 4, 0, 1, 2)
+            QLabel('Rescan Library at startup'), 5, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_autoscan,               4, 2, 1, 1)
+            self.library_autoscan,               5, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Scan through whole list'),   5, 0, 1, 2)
+            QLabel('Scan through whole list'),   6, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.scan_whole_list,                5, 2, 1, 1)
+            self.scan_whole_list,                6, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Take subdirectory name into account'), 6, 0, 1, 2)
+            QLabel('Take subdirectory name into account'), 7, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_full_path,              6, 2, 1, 1)
+            self.library_full_path,              7, 2, 1, 1)
 
         g_playnext.setLayout(g_playnext_layout)
 
@@ -736,6 +751,8 @@ class SettingsDialog(QDialog):
         self.player.setText(engine.get_config('player'))
         self.player_reuse_mpv.setChecked(
             engine.get_config('player_reuse_mpv_instance'))
+        self.player_use_subminer.setChecked(
+            engine.get_config('use_subminer') and utils.subminer_available())
         self.library_autoscan.setChecked(engine.get_config('library_autoscan'))
         self.scan_whole_list.setChecked(engine.get_config('scan_whole_list'))
         self.library_full_path.setChecked(
@@ -878,6 +895,9 @@ class SettingsDialog(QDialog):
         engine.set_config('player',            self.player.text())
         engine.set_config('player_reuse_mpv_instance',
                            self.player_reuse_mpv.isChecked())
+        if self.player_use_subminer.isEnabled():
+            engine.set_config('use_subminer',
+                              self.player_use_subminer.isChecked())
         engine.set_config('library_autoscan',
                           self.library_autoscan.isChecked())
         engine.set_config('scan_whole_list', self.scan_whole_list.isChecked())
