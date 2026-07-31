@@ -519,6 +519,11 @@ def redirect_show(show_tuple, redirections, tracker_list):
     return show_tuple
 
 
+def subminer_available():
+    """Whether the SubMiner CLI (external sentence-mining MPV wrapper) is on PATH."""
+    return shutil.which('subminer') is not None
+
+
 def open_folder(path):
     if sys.platform == 'darwin':
         spawn_process(["open", path])
@@ -708,6 +713,7 @@ config_defaults = {
     # process/window each time. Falls back to spawning normally if no
     # instance is listening yet.
     'player_reuse_mpv_instance': True,
+    'use_subminer': False,
     'searchdir': ['~/Videos'],
     'tracker_enabled': True,
     'tracker_update_wait_s': 300,

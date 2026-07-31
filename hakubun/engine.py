@@ -1553,6 +1553,15 @@ class Engine:
             return []
 
         self.msg.info('Found. Starting player...')
+
+        if self.config.get('use_subminer'):
+            subminer_bin = shutil.which('subminer')
+            if not subminer_bin:
+                raise utils.EngineError(
+                    'SubMiner not found. Install it or disable '
+                    '"Open episodes with SubMiner" in settings.')
+            return [subminer_bin, filename]
+
         args = shlex.split(self.config['player'])
 
         if not args:
