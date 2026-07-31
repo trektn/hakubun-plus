@@ -1166,6 +1166,12 @@ class MainWindow(QMainWindow):
             header.resizeSection(dot_col, 20)
             header.moveSection(header.visualIndex(dot_col), 0)
 
+            # The plain-text "Progress" column (e.g. "7/12") is
+            # redundant now that Percent's bar already shows the same
+            # count as centered text -- real Taiga only has the one
+            # Progress column (our Percent), not both.
+            self.view.setColumnHidden(ShowListModel.COL_MY_PROGRESS, True)
+
     def _set_default_poster(self):
         # With no show selected, fill the poster box with a placeholder
         # logo rather than bare "<app name>" text: the hanko mark for
@@ -2008,6 +2014,8 @@ class MainWindow(QMainWindow):
                 self._rebuild_library_folders_menu()
                 self.seasons_widget.set_context(self.api_info, self.mediainfo)
                 self.stats_widget.refresh()
+                self.show_filter.setPlaceholderText(
+                    'Filter list or search %s' % self.api_info['name'])
 
             # Show tracker info
             tracker_info = self.worker.engine.tracker_status()
