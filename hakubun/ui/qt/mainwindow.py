@@ -669,11 +669,18 @@ class MainWindow(QMainWindow):
             self.seasons_widget = SeasonsWidget(self, self.worker)
             self.stats_widget = StatisticsWidget(self, self.worker)
 
-            self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
+            # Grouping matches real Taiga's sidebar: Now Playing on its
+            # own, then list-management pages, then discovery pages
+            # (History/Search/Torrents omitted -- no data model for the
+            # first, no persistent page built yet for the second, and
+            # the third is out of scope entirely).
             self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
                                   self.now_playing_widget)
-            self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
+            self._add_taiga_separator()
+            self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
             self._add_taiga_page('stats', 'Statistics', 'view-statistics', self.stats_widget)
+            self._add_taiga_separator()
+            self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
 
             # Only the Anime List page has a "currently selected show" to
             # show quick info/actions for -- Now Playing already shows a
@@ -1517,6 +1524,15 @@ class MainWindow(QMainWindow):
         self._taiga_pages[key] = widget
         item = QListWidgetItem(getIcon(icon_name), label)
         item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+        self.taiga_nav.addItem(item)
+
+    def _add_taiga_separator(self):
+        """A non-selectable spacer row, matching real Taiga's grouping
+        of its sidebar into Now Playing / list-management / discovery
+        sections."""
+        item = QListWidgetItem()
+        item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+        item.setSizeHint(QtCore.QSize(0, 8))
         self.taiga_nav.addItem(item)
 
     # Pages where the "currently selected show" info panel makes sense.
