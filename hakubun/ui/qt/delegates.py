@@ -245,38 +245,43 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 self.paintEpisodes(painter, bar_rect, episodes, maximum)
 
             elif self._bar_style is self.BarStyleHybrid:
-                painter.setCompositionMode(
-                    QtGui.QPainter.CompositionMode.CompositionMode_Source)
-                painter.fillRect(bar_rect, QtCore.Qt.GlobalColor.transparent)
-                painter.setCompositionMode(
-                    QtGui.QPainter.CompositionMode.CompositionMode_SourceOver)
-                prog_options = QStyleOptionProgressBar()
-                prog_options.maximum = maximum
-                prog_options.progress = value
-                prog_options.rect = bar_rect
-                prog_options.palette = option.palette
-                prog_options.state = option.state
-                prog_options.direction = option.direction
-                prog_options.fontMetrics = option.fontMetrics
-                prog_options.text = self._format_text(value, maximum)
-                prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
-                # Needed for the later CE_ProgressBarLabel call below to
-                # draw anything at all -- most styles' label control
-                # checks this flag too, not just CE_ProgressBar's own
-                # (unused here) label drawing. Any early label drawn by
-                # this CE_ProgressBar call gets safely overpainted by
-                # the CE_ProgressBarLabel call at the end regardless.
-                prog_options.textVisible = self._show_text
-                self._progress_style.drawControl(
-                    QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
-                painter.setCompositionMode(
-                    QtGui.QPainter.CompositionMode.CompositionMode_SourceAtop)
+                # Fusion's CE_ProgressBar renders determinate progress as
+                # a row of distinct rounded chunks (its normal look for
+                # any native/proxy style) -- fine for a real OS progress
+                # bar, but reads as a "battery charging" pattern here,
+                # unlike real Taiga's smooth solid fill. So the actual
+                # colored fill is our own flat rect (identical to
+                # BarStyle04's smooth fill), and Fusion is used only for
+                # centering the text label on top -- never for the bar
+                # itself.
                 painter.setPen(QtCore.Qt.GlobalColor.transparent)
+                painter.setBrush(getColor(self.colors['progress_bg']))
+                painter.drawRect(bar_rect)
                 self.paintSubValue(painter, bar_rect, subvalue, maximum)
+                if value > 0:
+                    if value >= maximum:
+                        painter.setBrush(
+                            getColor(self.colors['progress_complete']))
+                        mid = bar_rect.width()
+                    else:
+                        painter.setBrush(getColor(self.colors['progress_fg']))
+                        mid = int(bar_rect.width() / float(maximum) * value)
+                    painter.drawRect(QtCore.QRect(
+                        bar_rect.x(), bar_rect.y(), mid, bar_rect.height()))
                 self.paintEpisodes(painter, bar_rect, episodes, maximum)
-                painter.setCompositionMode(
-                    QtGui.QPainter.CompositionMode.CompositionMode_SourceOver)
+
                 if self._show_text:
+                    prog_options = QStyleOptionProgressBar()
+                    prog_options.maximum = maximum
+                    prog_options.progress = value
+                    prog_options.rect = bar_rect
+                    prog_options.palette = option.palette
+                    prog_options.state = option.state
+                    prog_options.direction = option.direction
+                    prog_options.fontMetrics = option.fontMetrics
+                    prog_options.text = self._format_text(value, maximum)
+                    prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
+                    prog_options.textVisible = True
                     self._progress_style.drawControl(
                         QStyle.ControlElement.CE_ProgressBarLabel, prog_options, painter)
 
