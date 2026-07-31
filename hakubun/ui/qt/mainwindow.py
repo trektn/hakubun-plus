@@ -423,6 +423,10 @@ class MainWindow(QMainWindow):
             # specifically to get both the episode markers and text.
             self.view.itemDelegate().setBarStyle(
                 ShowsTableDelegate.BarStyleHybrid, True, text_fraction=True)
+            # Hover +/- episode buttons, ported from the win32 1.4
+            # codebase's AnimeListDialog::ListView (dlg_anime_list.cpp)
+            # -- the current Qt rewrite doesn't have these at all.
+            self.view.itemDelegate().setShowButtons(True)
         else:
             self.view.itemDelegate().setBarStyle(
                 self.config['episodebar_style'], self.config['episodebar_text'])

@@ -170,6 +170,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
     _bar_style = BarStyle04
     _show_text = False
     _text_fraction = False
+    _show_buttons = False
 
     def __init__(self, parent, palette=None):
         self.colors = palette
@@ -197,11 +198,24 @@ class ShowsTableDelegate(QStyledItemDelegate):
 
             painter.save()
 
+            # Real Taiga's hover +/- episode buttons (ported from the
+            # win32 1.4 codebase's AnimeListDialog::ListView -- the Qt
+            # rewrite doesn't have this at all, see dlg_anime_list.cpp)
+            # sit flush at the left/right edges of the cell and shrink
+            # the bar to make room, rather than floating on top of it.
+            hovering = bool(self._show_buttons and
+                            (option.state & QStyle.StateFlag.State_MouseOver))
+            dec_visible = inc_visible = False
+            bar_rect = rect
+            if hovering:
+                dec_visible, inc_visible = self._button_visibility(value, maximum)
+                bar_rect = self._bar_rect(rect, dec_visible, inc_visible)
+
             if self._bar_style is self.BarStyleBasic:
                 prog_options = QStyleOptionProgressBar()
                 prog_options.maximum = maximum
                 prog_options.progress = value
-                prog_options.rect = rect
+                prog_options.rect = bar_rect
                 prog_options.palette = option.palette
                 prog_options.state = option.state
                 prog_options.direction = option.direction
@@ -215,31 +229,31 @@ class ShowsTableDelegate(QStyledItemDelegate):
             elif self._bar_style is self.BarStyle04:
                 painter.setBrush(getColor(self.colors['progress_bg']))
                 painter.setPen(QtCore.Qt.GlobalColor.transparent)
-                painter.drawRect(rect)
-                self.paintSubValue(painter, rect, subvalue, maximum)
+                painter.drawRect(bar_rect)
+                self.paintSubValue(painter, bar_rect, subvalue, maximum)
                 if value > 0:
                     if value >= maximum:
                         painter.setBrush(
                             getColor(self.colors['progress_complete']))
-                        mid = rect.width()
+                        mid = bar_rect.width()
                     else:
                         painter.setBrush(getColor(self.colors['progress_fg']))
-                        mid = int(rect.width() / float(maximum) * value)
+                        mid = int(bar_rect.width() / float(maximum) * value)
                     progressRect = QtCore.QRect(
-                        rect.x(), rect.y(), mid, rect.height())
+                        bar_rect.x(), bar_rect.y(), mid, bar_rect.height())
                     painter.drawRect(progressRect)
-                self.paintEpisodes(painter, rect, episodes, maximum)
+                self.paintEpisodes(painter, bar_rect, episodes, maximum)
 
             elif self._bar_style is self.BarStyleHybrid:
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_Source)
-                painter.fillRect(rect, QtCore.Qt.GlobalColor.transparent)
+                painter.fillRect(bar_rect, QtCore.Qt.GlobalColor.transparent)
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceOver)
                 prog_options = QStyleOptionProgressBar()
                 prog_options.maximum = maximum
                 prog_options.progress = value
-                prog_options.rect = rect
+                prog_options.rect = bar_rect
                 prog_options.palette = option.palette
                 prog_options.state = option.state
                 prog_options.direction = option.direction
@@ -258,17 +272,84 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceAtop)
                 painter.setPen(QtCore.Qt.GlobalColor.transparent)
-                self.paintSubValue(painter, rect, subvalue, maximum)
-                self.paintEpisodes(painter, rect, episodes, maximum)
+                self.paintSubValue(painter, bar_rect, subvalue, maximum)
+                self.paintEpisodes(painter, bar_rect, episodes, maximum)
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceOver)
                 if self._show_text:
                     self._progress_style.drawControl(
                         QStyle.ControlElement.CE_ProgressBarLabel, prog_options, painter)
 
+            if hovering:
+                self._paint_buttons(painter, rect, dec_visible, inc_visible)
+
             painter.restore()
         else:
             super().paint(painter, option, index)
+
+    def _button_visibility(self, value, maximum):
+        dec_visible = value > 0
+        inc_visible = not maximum or value < maximum
+        return dec_visible, inc_visible
+
+    def _button_rects(self, rect):
+        size = rect.height()
+        dec_rect = QtCore.QRect(rect.left(), rect.top(), size, rect.height())
+        inc_rect = QtCore.QRect(rect.right() - size + 1, rect.top(), size, rect.height())
+        return dec_rect, inc_rect
+
+    def _bar_rect(self, rect, dec_visible, inc_visible):
+        bar_rect = QtCore.QRect(rect)
+        dec_rect, inc_rect = self._button_rects(rect)
+        if dec_visible:
+            bar_rect.setLeft(dec_rect.right() + 1)
+        if inc_visible:
+            bar_rect.setRight(inc_rect.left() - 1)
+        return bar_rect
+
+    def _paint_buttons(self, painter, rect, dec_visible, inc_visible):
+        dec_rect, inc_rect = self._button_rects(rect)
+
+        def draw_button(btn_rect, glyph):
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(getColor(self.colors['progress_sub_bg']))
+            painter.drawRect(btn_rect)
+            painter.setPen(QtGui.QPen(getColor(self.colors['progress_sub_fg'])))
+            font = QtGui.QFont(painter.font())
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(btn_rect, QtCore.Qt.AlignmentFlag.AlignCenter, glyph)
+
+        if dec_visible:
+            draw_button(dec_rect, '-')
+        if inc_visible:
+            draw_button(inc_rect, '+')
+
+    def editorEvent(self, event, model, option, index):
+        if (self._show_buttons and index.column() == 4
+                and event.type() == QtCore.QEvent.Type.MouseButtonRelease
+                and event.button() == QtCore.Qt.MouseButton.LeftButton):
+            data = index.model().data(index)
+            if data:
+                (value, maximum, _subvalue, _episodes) = data
+                dec_visible, inc_visible = self._button_visibility(value, maximum)
+                dec_rect, inc_rect = self._button_rects(option.rect)
+                source_row = index.model().mapToSource(index).row()
+                show = index.model().sourceModel().showlist[source_row]
+
+                if dec_visible and dec_rect.contains(event.pos()):
+                    index.model().sourceModel().progressChanged.emit(
+                        show['id'], float(value - 1))
+                    return True
+                if inc_visible and inc_rect.contains(event.pos()):
+                    new_value = value + 1
+                    if maximum:
+                        new_value = min(new_value, maximum)
+                    index.model().sourceModel().progressChanged.emit(
+                        show['id'], float(new_value))
+                    return True
+
+        return super().editorEvent(event, model, option, index)
 
     def paintSubValue(self, painter, rect, subvalue, maximum):
         if subvalue and maximum and subvalue <= maximum:
@@ -301,6 +382,9 @@ class ShowsTableDelegate(QStyledItemDelegate):
         self._bar_style = style
         self._show_text = show_text
         self._text_fraction = text_fraction
+
+    def setShowButtons(self, enabled):
+        self._show_buttons = enabled
 
     def _format_text(self, value, maximum):
         if self._text_fraction:

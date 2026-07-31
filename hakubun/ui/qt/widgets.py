@@ -286,6 +286,10 @@ class ShowsTableView(QTableView):
         self.horizontalHeader().setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.verticalHeader().hide()
         self.setGridStyle(QtCore.Qt.PenStyle.NoPen)
+        # Needed for State_MouseOver to reach the delegate's paint option
+        # for whichever row is under the cursor -- used by Taiga mode's
+        # hover +/- episode buttons (see ShowsTableDelegate).
+        self.setMouseTracking(True)
 
     def contextMenuEvent(self, event):
         action = self.context_menu.exec(event.globalPos())
