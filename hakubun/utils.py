@@ -404,17 +404,23 @@ def estimate_aired_episodes(show):
 GUESS_SHOW_CUTOFF = 0.7
 
 # Flat (choices, owners) view of the most recent tracker list, so a library scan
-# doesn't rebuild it once per filename. Keyed by identity; the strong reference
-# to the showlist keeps that id() from being recycled under us. _get_tracker_list
-# builds a fresh dict every time, so a changed list is always a cache miss.
+# doesn't rebuild it once per filename. _get_tracker_list builds a fresh dict on
+# every call, so keying the cache by object identity makes it a guaranteed miss
+# for any caller that doesn't hold one dict across a whole scan (e.g. the
+# inotify-driven single-file add path) -- keyed by a cheap (count, id-set hash)
+# content signature instead, so a rebuilt-but-unchanged list still hits. This
+# won't notice a show's titles/aliases changing with the id set held constant;
+# that's an accepted, harmless staleness window (a slightly stale match list,
+# not a crash) rather than a full invalidation contract.
 _guess_index = (None, None, None)
 
 
 def _title_index(showlist):
     global _guess_index
 
-    (cached_list, choices, owners) = _guess_index
-    if cached_list is showlist:
+    signature = (len(showlist), hash(frozenset(showlist.keys())))
+    (cached_signature, choices, owners) = _guess_index
+    if cached_signature == signature:
         return (choices, owners)
 
     choices, owners = [], []
