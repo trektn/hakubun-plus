@@ -1552,11 +1552,15 @@ class MainWindow(QMainWindow):
         self.taiga_nav.addItem(item)
 
     # Pages where the "currently selected show" info panel makes sense.
-    # Now Playing already shows a full-size version of the same info via
-    # now_playing_widget, and pages like Seasons have no selected-show
-    # relationship at all -- showing it there is just an empty poster
-    # sitting next to the nav column.
-    _TAIGA_INFO_PANEL_PAGES = frozenset({'list'})
+    # Real Taiga's Anime List is a full-width table with no such panel
+    # at all -- that quick-info sidebar is a trackma/hakubun-only
+    # concept, not something Taiga mode should keep just because
+    # classic mode has it. Now Playing already shows a full-size version
+    # of the same info via now_playing_widget, and pages like Seasons
+    # have no selected-show relationship at all. taiga_info_panel is
+    # still built (its child widgets, e.g. taiga_edit_widget, are reused
+    # by the Details dialog's Edit tab) -- it's just never shown.
+    _TAIGA_INFO_PANEL_PAGES = frozenset()
 
     def _set_taiga_page(self, key):
         """Single entry point for switching Taiga-mode pages, so the
