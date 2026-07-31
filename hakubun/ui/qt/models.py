@@ -236,10 +236,20 @@ class ShowListModel(QtCore.QAbstractTableModel):
                     total = (int(show['my_progress']/12)+1) * \
                         12  # Round up to the next cour
 
+                # `total` above is only ever a real episode count or a
+                # made-up bar-width denominator (rounded up to the next
+                # 12-episode block) -- fine for proportioning the bar
+                # itself, but showing it as e.g. "7/12" text (Taiga
+                # mode's text_fraction) would claim a known total that
+                # doesn't exist. show['total'] (real, possibly falsy) is
+                # carried alongside it so the delegate can show "?"
+                # instead when there's no real total, matching how
+                # COL_MY_PROGRESS already formats this same case.
                 if row in self.eps:
-                    return (show['my_progress'], total, self.eps[row][0], self.eps[row][1])
+                    return (show['my_progress'], total, self.eps[row][0], self.eps[row][1],
+                            show['total'])
                 else:
-                    return (show['my_progress'], total, None, None)
+                    return (show['my_progress'], total, None, None, show['total'])
             elif column == ShowListModel.COL_NEXT_EP:
                 return self.next_ep.get(row, '-')
             elif column == ShowListModel.COL_START_DATE:

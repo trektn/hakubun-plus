@@ -193,7 +193,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
             if not data:
                 return
 
-            (value, maximum, subvalue, episodes) = data
+            (value, maximum, subvalue, episodes, real_total) = data
             m = index.model().sourceModel()
 
             painter.save()
@@ -220,7 +220,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 prog_options.state = option.state
                 prog_options.direction = option.direction
                 prog_options.fontMetrics = option.fontMetrics
-                prog_options.text = self._format_text(value, maximum)
+                prog_options.text = self._format_text(value, maximum, real_total)
                 prog_options.textVisible = self._show_text
                 prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
                 self._progress_style.drawControl(
@@ -278,7 +278,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                     painter.setPen(QtGui.QPen(QtCore.Qt.GlobalColor.black))
                     painter.drawText(
                         bar_rect, QtCore.Qt.AlignmentFlag.AlignCenter,
-                        self._format_text(value, maximum))
+                        self._format_text(value, maximum, real_total))
 
             if hovering:
                 self._paint_buttons(painter, rect, dec_visible, inc_visible)
@@ -331,7 +331,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 and event.button() == QtCore.Qt.MouseButton.LeftButton):
             data = index.model().data(index)
             if data:
-                (value, maximum, _subvalue, _episodes) = data
+                (value, maximum, _subvalue, _episodes, _real_total) = data
                 dec_visible, inc_visible = self._button_visibility(value, maximum)
                 dec_rect, inc_rect = self._button_rects(option.rect)
                 source_row = index.model().mapToSource(index).row()
@@ -386,9 +386,14 @@ class ShowsTableDelegate(QStyledItemDelegate):
     def setShowButtons(self, enabled):
         self._show_buttons = enabled
 
-    def _format_text(self, value, maximum):
+    def _format_text(self, value, maximum, real_total=None):
         if self._text_fraction:
-            return '%d/%d' % (value, maximum)
+            # maximum is only ever a real total or a made-up bar-width
+            # denominator (rounded up to the next 12-episode block, see
+            # ShowListModel) -- real_total (unset unless it's genuinely
+            # known) is what actually belongs in the text, not maximum,
+            # or e.g. "7/12" would claim a total that doesn't exist.
+            return '%d/%s' % (value, real_total if real_total else '?')
         return '%d%%' % (value*100/maximum)
 
     def sizeHint(self, option, index):
