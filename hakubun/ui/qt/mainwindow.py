@@ -19,12 +19,12 @@ import os
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QFormLayout,
-                             QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                             QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-                             QProgressBar, QPushButton, QSizePolicy, QSpinBox, QStackedWidget, QStyle,
-                             QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit,
+                             QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
+                             QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                             QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy,
+                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
+                             QTabBar, QToolButton, QVBoxLayout, QWidget)
 
 from hakubun import messenger
 from hakubun import utils
@@ -569,6 +569,25 @@ class MainWindow(QMainWindow):
         self.show_status.setToolTip('Change your watching status of this show')
         self.show_status.currentIndexChanged.connect(self.s_set_status)
 
+        if self._taiga_mode:
+            # Never wired into any UI before Taiga mode's Edit tab --
+            # the engine's set_dates() already supports this, it just
+            # had nowhere to live. Unlike Rewatching/Times rewatched/
+            # Notes/Folder (also on real Taiga's equivalent screen),
+            # there's no engine support for those at all, so they're
+            # left out rather than faked.
+            self.show_start_date = QDateEdit()
+            self.show_start_date.setCalendarPopup(True)
+            self.show_start_date.setDisplayFormat('yyyy-MM-dd')
+            self.show_start_date.setToolTip('Date you started watching this show')
+            self.show_start_date.dateChanged.connect(self.s_set_start_date)
+
+            self.show_finish_date = QDateEdit()
+            self.show_finish_date.setCalendarPopup(True)
+            self.show_finish_date.setDisplayFormat('yyyy-MM-dd')
+            self.show_finish_date.setToolTip('Date you finished watching this show')
+            self.show_finish_date.dateChanged.connect(self.s_set_finish_date)
+
         # Hidden entirely until something's actually playing -- see
         # _update_now_playing_sidebar().
         self.now_playing_group = QGroupBox('Now Playing')
@@ -626,13 +645,37 @@ class MainWindow(QMainWindow):
             small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             left_box.addRow(small_btns_hbox)
 
-            edit_form = QFormLayout()
-            edit_form.addRow(show_progress_label)
-            edit_form.addRow(self.show_progress, self.show_progress_btn)
-            edit_form.addRow(show_score_label)
-            edit_form.addRow(self.show_score)
-            edit_form.addRow(self.show_status)
-            edit_form.addRow(self.show_tags_btn)
+            # Two-column grid, matching real Taiga's "My list and
+            # settings" tab layout (Episodes watched/Score side by
+            # side, Date started/Date completed side by side) rather
+            # than the single stacked column this used to be. Skips
+            # Times rewatched/Rewatching/Notes/Folder -- real Taiga has
+            # these too, but hakubun's engine has no equivalent data for
+            # any of them, and faking fields with nothing behind them
+            # would be worse than not having them.
+            edit_form = QGridLayout()
+            section_label = QLabel('<b>Anime list</b>')
+            edit_form.addWidget(section_label, 0, 0, 1, 4)
+
+            progress_row = QHBoxLayout()
+            progress_row.addWidget(self.show_progress)
+            progress_row.addWidget(self.show_progress_btn)
+            edit_form.addWidget(show_progress_label, 1, 0)
+            edit_form.addLayout(progress_row, 1, 1)
+            edit_form.addWidget(show_score_label, 1, 2)
+            edit_form.addWidget(self.show_score, 1, 3)
+
+            edit_form.addWidget(QLabel('Status:'), 2, 0)
+            edit_form.addWidget(self.show_status, 2, 1)
+
+            edit_form.addWidget(QLabel('Date started:'), 3, 0)
+            edit_form.addWidget(self.show_start_date, 3, 1)
+            edit_form.addWidget(QLabel('Date completed:'), 3, 2)
+            edit_form.addWidget(self.show_finish_date, 3, 3)
+
+            edit_form.addWidget(self.show_tags_btn, 4, 0, 1, 4)
+            edit_form.setRowStretch(5, 1)
+
             self.taiga_edit_widget = QWidget()
             self.taiga_edit_widget.setLayout(edit_form)
         else:
@@ -917,6 +960,10 @@ class MainWindow(QMainWindow):
         self.show_dec_btn.setEnabled(enable)
         self.show_play_btn.setEnabled(enable)
         self.show_status.setEnabled(enable)
+        if self._taiga_mode:
+            date_enabled = bool(self.mediainfo and self.mediainfo.get('can_date') and enable)
+            self.show_start_date.setEnabled(date_enabled)
+            self.show_finish_date.setEnabled(date_enabled)
         self.action_play_next.setEnabled(enable)
         self.action_play_dialog.setEnabled(enable)
         self.action_altname.setEnabled(enable)
@@ -1275,6 +1322,20 @@ class MainWindow(QMainWindow):
             self.mediainfo['statuses'].index(show['my_status']))
         self.show_score.setValue(show['my_score'])
 
+        if self._taiga_mode:
+            # blockSignals so populating these from the selected show
+            # doesn't itself trigger s_set_start_date/s_set_finish_date
+            # (dateChanged fires on programmatic setDate() too, not
+            # just user interaction).
+            for widget, key in ((self.show_start_date, 'my_start_date'),
+                                (self.show_finish_date, 'my_finish_date')):
+                widget.blockSignals(True)
+                date = show.get(key)
+                widget.setDate(
+                    QtCore.QDate(date.year, date.month, date.day) if date
+                    else QtCore.QDate.currentDate())
+                widget.blockSignals(False)
+
         # Enable relevant buttons
         self._enable_show_widgets(True)
 
@@ -1569,6 +1630,20 @@ class MainWindow(QMainWindow):
     def _set_show_status(self, showid, status):
         self._busy(True)
         self.worker_call('set_status', self.r_generic, showid, status)
+
+    def s_set_start_date(self, qdate):
+        if self.selected_show_id:
+            self._busy(True)
+            self.worker_call(
+                'set_dates', self.r_generic, self.selected_show_id,
+                start_date=qdate.toPyDate())
+
+    def s_set_finish_date(self, qdate):
+        if self.selected_show_id:
+            self._busy(True)
+            self.worker_call(
+                'set_dates', self.r_generic, self.selected_show_id,
+                finish_date=qdate.toPyDate())
 
     def s_undo(self):
         self._busy(True)
