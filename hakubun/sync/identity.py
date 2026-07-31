@@ -395,7 +395,11 @@ class IdentityResolver:
         raise ValueError('unknown action: %s' % action)
 
     def _conflict_by_id(self, conflict_id):
-        for row in self._store.identity_open():
-            if row['id'] == conflict_id:
-                return row
-        return None
+        """The conflict row, but only if it's still actionable (open or
+        deferred) -- resolved/ignored/provider_only rows are treated as
+        gone, matching identity_open()'s filter without re-scanning
+        every open conflict for one id (the row's PK)."""
+        row = self._store.identity_get_by_id(conflict_id)
+        if row is None or row['status'] not in ('open', 'deferred'):
+            return None
+        return row
