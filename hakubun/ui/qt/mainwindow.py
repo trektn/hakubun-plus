@@ -458,7 +458,20 @@ class MainWindow(QMainWindow):
                             'mal_score': 16}
 
         for i, column_name in enumerate(self.view.model().sourceModel().columns):
-            action = QAction(column_name, self, checkable=True)
+            if self._taiga_mode and i == ShowListModel.COL_MY_PROGRESS:
+                # Hidden by default in Taiga mode (redundant with
+                # Percent, itself renamed to "Progress" -- see
+                # _init_view()) -- leaving this in the menu would offer
+                # two same-named, easy-to-confuse "Progress" entries.
+                continue
+
+            # This menu is built before _init_view() renames Percent to
+            # "Progress" for Taiga mode -- match that name here too, or
+            # this entry would read "Percent" while the header (and the
+            # column it toggles) actually says "Progress".
+            label = 'Progress' if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
+                else column_name
+            action = QAction(label, self, checkable=True)
             action.setData(i)
             if column_name in self.api_config['visible_columns']:
                 action.setChecked(True)
