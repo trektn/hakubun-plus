@@ -1153,24 +1153,54 @@ class MainWindow(QMainWindow):
             self.view.horizontalHeader().resizeSection(4, 100)
 
         if self._taiga_mode:
-            # Real Taiga's leftmost column is a small airing-status dot
-            # (green/blue/red) -- it has an empty header and is never
-            # in visible_columns, so the hide-loop above always hides
-            # it; show and reposition it here instead, after any
-            # restored column state, so a remembered layout from before
-            # this column existed can't leave it hidden or misplaced.
-            dot_col = ShowListModel.COL_RELEASE_STATUS
-            header = self.view.horizontalHeader()
-            self.view.setColumnHidden(dot_col, False)
-            header.setSectionResizeMode(dot_col, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(dot_col, 20)
-            header.moveSection(header.visualIndex(dot_col), 0)
+            # Taiga mode's own column set/order, overriding whatever the
+            # classic api_config['visible_columns']-driven loop above
+            # did: status dot, Title, Progress (renamed from Percent --
+            # the plain-text "Progress" column duplicates it now that
+            # the bar shows the count as centered text), Score,
+            # Platform Score, Type, Season. Everything else (ID, the
+            # old Progress column, Next Episode, Start/End date, My
+            # start/finish, Tags, Status, Last updated, MAL Score) is
+            # hidden -- real Taiga doesn't show any of these (status is
+            # already conveyed by the nav/tabs, not a text column).
+            model = self.view.model().sourceModel()
+            model.columns = list(model.columns)
+            model.columns[ShowListModel.COL_PERCENT] = 'Progress'
 
-            # The plain-text "Progress" column (e.g. "7/12") is
-            # redundant now that Percent's bar already shows the same
-            # count as centered text -- real Taiga only has the one
-            # Progress column (our Percent), not both.
-            self.view.setColumnHidden(ShowListModel.COL_MY_PROGRESS, True)
+            header = self.view.horizontalHeader()
+            shown_columns = [
+                ShowListModel.COL_RELEASE_STATUS,
+                ShowListModel.COL_TITLE,
+                ShowListModel.COL_PERCENT,
+                ShowListModel.COL_MY_SCORE,
+                ShowListModel.COL_PLATFORM_SCORE,
+                ShowListModel.COL_TYPE,
+                ShowListModel.COL_SEASON,
+            ]
+            hidden_columns = [
+                ShowListModel.COL_ID,
+                ShowListModel.COL_MY_PROGRESS,
+                ShowListModel.COL_NEXT_EP,
+                ShowListModel.COL_START_DATE,
+                ShowListModel.COL_END_DATE,
+                ShowListModel.COL_MY_START,
+                ShowListModel.COL_MY_FINISH,
+                ShowListModel.COL_MY_TAGS,
+                ShowListModel.COL_MY_STATUS,
+                ShowListModel.COL_LAST_UPDATED,
+                ShowListModel.COL_MAL_SCORE,
+            ]
+            for col in hidden_columns:
+                self.view.setColumnHidden(col, True)
+            for target_index, col in enumerate(shown_columns):
+                self.view.setColumnHidden(col, False)
+                header.moveSection(header.visualIndex(col), target_index)
+
+            header.setSectionResizeMode(
+                ShowListModel.COL_RELEASE_STATUS, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(ShowListModel.COL_RELEASE_STATUS, 20)
+            # COL_TITLE (1) is already set to Stretch unconditionally
+            # above, which happens to match its Taiga-mode position too.
 
     def _set_default_poster(self):
         # With no show selected, fill the poster box with a placeholder
