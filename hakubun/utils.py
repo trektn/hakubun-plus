@@ -581,21 +581,39 @@ def mpv_ipc_socket_path():
     return to_cache_path('mpv-socket')
 
 
-def mpv_ipc_loadfile(filename):
+def subminer_mpv_socket_path(subminer_bin):
+    """SubMiner's own mpv IPC socket path (it manages a single mpv
+    instance under a fixed socket, normally /tmp/subminer-socket, rather
+    than our own mpv_ipc_socket_path()). Asked from the binary itself,
+    since it's not exposed in config.jsonc and could move with TMPDIR.
+    Returns None if subminer can't be asked (e.g. it hung or errored)."""
+    try:
+        result = subprocess.run(
+            [subminer_bin, 'mpv', 'socket'],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    path = result.stdout.strip()
+    return path or None
+
+
+def mpv_ipc_loadfile(filename, socket_path=None):
     """
     Tries to tell an already-running mpv instance (found via the fixed
-    IPC socket above) to play `filename` in place of whatever it's
-    currently playing. Returns True if the command was sent successfully
-    -- the caller shouldn't spawn a new process in that case -- or False
-    if nothing is listening on the socket (no reusable instance up yet,
-    or the previous one wasn't started with --input-ipc-server), meaning
+    IPC socket above, or `socket_path` if given -- e.g. SubMiner's own
+    socket) to play `filename` in place of whatever it's currently
+    playing. Returns True if the command was sent successfully -- the
+    caller shouldn't spawn a new process in that case -- or False if
+    nothing is listening on the socket (no reusable instance up yet, or
+    the previous one wasn't started with --input-ipc-server), meaning
     the caller should fall back to spawning a new mpv process normally.
     """
     if not hasattr(socket, 'AF_UNIX'):
         # mpv's IPC socket is a Windows named pipe there, not a Unix
         # domain socket -- instance reuse is POSIX-only for now.
         return False
-    socket_path = mpv_ipc_socket_path()
+    if socket_path is None:
+        socket_path = mpv_ipc_socket_path()
     if not os.path.exists(socket_path):
         return False
     try:

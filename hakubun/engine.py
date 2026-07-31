@@ -1560,6 +1560,17 @@ class Engine:
                 raise utils.EngineError(
                     'SubMiner not found. Install it or disable '
                     '"Open episodes with SubMiner" in settings.')
+
+            if self.config['player_reuse_mpv_instance']:
+                # SubMiner manages its own single mpv+overlay instance
+                # under its own fixed socket (not our mpv_ipc_socket_path)
+                # -- ask it where that is and hand off the same way we do
+                # for a plain mpv player below.
+                subminer_socket = utils.subminer_mpv_socket_path(subminer_bin)
+                if subminer_socket and utils.mpv_ipc_loadfile(filename, subminer_socket):
+                    self.msg.info('Handed off to the running SubMiner instance.')
+                    return []
+
             return [subminer_bin, filename]
 
         args = shlex.split(self.config['player'])
