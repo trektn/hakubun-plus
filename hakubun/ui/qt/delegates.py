@@ -251,9 +251,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 # bar, but reads as a "battery charging" pattern here,
                 # unlike real Taiga's smooth solid fill. So the actual
                 # colored fill is our own flat rect (identical to
-                # BarStyle04's smooth fill), and Fusion is used only for
-                # centering the text label on top -- never for the bar
-                # itself.
+                # BarStyle04's smooth fill).
                 painter.setPen(QtCore.Qt.GlobalColor.transparent)
                 painter.setBrush(getColor(self.colors['progress_bg']))
                 painter.drawRect(bar_rect)
@@ -271,19 +269,16 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 self.paintEpisodes(painter, bar_rect, episodes, maximum)
 
                 if self._show_text:
-                    prog_options = QStyleOptionProgressBar()
-                    prog_options.maximum = maximum
-                    prog_options.progress = value
-                    prog_options.rect = bar_rect
-                    prog_options.palette = option.palette
-                    prog_options.state = option.state
-                    prog_options.direction = option.direction
-                    prog_options.fontMetrics = option.fontMetrics
-                    prog_options.text = self._format_text(value, maximum)
-                    prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
-                    prog_options.textVisible = True
-                    self._progress_style.drawControl(
-                        QStyle.ControlElement.CE_ProgressBarLabel, prog_options, painter)
+                    # CE_ProgressBarLabel (tried previously) draws an
+                    # embossed two-tone effect tuned for Fusion's own
+                    # palette -- against these custom pastel bar colors
+                    # it comes out as garbled/doubled text. Plain flat
+                    # black text avoids depending on any style's
+                    # assumptions entirely.
+                    painter.setPen(QtGui.QPen(QtCore.Qt.GlobalColor.black))
+                    painter.drawText(
+                        bar_rect, QtCore.Qt.AlignmentFlag.AlignCenter,
+                        self._format_text(value, maximum))
 
             if hovering:
                 self._paint_buttons(painter, rect, dec_visible, inc_visible)
