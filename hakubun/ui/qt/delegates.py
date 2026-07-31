@@ -168,6 +168,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
     _subheight = 5
     _bar_style = BarStyle04
     _show_text = False
+    _text_fraction = False
 
     def __init__(self, parent, palette=None):
         self.colors = palette
@@ -196,7 +197,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 prog_options.state = option.state
                 prog_options.direction = option.direction
                 prog_options.fontMetrics = option.fontMetrics
-                prog_options.text = '%d%%' % (value*100/maximum)
+                prog_options.text = self._format_text(value, maximum)
                 prog_options.textVisible = self._show_text
                 option.widget.style().drawControl(QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
 
@@ -232,7 +233,14 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 prog_options.state = option.state
                 prog_options.direction = option.direction
                 prog_options.fontMetrics = option.fontMetrics
-                prog_options.text = '%d%%' % (value*100/maximum)
+                prog_options.text = self._format_text(value, maximum)
+                # Needed for the later CE_ProgressBarLabel call below to
+                # draw anything at all -- most styles' label control
+                # checks this flag too, not just CE_ProgressBar's own
+                # (unused here) label drawing. Any early label drawn by
+                # this CE_ProgressBar call gets safely overpainted by
+                # the CE_ProgressBarLabel call at the end regardless.
+                prog_options.textVisible = self._show_text
                 option.widget.style().drawControl(QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceAtop)
@@ -275,9 +283,15 @@ class ShowsTableDelegate(QStyledItemDelegate):
                     )
                     painter.drawRect(progressRect)
 
-    def setBarStyle(self, style, show_text):
+    def setBarStyle(self, style, show_text, text_fraction=False):
         self._bar_style = style
         self._show_text = show_text
+        self._text_fraction = text_fraction
+
+    def _format_text(self, value, maximum):
+        if self._text_fraction:
+            return '%d/%d' % (value, maximum)
+        return '%d%%' % (value*100/maximum)
 
     def sizeHint(self, option, index):
         return QtCore.QSize(option.rect.width(), QtGui.QFontMetrics(option.font).height() + 2)

@@ -32,6 +32,7 @@ from hakubun.accounts import AccountManager
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
+from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.details import DetailsDialog
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
 from hakubun.ui.qt.seasons import SeasonsWidget
@@ -412,8 +413,19 @@ class MainWindow(QMainWindow):
             self.s_show_menu_columns)
         self.view.horizontalHeader().sortIndicatorChanged.connect(self.s_update_sort)
         self.view.selectionModel().currentRowChanged.connect(self.s_show_selected)
-        self.view.itemDelegate().setBarStyle(
-            self.config['episodebar_style'], self.config['episodebar_text'])
+        if self._taiga_mode:
+            # Real Taiga always shows the episode count (e.g. "7/12",
+            # not a percentage) directly on its progress bars, with
+            # markers for downloaded episodes -- not a user preference
+            # there the way episodebar_style/episodebar_text are here.
+            # BarStyle04 (the usual default) never draws text at all
+            # regardless of show_text, so this needs BarStyleHybrid
+            # specifically to get both the episode markers and text.
+            self.view.itemDelegate().setBarStyle(
+                ShowsTableDelegate.BarStyleHybrid, True, text_fraction=True)
+        else:
+            self.view.itemDelegate().setBarStyle(
+                self.config['episodebar_style'], self.config['episodebar_text'])
         self.view.middleClicked.connect(lambda: self.s_play(True))
         self.view.doubleClicked.connect(self.s_show_details)
         self._apply_view()
