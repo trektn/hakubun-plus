@@ -183,12 +183,14 @@ class DetailsWidget(QWidget):
             self.facts_layout.removeRow(0)
 
     def load(self, show):
-        metrics = QtGui.QFontMetrics(self.show_title.font())
-        title = metrics.elidedText(
-            show['title'], QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
-
+        # show_title already wraps (setWordWrap(True), see __init__) --
+        # eliding here too was actively wrong: load() runs immediately
+        # after construction, before the widget has been laid out, so
+        # self.show_title.width() read whatever placeholder width Qt
+        # hands out pre-layout (often near-zero), truncating titles far
+        # more aggressively than the dialog's real width ever required.
         self.show_title.setText("<a href=\"%s\">%s</a>" % (
-            html.escape(show['url']), html.escape(title)))
+            html.escape(show['url']), html.escape(show['title'])))
         self.show_title.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.show_title.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
