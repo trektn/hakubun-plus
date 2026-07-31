@@ -157,8 +157,12 @@ class MultiSyncWindow(Gtk.Window):
             'ownership) and start clean. Your provider lists are never '
             'touched; the next Fetch re-derives everything.')
         self.reset_button.connect('clicked', lambda *_a: self.s_reset())
-        for b in (self.fetch_button, self.apply_button, self.cancel_button,
-                  self.reset_button):
+        # pack_end lays widgets out from the box's end inward, so the
+        # first one packed ends up at the outer edge: pack in reverse of
+        # the intended left-to-right (workflow) order -- Fetch & Plan,
+        # Apply, Cancel, Reset database.
+        for b in (self.reset_button, self.cancel_button, self.apply_button,
+                  self.fetch_button):
             bar.pack_end(b, False, False, 0)
         page.pack_start(bar, False, False, 0)
 
@@ -166,8 +170,8 @@ class MultiSyncWindow(Gtk.Window):
         page.pack_start(self.mode_context, False, False, 0)
         legend = Gtk.Label(xalign=0)
         legend.set_markup(
-            '<span foreground="%s">up push to a site</span>  '
-            '<span foreground="%s">down pull into Hakubun</span>  '
+            '<span foreground="%s">↑ push to a site</span>  '
+            '<span foreground="%s">↓ pull into Hakubun</span>  '
             '-- uncheck anything to skip it' % (_PUSH_COLOR, _PULL_COLOR))
         page.pack_start(legend, False, False, 0)
 
@@ -259,8 +263,11 @@ class MultiSyncWindow(Gtk.Window):
     def _change_label(self, change):
         direction, text = present.change_line(self.engine.adapters, change,
                                               self.engine.primary)
-        arrow, color = (('v', _PULL_COLOR) if direction == 'pull'
-                        else ('^', _PUSH_COLOR))
+        # Plain Arrows-block glyphs, not the emoji-set ⬆/⬇ Qt uses --
+        # those can fall back to a color-emoji font under Pango, which
+        # ignores the foreground colour and breaks the push/pull coding.
+        arrow, color = (('↓', _PULL_COLOR) if direction == 'pull'
+                        else ('↑', _PUSH_COLOR))
         if change.first_sync:
             color = _FIRST_SYNC_COLOR
         return ('%s %s' % (arrow, text), color)
