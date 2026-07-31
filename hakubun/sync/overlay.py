@@ -16,6 +16,7 @@ orchestrates who owns what.
 
 from hakubun import utils
 from hakubun.sync import normalize
+from hakubun.sync.diff import eq
 from hakubun.sync.models import PolicyKind, USER_FIELDS
 
 
@@ -166,7 +167,6 @@ def build_overlay(store, active_provider, active_mediainfo,
 
 
 def _eqish(a, b):
-    from hakubun.sync.diff import eq
     return eq(a, b)
 
 

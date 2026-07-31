@@ -13,6 +13,8 @@ genuinely theirs -- arrow glyphs, markup escaping, widget layout -- and
 delegate the wording and the arithmetic to these functions.
 """
 
+import re
+
 from hakubun import messenger
 from hakubun.sync import normalize
 from hakubun.sync.adapters import adapter_from_account
@@ -269,7 +271,6 @@ def display_title(title, aliases):
     """Native-script titles get a latin alias alongside, so a user whose
     AniList title language is Native can still tell what a row refers
     to."""
-    import re
     title = title or '?'
     if not re.search('[A-Za-z]', title):
         for alias in aliases or []:

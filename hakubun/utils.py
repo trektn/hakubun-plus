@@ -16,6 +16,7 @@
 
 import copy
 import datetime
+import decimal
 import difflib
 import html
 import json
@@ -429,7 +430,7 @@ def _title_index(showlist):
             choices.append(title.lower())
             owners.append(item)
 
-    _guess_index = (showlist, choices, owners)
+    _guess_index = (signature, choices, owners)
     return (choices, owners)
 
 
@@ -1155,7 +1156,6 @@ def snap_score_to_step(raw_score, mediainfo):
     actually store. Uses Decimal(str(...)) so binary float noise on fine
     steps can't tip a genuine half the wrong way (mirrors
     sync.normalize.provider_score)."""
-    import decimal
     step = mediainfo.get('score_step') or 1
     smax = mediainfo.get('score_max', 10)
     if not raw_score:
@@ -1169,6 +1169,15 @@ def snap_score_to_step(raw_score, mediainfo):
     if float(step).is_integer():
         return int(snapped)
     return round(float(snapped), 2)
+
+
+def kitsu_rating_twenty(my_score):
+    """Convert a my_score (0-5, half-star/0.5 grid) to Kitsu's
+    ratingTwenty (2-20, EVEN values only) -- my_score*4 always lands on
+    an even value on that grid. Used by both the REST and GraphQL
+    Kitsu adapters. 0 means 'clear the rating' (None), not a real
+    zero score."""
+    return int(my_score * 4) or None
 
 
 def date_to_season(dt) -> str:

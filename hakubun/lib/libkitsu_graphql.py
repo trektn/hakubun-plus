@@ -601,11 +601,8 @@ class libkitsu_graphql(lib):
         if 'my_status' in item:
             input_fields['status'] = self._status_to_gql(item['my_status'])
         if 'my_score' in item:
-            # ratingTwenty is a 2-20 scale; Kitsu's star rating system
-            # only accepts EVEN values (half-stars). my_score is on a
-            # 0-5/0.5 grid (score_step) so my_score*4 is always even here;
-            # 0 clears it.
-            input_fields['rating'] = int(item['my_score'] * 4) or None
+            input_fields['rating'] = utils.kitsu_rating_twenty(
+                item['my_score'])
 
     def _check_mutation_errors(self, payload, action):
         errors = payload.get('errors')
