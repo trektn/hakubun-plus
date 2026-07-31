@@ -1,5 +1,6 @@
 from PyQt6 import QtCore, QtGui
-from PyQt6.QtWidgets import QDoubleSpinBox, QStyle, QStyleOptionProgressBar, QStyledItemDelegate
+from PyQt6.QtWidgets import (QDoubleSpinBox, QStyle, QStyleFactory, QStyleOptionProgressBar,
+                             QStyledItemDelegate)
 
 from hakubun import utils
 from hakubun.ui.qt.util import IN_LIST_COLOR, getColor
@@ -172,6 +173,14 @@ class ShowsTableDelegate(QStyledItemDelegate):
 
     def __init__(self, parent, palette=None):
         self.colors = palette
+        # Native styles render CE_ProgressBar/CE_ProgressBarLabel very
+        # differently depending on the user's system theme -- some
+        # squeeze the bar and push the label out to the side instead of
+        # centering it. Force Fusion for this specific control, the way
+        # real Taiga's own paintProgressBar() does (QProxyStyle{"fusion"}
+        # in painters.cpp), so the bar/text layout is consistent
+        # regardless of the desktop theme.
+        self._progress_style = QStyleFactory.create('Fusion')
 
         super().__init__(parent)
 
@@ -199,7 +208,9 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 prog_options.fontMetrics = option.fontMetrics
                 prog_options.text = self._format_text(value, maximum)
                 prog_options.textVisible = self._show_text
-                option.widget.style().drawControl(QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
+                prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
+                self._progress_style.drawControl(
+                    QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
 
             elif self._bar_style is self.BarStyle04:
                 painter.setBrush(getColor(self.colors['progress_bg']))
@@ -234,6 +245,7 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 prog_options.direction = option.direction
                 prog_options.fontMetrics = option.fontMetrics
                 prog_options.text = self._format_text(value, maximum)
+                prog_options.textAlignment = QtCore.Qt.AlignmentFlag.AlignCenter
                 # Needed for the later CE_ProgressBarLabel call below to
                 # draw anything at all -- most styles' label control
                 # checks this flag too, not just CE_ProgressBar's own
@@ -241,7 +253,8 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 # this CE_ProgressBar call gets safely overpainted by
                 # the CE_ProgressBarLabel call at the end regardless.
                 prog_options.textVisible = self._show_text
-                option.widget.style().drawControl(QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
+                self._progress_style.drawControl(
+                    QStyle.ControlElement.CE_ProgressBar, prog_options, painter)
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceAtop)
                 painter.setPen(QtCore.Qt.GlobalColor.transparent)
@@ -250,7 +263,8 @@ class ShowsTableDelegate(QStyledItemDelegate):
                 painter.setCompositionMode(
                     QtGui.QPainter.CompositionMode.CompositionMode_SourceOver)
                 if self._show_text:
-                    option.widget.style().drawControl(QStyle.ControlElement.CE_ProgressBarLabel, prog_options, painter)
+                    self._progress_style.drawControl(
+                        QStyle.ControlElement.CE_ProgressBarLabel, prog_options, painter)
 
             painter.restore()
         else:
