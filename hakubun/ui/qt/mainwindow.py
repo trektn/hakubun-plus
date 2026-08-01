@@ -365,6 +365,16 @@ class MainWindow(QMainWindow):
                 action.triggered.connect(
                     lambda checked=False, u=url_template: self.s_search_online(u))
             self.menu_show_context.addMenu(self.menu_search_online)
+
+            # Real Taiga's Edit submenu has a quick-pick "Set score"
+            # radio list (res/menu.xml, "EditScore") -- fixed 0-10
+            # there since Taiga is MAL/Kitsu-centric, but hakubun also
+            # has AniList's 100-point scale, so this is populated (and
+            # re-populated on reload) in _rebuild_statuses() once
+            # mediainfo['score_max'/'score_step'] are known, rather
+            # than hardcoded here.
+            self.menu_quick_score = QMenu('Set score', self)
+            self.menu_show_context.addMenu(self.menu_quick_score)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
         self.menu_show_context.addAction(self.action_altname)
@@ -1143,6 +1153,9 @@ class MainWindow(QMainWindow):
 
         self.notebook.addTab("All")
 
+        if self._taiga_mode:
+            self._rebuild_quick_score_menu()
+
         self.show_status.blockSignals(False)
         self.notebook.blockSignals(False)
 
@@ -1202,6 +1215,30 @@ class MainWindow(QMainWindow):
     def _set_show_status_from_menu(self, status):
         if self.selected_show_id:
             self._set_show_status(self.selected_show_id, status)
+
+    def _rebuild_quick_score_menu(self):
+        self.menu_quick_score.clear()
+
+        display_max, _step, decimals = utils.score_display_range(self.mediainfo)
+        if not display_max:
+            return
+
+        # 11 evenly-spaced picks (0 through display_max) regardless of
+        # scale, rather than Taiga's fixed 0-10 -- that assumes a
+        # 10-point scale, which doesn't hold for e.g. AniList's 0-100.
+        for i in range(11):
+            display_value = display_max * i / 10
+            label = ('No Score' if i == 0 else '(%s)' % (
+                ('%.*f' % (decimals, display_value)).rstrip('0').rstrip('.')
+                if decimals else str(int(display_value))))
+            raw_value = utils.score_to_raw(display_value, self.mediainfo)
+            action = self.menu_quick_score.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, v=raw_value: self.s_set_quick_score(v))
+
+    def s_set_quick_score(self, raw_value):
+        if self.selected_show_id:
+            self.s_set_score(self.selected_show_id, raw_value)
 
     def _recalculate_counts(self):
         showlist = self.worker.engine.get_list()
