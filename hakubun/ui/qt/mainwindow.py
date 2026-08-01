@@ -21,11 +21,12 @@ import urllib.parse
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit,
-                             QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                             QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy,
-                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
-                             QTabBar, QToolButton, QVBoxLayout, QWidget)
+                             QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                             QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                             QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar,
+                             QPushButton, QSizePolicy, QSpinBox, QStackedWidget, QStyle,
+                             QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
+                             QWidget)
 
 from hakubun import messenger
 from hakubun import utils
@@ -613,9 +614,10 @@ class MainWindow(QMainWindow):
             # Never wired into any UI before Taiga mode's Edit tab --
             # the engine's set_dates() already supports this, it just
             # had nowhere to live. Unlike Rewatching/Times rewatched/
-            # Notes/Folder (also on real Taiga's equivalent screen),
-            # there's no engine support for those at all, so they're
-            # left out rather than faked.
+            # Notes (also on real Taiga's equivalent screen), there's no
+            # engine support for those at all, so they're left out
+            # rather than faked. Folder *is* now backed by the engine
+            # (set_show_folder/unset_show_folder) -- see below.
             #
             # A checkbox gates each date, matching real Taiga's own
             # dialog -- QDateEdit has no "empty" state, so without this
@@ -644,6 +646,24 @@ class MainWindow(QMainWindow):
             self.show_finish_date.setToolTip('Date you finished watching this show')
             self.show_finish_date_check.toggled.connect(self.s_toggle_finish_date)
             self.show_finish_date.dateChanged.connect(self.s_set_finish_date)
+
+            # Manually pin this show to a local folder, bypassing
+            # filename-based guessing entirely -- the escape hatch for a
+            # folder whose naming the parser/guesser can't match. Real
+            # Taiga's own Anime Information dialog has this as an
+            # editable path field; ours is read-only (set only via the
+            # folder picker) since typing a path needs to actually
+            # trigger a scan (set_show_folder), not just change text.
+            self.show_folder_edit = QLineEdit()
+            self.show_folder_edit.setReadOnly(True)
+            self.show_folder_edit.setPlaceholderText('Not set')
+            self.show_folder_edit.setToolTip(
+                "Local folder manually pinned to this show, bypassing "
+                "filename guessing -- for folders the parser can't match.")
+            self.show_folder_browse_btn = QPushButton('Browse...')
+            self.show_folder_browse_btn.clicked.connect(self.s_set_folder)
+            self.show_folder_clear_btn = QPushButton('Clear')
+            self.show_folder_clear_btn.clicked.connect(self.s_clear_folder)
 
         # Hidden entirely until something's actually playing -- see
         # _update_now_playing_sidebar().
@@ -702,46 +722,76 @@ class MainWindow(QMainWindow):
             small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             left_box.addRow(small_btns_hbox)
 
-            # Two-column grid, matching real Taiga's "My list and
-            # settings" tab layout (Episodes watched/Score side by
-            # side, Date started/Date completed side by side) rather
-            # than the single stacked column this used to be. Skips
-            # Times rewatched/Rewatching/Notes/Folder -- real Taiga has
+            # Single-column label+field form, matching real Taiga's own
+            # Anime Information dialog (win32 1.4's dlg_anime_info_page
+            # and the unreleased Qt rewrite's media_dialog are both
+            # plain top-down forms, not a side-by-side field grid) --
+            # a QGridLayout here previously let one row's expanding
+            # widget (e.g. the Status combo) stretch its column and
+            # drag unrelated fields in other rows out of place.
+            # Skips Times rewatched/Rewatching/Notes -- real Taiga has
             # these too, but hakubun's engine has no equivalent data for
-            # any of them, and faking fields with nothing behind them
-            # would be worse than not having them.
-            edit_form = QGridLayout()
+            # them, and faking fields with nothing behind them would be
+            # worse than not having them. Folder *is* backed by the
+            # engine (set_show_folder/unset_show_folder).
             section_label = QLabel('<b>Anime list</b>')
-            edit_form.addWidget(section_label, 0, 0, 1, 4)
 
+            form = QFormLayout()
+            form.setContentsMargins(0, 8, 0, 0)
+            form.setHorizontalSpacing(12)
+            form.setVerticalSpacing(8)
+
+            # Each row ends in addStretch(1) -- QAbstractSpinBox/
+            # QPushButton/QComboBox default to a Preferred horizontal
+            # size policy (not Fixed), so without something to soak up
+            # the field column's leftover width, QFormLayout stretches
+            # them individually across the row instead of leaving them
+            # at their natural size.
             progress_row = QHBoxLayout()
             progress_row.addWidget(self.show_progress)
             progress_row.addWidget(self.show_progress_btn)
-            edit_form.addWidget(show_progress_label, 1, 0)
-            edit_form.addLayout(progress_row, 1, 1)
-            edit_form.addWidget(show_score_label, 1, 2)
-            edit_form.addWidget(self.show_score, 1, 3)
+            progress_row.addStretch(1)
+            form.addRow(show_progress_label, progress_row)
 
-            edit_form.addWidget(QLabel('Status:'), 2, 0)
-            edit_form.addWidget(self.show_status, 2, 1)
+            score_row = QHBoxLayout()
+            score_row.addWidget(self.show_score)
+            score_row.addWidget(self.show_score_btn)
+            score_row.addStretch(1)
+            form.addRow(show_score_label, score_row)
+
+            self.show_status.setMinimumWidth(150)
+            status_row = QHBoxLayout()
+            status_row.addWidget(self.show_status)
+            status_row.addStretch(1)
+            form.addRow(QLabel('Status:'), status_row)
 
             start_date_row = QHBoxLayout()
             start_date_row.addWidget(self.show_start_date_check)
             start_date_row.addWidget(self.show_start_date)
+            start_date_row.addStretch(1)
+            form.addRow(QLabel('Date started:'), start_date_row)
+
             finish_date_row = QHBoxLayout()
             finish_date_row.addWidget(self.show_finish_date_check)
             finish_date_row.addWidget(self.show_finish_date)
+            finish_date_row.addStretch(1)
+            form.addRow(QLabel('Date completed:'), finish_date_row)
 
-            edit_form.addWidget(QLabel('Date started:'), 3, 0)
-            edit_form.addLayout(start_date_row, 3, 1)
-            edit_form.addWidget(QLabel('Date completed:'), 3, 2)
-            edit_form.addLayout(finish_date_row, 3, 3)
+            folder_row = QHBoxLayout()
+            folder_row.addWidget(self.show_folder_edit, 1)
+            folder_row.addWidget(self.show_folder_browse_btn)
+            folder_row.addWidget(self.show_folder_clear_btn)
+            form.addRow(QLabel('Folder:'), folder_row)
 
-            edit_form.addWidget(self.show_tags_btn, 4, 0, 1, 4)
-            edit_form.setRowStretch(5, 1)
+            edit_layout = QVBoxLayout()
+            edit_layout.addWidget(section_label)
+            edit_layout.addLayout(form)
+            edit_layout.addSpacing(8)
+            edit_layout.addWidget(self.show_tags_btn)
+            edit_layout.addStretch(1)
 
             self.taiga_edit_widget = QWidget()
-            self.taiga_edit_widget.setLayout(edit_form)
+            self.taiga_edit_widget.setLayout(edit_layout)
         else:
             small_btns_hbox.addWidget(self.show_dec_btn)
             small_btns_hbox.addWidget(self.show_play_btn)
@@ -1033,6 +1083,10 @@ class MainWindow(QMainWindow):
             # a date actually exists -- see _select_show/s_toggle_*_date.
             self.show_start_date.setEnabled(date_enabled and self.show_start_date_check.isChecked())
             self.show_finish_date.setEnabled(date_enabled and self.show_finish_date_check.isChecked())
+            folder_enabled = bool(self.mediainfo and self.mediainfo.get('can_play') and enable)
+            self.show_folder_browse_btn.setEnabled(folder_enabled)
+            self.show_folder_clear_btn.setEnabled(
+                folder_enabled and bool(self.show_folder_edit.text()))
         self.action_play_next.setEnabled(enable)
         self.action_play_dialog.setEnabled(enable)
         self.action_altname.setEnabled(enable)
@@ -1383,6 +1437,8 @@ class MainWindow(QMainWindow):
             self.show_score.setValue(0)
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
+            if self._taiga_mode:
+                self.show_folder_edit.setText('')
             self._enable_show_widgets(False)
 
             return
@@ -1441,6 +1497,14 @@ class MainWindow(QMainWindow):
                 widget.setEnabled(bool(date))
                 check.blockSignals(False)
                 widget.blockSignals(False)
+
+            # self.worker.engine can still be None here -- a show gets
+            # selected (e.g. a stale queued selection-changed signal)
+            # before the engine has finished loading, or after it's
+            # been torn down (account switch, fatal error unload).
+            engine = self.worker.engine
+            self.show_folder_edit.setText(
+                (engine and engine.get_show_folder(show['id'])) or '')
 
         # Enable relevant buttons
         self._enable_show_widgets(True)
@@ -1765,6 +1829,39 @@ class MainWindow(QMainWindow):
         self.show_finish_date.setEnabled(checked)
         if checked:
             self.s_set_finish_date(self.show_finish_date.date())
+
+    def s_set_folder(self):
+        if not self.selected_show_id:
+            return
+        current = self.worker.engine.get_show_folder(self.selected_show_id)
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Select folder', current or os.path.expanduser('~'))
+        if not folder:
+            return
+        self._busy(True)
+        self.worker_call('set_show_folder', self.r_folder_set,
+                         self.selected_show_id, folder)
+
+    def r_folder_set(self, result):
+        if result['success']:
+            self._update_folder_display()
+            self._rebuild_view()
+            self.status('Ready.')
+        self._unbusy()
+
+    def s_clear_folder(self):
+        if not self.selected_show_id:
+            return
+        self.worker.engine.unset_show_folder(self.selected_show_id)
+        self._update_folder_display()
+        self.status('Folder cleared.')
+
+    def _update_folder_display(self):
+        engine = self.worker.engine
+        folder = self.selected_show_id and engine and engine.get_show_folder(
+            self.selected_show_id)
+        self.show_folder_edit.setText(folder or '')
+        self.show_folder_clear_btn.setEnabled(bool(folder))
 
     def s_undo(self):
         self._busy(True)
