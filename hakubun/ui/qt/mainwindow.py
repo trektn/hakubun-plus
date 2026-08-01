@@ -16,6 +16,7 @@
 
 import base64
 import os
+import urllib.parse
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
@@ -68,6 +69,22 @@ class MainWindow(QMainWindow):
     show_lists = None
     finish = False
     was_maximized = False
+
+    # Taiga mode's row context menu "Search" submenu (res/menu.xml,
+    # "Search" -- ported minus the two torrent-search entries). {title}
+    # is URL-quoted before formatting, see s_search_online().
+    _SEARCH_ONLINE_SITES = (
+        ('AniDB', 'https://anidb.net/perl-bin/animedb.pl?show=animelist&adb.search={title}'
+                  '&noalias=1&do.update=update'),
+        ('AniList', 'https://anilist.co/search/anime?sort=SEARCH_MATCH&search={title}'),
+        ('Anime News Network', 'https://www.animenewsnetwork.com/search?q={title}'),
+        ('Kitsu', 'https://kitsu.io/anime?text={title}'),
+        ('MyAnimeList', 'https://myanimelist.net/anime.php?q={title}'),
+        ('Reddit', 'https://www.reddit.com/search?sort=new&q=subreddit%3Aanime+title%3A'
+                   '{title}+episode+discussion'),
+        ('Wikipedia', 'https://en.wikipedia.org/wiki/Special:Search?search={title}'),
+        ('YouTube', 'https://www.youtube.com/results?search_query={title}'),
+    )
 
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
@@ -336,6 +353,18 @@ class MainWindow(QMainWindow):
         self.menu_show_context = QMenu()
         self.menu_show_context.addMenu(self.menu_play)
         self.menu_show_context.addAction(self.action_details)
+        if self._taiga_mode:
+            # Real Taiga's row context menu (res/menu.xml, "RightClick")
+            # has a "Search" submenu of external sites here, using the
+            # show's title -- ported the non-torrent entries (skips
+            # "Custom RSS feed"/"Nyaa.si", out of scope). Pure URL-
+            # opening, no engine dependency.
+            self.menu_search_online = QMenu('Search', self)
+            for site_name, url_template in self._SEARCH_ONLINE_SITES:
+                action = self.menu_search_online.addAction(site_name)
+                action.triggered.connect(
+                    lambda checked=False, u=url_template: self.s_search_online(u))
+            self.menu_show_context.addMenu(self.menu_search_online)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
         self.menu_show_context.addAction(self.action_altname)
@@ -1847,6 +1876,13 @@ class MainWindow(QMainWindow):
         if ok:
             self.worker.engine.altname(self.selected_show_id, str(new_altname))
             self.ws_changed_show(show, altname=new_altname)
+
+    def s_search_online(self, url_template):
+        if not self.selected_show_id:
+            return
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+        title = urllib.parse.quote(show['title'])
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(url_template.format(title=title)))
 
     def s_open_folder(self):
         try:
