@@ -36,6 +36,7 @@ from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.details import DetailsDialog
 from hakubun.ui.qt.models import ShowListModel
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
+from hakubun.ui.qt.search import SearchWidget
 from hakubun.ui.qt.seasons import SeasonsWidget
 from hakubun.ui.qt.settings import SettingsDialog
 from hakubun.ui.qt.stats import StatisticsWidget
@@ -780,19 +781,20 @@ class MainWindow(QMainWindow):
             self.taiga_nav.currentItemChanged.connect(self._on_taiga_nav_changed)
 
             self.seasons_widget = SeasonsWidget(self, self.worker)
+            self.search_widget = SearchWidget(self, self.worker)
             self.stats_widget = StatisticsWidget(self, self.worker)
 
             # Grouping matches real Taiga's sidebar: Now Playing on its
             # own, then list-management pages, then discovery pages
-            # (History/Search/Torrents omitted -- no data model for the
-            # first, no persistent page built yet for the second, and
-            # the third is out of scope entirely).
+            # (History/Torrents omitted -- no data model for the
+            # former, the latter out of scope entirely).
             self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
                                   self.now_playing_widget)
             self._add_taiga_separator()
             self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
             self._add_taiga_page('stats', 'Statistics', 'view-statistics', self.stats_widget)
             self._add_taiga_separator()
+            self._add_taiga_page('search', 'Search', 'edit-find', self.search_widget)
             self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
 
             # Only the Anime List page has a "currently selected show" to
@@ -2184,6 +2186,7 @@ class MainWindow(QMainWindow):
                 self._rebuild_services_menu()
                 self._rebuild_library_folders_menu()
                 self.seasons_widget.set_context(self.api_info, self.mediainfo)
+                self.search_widget.set_context(self.api_info, self.mediainfo)
                 self.stats_widget.refresh()
                 self.show_filter.setPlaceholderText(
                     'Filter list or search %s' % self.api_info['name'])

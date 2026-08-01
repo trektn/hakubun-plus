@@ -329,6 +329,16 @@ class AddTableModel(QtCore.QAbstractTableModel):
 
         super().__init__(parent)
 
+    def set_mylist(self, mylist):
+        """See AddListDelegate.set_mylist -- refreshes the "In Your
+        List" column/tint for a view that outlives a single search
+        (Taiga mode's Search page), instead of the one-shot snapshot a
+        modal takes."""
+        self.mylist = mylist or {}
+        if self.results:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(len(self.results) - 1, self.columnCount(None) - 1))
+
     def setResults(self, new_results):
         self.beginResetModel()
         self.results = new_results

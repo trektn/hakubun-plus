@@ -400,6 +400,10 @@ class AddTableDetailsView(QSplitter):
     def clearSelection(self):
         return self.table.clearSelection()
 
+    def set_mylist(self, mylist):
+        """See AddListDelegate.set_mylist / AddTableModel.set_mylist."""
+        self.getModel().set_mylist(mylist)
+
 
 class HoverProgressBar(QWidget):
     """A progress bar with +/- buttons overlaid on its left/right edges
