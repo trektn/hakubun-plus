@@ -305,7 +305,7 @@ fragment mediaListEntry on MediaList {
                     'type': self._translate_type(media['format']),
                     'status': self._translate_status(media['status']),
                     'platform_score': (
-                        '%d%%' % media['averageScore'] if media.get('averageScore') else None),
+                        '%.2f%%' % media['averageScore'] if media.get('averageScore') else None),
                     'mal_id': media.get('idMal'),
                     'my_progress': self._c(item['progress']),
                     'my_status': my_status,
@@ -418,6 +418,7 @@ fragment mediaListEntry on MediaList {
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
       season
+      nextAiringEpisode { airingAt }
     }
   }
 }'''
@@ -455,6 +456,7 @@ fragment mediaListEntry on MediaList {
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
       season
+      nextAiringEpisode { airingAt }
   }
 }'''
 
@@ -496,6 +498,7 @@ fragment mediaListEntry on MediaList {
             'url': item['siteUrl'],
             'start_date': self._dict2date(item.get('startDate')),
             'end_date': self._dict2date(item.get('endDate')),
+            'airing_time': self._airing_time(item.get('nextAiringEpisode')),
             'extra': [
                 ('English',         item['title'].get('english')),
                 ('Romaji',          item['title'].get('romaji')),
@@ -573,6 +576,20 @@ fragment mediaListEntry on MediaList {
             return datetime.datetime.fromtimestamp(item, tz=datetime.timezone.utc)
         except ValueError:
             return None
+
+    def _airing_time(self, next_airing_episode):
+        """Weekday+time label for the next episode's airing slot, e.g.
+        "Mondays at 23:00 JST" -- converted to JST since that's the
+        show's actual broadcast timezone, matching how MAL's own
+        'broadcast' field is already expressed (libmal._parse_info)."""
+        if not next_airing_episode or not next_airing_episode.get('airingAt'):
+            return None
+        try:
+            jst = datetime.timezone(datetime.timedelta(hours=9))
+            dt = datetime.datetime.fromtimestamp(next_airing_episode['airingAt'], tz=jst)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return '%ss at %s JST' % (dt.strftime('%A'), dt.strftime('%H:%M'))
 
     def _c(self, s):
         if s is None:

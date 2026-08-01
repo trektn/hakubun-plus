@@ -57,6 +57,7 @@ class AddListDelegate(QStyledItemDelegate):
         mylist_entry = self.mylist.get(data.get('id'))
         in_list_label = self.statuses_dict.get(
             mylist_entry['my_status'], '?') if mylist_entry else None
+        airing_time = data.get('airing_time')
 
         painter.save()
 
@@ -113,6 +114,9 @@ class AddListDelegate(QStyledItemDelegate):
         painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Type")
         textRect.translate(0, self.fh + 5)
         painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Episodes")
+        if airing_time:
+            textRect.translate(0, self.fh + 5)
+            painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Airs")
         if in_list_label:
             textRect.translate(0, self.fh + 5)
             painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "In List")
@@ -129,6 +133,9 @@ class AddListDelegate(QStyledItemDelegate):
         dataRect.translate(0, self.fh + 5)
         painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop,
                          str(data.get('total') or '?'))
+        if airing_time:
+            dataRect.translate(0, self.fh + 5)
+            painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop, airing_time)
         if in_list_label:
             dataRect.translate(0, self.fh + 5)
             painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop, in_list_label)

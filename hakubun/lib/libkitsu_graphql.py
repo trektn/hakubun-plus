@@ -697,7 +697,7 @@ class libkitsu_graphql(lib):
         genres = self._category_titles(media.get('categories'))
         studios = self._production_studios(media.get('productions'))
         season = self._season_from_date(media.get('startDate'))
-        platform_score = '%.0f%%' % float(average) if average else None
+        platform_score = '%.2f%%' % float(average) if average else None
 
         age_rating = None
         if media.get('ageRating'):

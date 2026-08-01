@@ -330,7 +330,7 @@ class libmal(lib):
         self.check_credentials()
         self.msg.info("Searching for {}...".format(criteria))
 
-        fields = 'alternative_titles,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
+        fields = 'alternative_titles,broadcast,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
         params = {'fields': fields, 'nsfw': 'true'}
 
         if method == utils.SearchMethod.KW:
@@ -357,7 +357,7 @@ class libmal(lib):
         self.check_credentials()
         infolist = []
 
-        fields = 'alternative_titles,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
+        fields = 'alternative_titles,broadcast,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
         params = {'fields': fields, 'nsfw': 'true'}
         for item in itemlist:
             data = self._request('GET', self.query_url + '/%s/%d' % (self.mediatype, item['id']), get=params, auth=True)
@@ -409,6 +409,15 @@ class libmal(lib):
         genres = [g['name'] for g in item.get('genres', [])]
         studios = [s['name'] for s in item.get('studios', [])]
 
+        # MAL's broadcast field is already expressed in JST, day name
+        # lowercase (e.g. "monday") + "HH:MM" -- no timezone math needed,
+        # unlike AniList's raw airingAt timestamp.
+        broadcast = item.get('broadcast') or {}
+        airing_time = None
+        if broadcast.get('day_of_the_week') and broadcast.get('start_time'):
+            airing_time = '%ss at %s JST' % (
+                broadcast['day_of_the_week'].capitalize(), broadcast['start_time'])
+
         info.update({
             'id': showid,
             'title': item['title'],
@@ -421,6 +430,7 @@ class libmal(lib):
             'start_date': self._str2date(item.get('start_date')),
             'end_date': self._str2date(item.get('end_date')),
             'platform_score': score,
+            'airing_time': airing_time,
             'extra': [
                 ('English',         item['alternative_titles'].get('en')),
                 ('Japanese',        item['alternative_titles'].get('ja')),

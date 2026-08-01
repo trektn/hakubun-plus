@@ -600,7 +600,7 @@ class libkitsu(lib):
             'type':        self.type_translate.get(attr['subtype'], utils.Type.UNKNOWN),
             'status':      self.status_translate.get(attr['status'], utils.Status.UNKNOWN),
             'platform_score': (
-                '%.0f%%' % float(attr['averageRating']) if attr.get('averageRating') else None),
+                '%.2f%%' % float(attr['averageRating']) if attr.get('averageRating') else None),
             'url': "https://kitsu.app/{}/{}".format(self.mediatype, attr['slug']),
             'aliases':     list(filter(None, attr['titles'].values())),
             'extra': [
