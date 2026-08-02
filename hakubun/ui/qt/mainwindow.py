@@ -376,6 +376,22 @@ class MainWindow(QMainWindow):
             # than hardcoded here.
             self.menu_quick_score = QMenu('Set score', self)
             self.menu_show_context.addMenu(self.menu_quick_score)
+
+            # Real Taiga's Edit submenu also has "Set date started"/"Set
+            # date completed" quick submenus (res/menu.xml,
+            # "EditDateStarted"/"EditDateCompleted") offering shortcuts
+            # like "Set to date started airing" -- skips "Clear" (the
+            # engine's set_dates() has no clear capability, same
+            # limitation already noted on the Details tab's date
+            # checkboxes). Content is per-show, so it's rebuilt just
+            # before the menu is shown rather than once here.
+            self.menu_quick_date_started = QMenu('Set date started', self)
+            self.action_quick_date_started = self.menu_show_context.addMenu(
+                self.menu_quick_date_started)
+            self.menu_quick_date_completed = QMenu('Set date completed', self)
+            self.action_quick_date_completed = self.menu_show_context.addMenu(
+                self.menu_quick_date_completed)
+            self.menu_show_context.aboutToShow.connect(self._rebuild_quick_date_menus)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
         self.menu_show_context.addAction(self.action_altname)
@@ -1293,6 +1309,60 @@ class MainWindow(QMainWindow):
     def s_set_quick_score(self, raw_value):
         if self.selected_show_id:
             self.s_set_score(self.selected_show_id, raw_value)
+
+    def _rebuild_quick_date_menus(self):
+        self.menu_quick_date_started.clear()
+        self.menu_quick_date_completed.clear()
+
+        date_enabled = bool(
+            self.selected_show_id and self.mediainfo and self.mediainfo.get('can_date'))
+        self.action_quick_date_started.setEnabled(date_enabled)
+        self.action_quick_date_completed.setEnabled(date_enabled)
+        if not date_enabled:
+            return
+
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+
+        if show.get('start_date'):
+            action = self.menu_quick_date_started.addAction('Set to date started airing')
+            action.triggered.connect(
+                lambda checked=False, d=show['start_date']: self._quick_set_start_date(d))
+        self.action_quick_date_started.setEnabled(bool(self.menu_quick_date_started.actions()))
+
+        if show.get('end_date'):
+            action = self.menu_quick_date_completed.addAction('Set to date finished airing')
+            action.triggered.connect(
+                lambda checked=False, d=show['end_date']: self._quick_set_finish_date(d))
+        if show.get('my_last_update'):
+            action = self.menu_quick_date_completed.addAction('Set to last updated')
+            action.triggered.connect(
+                lambda checked=False, d=show['my_last_update']: self._quick_set_finish_date(d))
+        self.action_quick_date_completed.setEnabled(bool(self.menu_quick_date_completed.actions()))
+
+    def _quick_set_start_date(self, date):
+        # Drives the same checkbox+QDateEdit pair the Details tab uses,
+        # so both stay in sync regardless of which one changed the
+        # date -- blockSignals to commit once with the real target date
+        # instead of twice (once for the checkbox's own "just checked"
+        # commit, once for the date itself).
+        self.show_start_date_check.blockSignals(True)
+        self.show_start_date.blockSignals(True)
+        self.show_start_date_check.setChecked(True)
+        self.show_start_date.setEnabled(True)
+        self.show_start_date.setDate(QtCore.QDate(date.year, date.month, date.day))
+        self.show_start_date_check.blockSignals(False)
+        self.show_start_date.blockSignals(False)
+        self.s_set_start_date(self.show_start_date.date())
+
+    def _quick_set_finish_date(self, date):
+        self.show_finish_date_check.blockSignals(True)
+        self.show_finish_date.blockSignals(True)
+        self.show_finish_date_check.setChecked(True)
+        self.show_finish_date.setEnabled(True)
+        self.show_finish_date.setDate(QtCore.QDate(date.year, date.month, date.day))
+        self.show_finish_date_check.blockSignals(False)
+        self.show_finish_date.blockSignals(False)
+        self.s_set_finish_date(self.show_finish_date.date())
 
     def _recalculate_counts(self):
         showlist = self.worker.engine.get_list()
