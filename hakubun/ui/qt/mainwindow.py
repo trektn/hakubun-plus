@@ -942,6 +942,19 @@ class MainWindow(QMainWindow):
         action_hide = QAction('Show/Hide', self)
         action_hide.triggered.connect(self.s_hide)
         tray_menu.addAction(action_hide)
+        if self._taiga_mode:
+            # Real Taiga's tray menu (res/menu.xml, "Tray") also carries
+            # Folders/Services/Settings -- reuses the same menu objects
+            # already built and kept live for the menu bar (a QMenu can
+            # be referenced as a submenu from more than one parent),
+            # rather than building a second copy that would need its
+            # own separate refresh calls.
+            tray_menu.addSeparator()
+            tray_menu.addMenu(self.menu_library_folders)
+            tray_menu.addMenu(self.menu_services)
+            tray_menu.addSeparator()
+            tray_menu.addAction(action_settings)
+            tray_menu.addSeparator()
         tray_menu.addAction(action_quit)
 
         self.tray = QSystemTrayIcon(self.windowIcon())
