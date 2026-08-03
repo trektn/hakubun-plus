@@ -1,12 +1,17 @@
-"""Qt NowPlayingWidget: the poster shown above the progress bar/details
-area, no display needed.
+"""Qt NowPlayingWidget: the poster shown above the title/progress bar,
+no display needed.
 
-Regression coverage for an added feature -- a poster wasn't shown at
-all until a show's details finished loading (self.details.show_image,
-hidden while the empty state is active). self.image_label is an
-independent widget shown unconditionally, so it needs to be visible in
-both states, and self.details.show_image needs to stay hidden so the
-poster isn't shown twice.
+Regression coverage for two things:
+- A poster wasn't shown at all until a show's details finished loading
+  (DetailsWidget's own show_image is hidden until self.details itself
+  is shown, i.e. never in the empty state). image_label needs to stay
+  visible unconditionally, above the title -- same position GTK's
+  NowPlayingView shows its own image_box in.
+- image_label *is* self.details.show_image, reparented rather than
+  loaded a second time (two ImageWorker threads would otherwise race
+  to download and write the same cache file for the same show). It
+  must end up removed from details' own top_row, not just reparented,
+  or that layout keeps a stale, dangling item for it.
 """
 
 import os
@@ -41,14 +46,25 @@ class _FakeWorker:
         pass
 
 
+def test_poster_is_reused_detailswidget_image_shown_above_title(qapp):
+    widget = NowPlayingWidget(None, _FakeWorker())
+
+    assert widget.image_label is widget.details.show_image
+    assert widget.details.top_row.indexOf(widget.image_label) == -1
+
+    top_level_widgets = [
+        widget.layout().itemAt(i).widget()
+        for i in range(widget.layout().count())
+    ]
+    assert top_level_widgets.index(widget.title_label) > 0, (
+        'poster must come before the title in the top-level layout')
+
+
 def test_poster_visible_in_empty_and_recognized_states(qapp):
     widget = NowPlayingWidget(None, _FakeWorker())
     widget.show()
 
     assert widget.image_label.isHidden() is False
-    # The reused DetailsWidget's own poster would otherwise duplicate
-    # image_label's -- must stay hidden in both states.
-    assert widget.details.show_image.isHidden() is True
 
     widget.update_status({
         'state': utils.Tracker.PLAYING,
@@ -58,4 +74,3 @@ def test_poster_visible_in_empty_and_recognized_states(qapp):
     })
 
     assert widget.image_label.isHidden() is False
-    assert widget.details.show_image.isHidden() is True

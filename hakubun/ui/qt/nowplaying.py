@@ -14,29 +14,26 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import os
-
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from hakubun import utils
 from hakubun.ui.qt.widgets import DetailsWidget, PlaybackBar
-from hakubun.ui.qt.workers import ImageWorker
-
-_IMAGE_SIZE = QtCore.QSize(200, 280)
 
 
 class NowPlayingWidget(QWidget):
     """
     Taiga mode's dedicated "Now Playing" screen: what the tracker
-    currently sees playing, at the top -- title, episode, a play/pause
-    + progress bar row, Last/Next Episode buttons -- followed by that
-    show's normal details view (facts + synopsis), reused as-is (minus
-    its own title/poster, which would just duplicate the ones above).
+    currently sees playing, at the top -- poster, title, episode, a
+    play/pause + progress bar row, Last/Next Episode buttons --
+    followed by that show's normal details view (facts + synopsis),
+    reused as-is (minus its own title/poster, which would just
+    duplicate the ones above).
 
     When nothing is recognized as playing, the details view is hidden
     entirely (it used to just keep showing whatever was last loaded)
-    and replaced with a "play something at random" recommendation.
+    and replaced with a "play something at random" recommendation. The
+    poster stays visible either way (blank until something's playing).
     """
 
     playRequested = QtCore.pyqtSignal(int, int)  # show_id, episode
@@ -50,6 +47,31 @@ class NowPlayingWidget(QWidget):
 
         layout = QVBoxLayout()
 
+        # Built before the rest of the layout so its poster (image_on_right
+        # keeps it out of the way of the facts table below, which reads
+        # more naturally flush left) can be pulled out and shown up here,
+        # above the title -- same position GTK's NowPlayingView shows its
+        # own image_box in. Reusing this QLabel instead of loading a
+        # second, independent one avoids two ImageWorker threads racing
+        # to download and write the same cache file for the same show.
+        self.details = DetailsWidget(self, worker, image_on_right=True)
+        # The title label below already covers this -- showing it again
+        # here just duplicates (and, since this label measures its own
+        # not-yet-laid-out width to elide against, truncates) what's
+        # already on screen.
+        self.details.show_title.hide()
+
+        self.image_label = self.details.show_image
+        # addWidget() alone would move image_label's QObject parent to
+        # this layout but leave a stale QLayoutItem for it in details'
+        # own top_row -- remove it there first.
+        self.details.top_row.removeWidget(self.image_label)
+        image_row = QHBoxLayout()
+        image_row.addStretch(1)
+        image_row.addWidget(self.image_label)
+        image_row.addStretch(1)
+        layout.addLayout(image_row)
+
         self.title_label = QLabel('Nothing playing')
         title_font = QtGui.QFont()
         title_font.setBold(True)
@@ -62,23 +84,6 @@ class NowPlayingWidget(QWidget):
         self.status_label = QLabel('')
         self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
-
-        # An independent poster, not self.details.show_image (hidden
-        # below) -- that one only exists once self.details is populated
-        # and visible, i.e. never in the empty state, so a poster shown
-        # unconditionally up here needs its own widget and its own load
-        # path. Same approach GTK's NowPlayingView takes with its own
-        # image_box vs. the reused ShowInfoBox's image_container.
-        self.image_label = QLabel()
-        self.image_label.setFixedSize(_IMAGE_SIZE)
-        self.image_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet(
-            "border: 1px solid palette(mid); border-radius: 3px;")
-        image_row = QHBoxLayout()
-        image_row.addStretch(1)
-        image_row.addWidget(self.image_label)
-        image_row.addStretch(1)
-        layout.addLayout(image_row)
 
         # Play/pause + progress bar and the elapsed/total time, in one row.
         position_row = QHBoxLayout()
@@ -102,18 +107,6 @@ class NowPlayingWidget(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        # image_on_right: keeps the cover image visible (unlike show_title,
-        # it isn't shown anywhere else on this screen) but out of the way
-        # of the facts table, which reads more naturally flush left.
-        self.details = DetailsWidget(self, worker, image_on_right=True)
-        # The title label above already covers this -- showing it again
-        # here just duplicates (and, since this label measures its own
-        # not-yet-laid-out width to elide against, truncates) what's
-        # already on screen.
-        self.details.show_title.hide()
-        # Same reasoning for the poster -- self.image_label above already
-        # shows it, unconditionally.
-        self.details.show_image.hide()
         layout.addWidget(self.details, 1)
 
         # Shown instead of self.details when nothing is recognized.
@@ -208,30 +201,10 @@ class NowPlayingWidget(QWidget):
         self._show_details_state()
 
         if is_new_show:
+            # Loads facts + poster together -- see the comment in
+            # __init__ on why the poster ends up shown above the title
+            # instead of where DetailsWidget itself puts it.
             self.details.load(show)
-            self._load_image(show)
-
-    def _load_image(self, show):
-        if not show.get('image'):
-            self.image_label.clear()
-            return
-        api_info = self.worker.engine.api_info
-        filename = utils.to_cache_path("%s_%s_f_%s.jpg" % (
-            api_info['shortname'], api_info['mediatype'], show['id']))
-        if os.path.isfile(filename):
-            self._show_image(filename)
-        else:
-            utils.make_dir(utils.to_cache_path())
-            self.image_label.setText('Downloading...')
-            self._image_worker = ImageWorker(
-                show['image'], filename, (_IMAGE_SIZE.width(), _IMAGE_SIZE.height()))
-            self._image_worker.finished.connect(self._show_image)
-            self._image_worker.start()
-
-    def _show_image(self, filename):
-        self.image_label.setPixmap(QtGui.QPixmap(filename).scaled(
-            _IMAGE_SIZE, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation))
 
     def _on_watch_last(self):
         if self._show and self._episode and self._episode > 1:
