@@ -43,6 +43,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
     btn_search = Gtk.Template.Child()
     btn_airing_schedule = Gtk.Template.Child()
     btn_now_playing = Gtk.Template.Child()
+    switch_subminer = Gtk.Template.Child()
     mediatype_box = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
 
@@ -132,6 +133,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self.add(content_box)
 
             self.btn_now_playing.connect('toggled', self._on_now_playing_toggled)
+            self.switch_subminer.connect(
+                'notify::active', self._on_subminer_switch_toggled)
+            self._apply_subminer_state()
 
         self.connect('delete_event', self._on_delete_event)
         self.connect('key-press-event', self._on_key_press)
@@ -232,6 +236,36 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._set_mediatypes_buttons()
         self._update_widgets(account)
         self._set_buttons_sensitive(True)
+        self._apply_subminer_state()
+
+    def _apply_subminer_state(self):
+        available = utils.subminer_available()
+        self.switch_subminer.set_sensitive(available)
+        if available:
+            self.switch_subminer.set_tooltip_text(
+                'Open episodes with SubMiner instead of the configured '
+                'player.')
+        else:
+            self.switch_subminer.set_tooltip_text(
+                'SubMiner was not found on PATH. Install it to enable '
+                'this.')
+
+        if not self._engine:
+            return
+        checked = bool(self._engine.get_config('use_subminer'))
+        # Programmatic sync, not a user toggle -- block the handler so
+        # this doesn't re-write the config value it just read.
+        self.switch_subminer.handler_block_by_func(
+            self._on_subminer_switch_toggled)
+        self.switch_subminer.set_active(checked)
+        self.switch_subminer.handler_unblock_by_func(
+            self._on_subminer_switch_toggled)
+
+    def _on_subminer_switch_toggled(self, switch, _pspec):
+        if not self._engine:
+            return
+        self._engine.set_config('use_subminer', switch.get_active())
+        self._engine.save_config()
 
     def _set_actions(self):
         builder = Gtk.Builder.new_from_file(
@@ -654,6 +688,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
         # Settings toggle immediately (on or off).
         if self._main_view is not None:
             self._main_view.populate_all_pages()
+        # Settings > Media's SubMiner checkbox writes the same
+        # 'use_subminer' key as the header-bar switch -- keep the switch
+        # in sync with whatever was just saved there.
+        self._apply_subminer_state()
         if self._engine.get_config('sync_on_settings_apply'):
             threading.Thread(target=self._synchronization_task,
                              args=(True, False)).start()

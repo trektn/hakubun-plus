@@ -59,6 +59,28 @@
           </object>
         </child>
         <child>
+          <object class="GtkBox" id="subminer_box">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="spacing">6</property>
+            <property name="margin_start">6</property>
+            <child>
+              <object class="GtkLabel" id="lbl_subminer">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">SubMiner</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkSwitch" id="switch_subminer">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="valign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="GtkBox" id="mediatype_box">
             <property name="visible">True</property>
             <property name="can_focus">False</property>

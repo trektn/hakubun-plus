@@ -1071,21 +1071,6 @@ class NotebookPage(Gtk.ScrolledWindow):
         mb_playep.set_sensitive(bool(menu_eps.get_children()))
         menu.append(mb_playep)
 
-        mb_subminer = Gtk.CheckMenuItem("Play with SubMiner")
-        if utils.subminer_available():
-            # The global switch (Settings > Media) may have changed since
-            # this menu was last built -- always reflect its current value.
-            mb_subminer.set_active(bool(self._engine.get_config('use_subminer')))
-            mb_subminer.set_tooltip_text(
-                'Open episodes with SubMiner instead of the configured '
-                'player. Same switch as Settings > Media.')
-            mb_subminer.connect("toggled", self._on_subminer_toggled)
-        else:
-            mb_subminer.set_sensitive(False)
-            mb_subminer.set_tooltip_text(
-                'SubMiner was not found on PATH. Install it to enable this.')
-        menu.append(mb_subminer)
-
         menu.append(mb_info)
         menu.append(mb_move_to)
         menu.append(mb_web)
@@ -1157,7 +1142,3 @@ class NotebookPage(Gtk.ScrolledWindow):
         data = (self._selected_show,) if data is None else (
             self._selected_show, data)
         self.emit('show-action', event_type, data)
-
-    def _on_subminer_toggled(self, check_item):
-        self._engine.set_config('use_subminer', check_item.get_active())
-        self._engine.save_config()
