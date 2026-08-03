@@ -16,13 +16,17 @@ def test_year_dominates_over_season_name():
 
 
 def test_season_name_breaks_ties_within_a_year():
-    key_summer_2026 = utils.season_sort_key('Summer 2026')
+    """Within a year, seasons order chronologically (Winter, Spring,
+    Summer, Fall) -- not alphabetically."""
     key_winter_2026 = utils.season_sort_key('Winter 2026')
-    assert key_summer_2026 < key_winter_2026
+    key_spring_2026 = utils.season_sort_key('Spring 2026')
+    key_summer_2026 = utils.season_sort_key('Summer 2026')
+    key_fall_2026 = utils.season_sort_key('Fall 2026')
+    assert key_winter_2026 < key_spring_2026 < key_summer_2026 < key_fall_2026
 
 
 def test_year_only_label():
-    assert utils.season_sort_key('2020') == (2020, '')
+    assert utils.season_sort_key('2020') == (2020, -1)
 
 
 def test_unknown_label_sorts_last():

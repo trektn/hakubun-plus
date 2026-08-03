@@ -53,5 +53,6 @@ def test_year_dominates_over_season_name(qapp):
 
 
 def test_season_name_breaks_ties_within_a_year(qapp):
+    """Within a year, Winter sorts before Summer chronologically."""
     order = _sorted_titles([_show(1, 'Winter 2026'), _show(2, 'Summer 2026')])
-    assert order == ['show-2', 'show-1']
+    assert order == ['show-1', 'show-2']

@@ -1238,21 +1238,29 @@ def get_season_label(show) -> str:
     return date_to_season(show.get('start_date'))
 
 
+# Chronological (not alphabetical) position of each season name within a
+# year, matching the WINTER/SPRING/SUMMER/FALL order used by date_to_season.
+_SEASON_CHRONO_ORDER = {str(s): i for i, s in enumerate(
+    (Season.WINTER, Season.SPRING, Season.SUMMER, Season.FALL))}
+
+
 def season_sort_key(label):
     """Sort key for a get_season_label()-style 'Season Year' label (e.g.
-    'Summer 2026'), ordering by year first and season name second.
+    'Summer 2026'), ordering by year first and season second.
 
     A plain text sort on the label compares the season name before the
     year, since the name comes first in the string -- 'Fall 2011' sorts
     before 'Spring 2006' alphabetically even though 2006 is earlier.
-    Swapping the priority so year dominates fixes that, while season
-    name stays the (alphabetical) tiebreaker for same-year rows.
+    Swapping the priority so year dominates fixes that. The season
+    tiebreaker for same-year rows uses _SEASON_CHRONO_ORDER rather than
+    the raw name, so it lands in calendar order (Winter, Spring, Summer,
+    Fall) instead of alphabetical order (Fall, Spring, Summer, Winter).
     Unparseable/missing labels ('?') sort last.
     """
     text = str(label)
     if text.isdigit():
-        return (int(text), '')
+        return (int(text), -1)
     season, sep, year = text.rpartition(' ')
     if sep and year.isdigit():
-        return (int(year), season)
-    return (float('inf'), text)
+        return (int(year), _SEASON_CHRONO_ORDER.get(season, len(_SEASON_CHRONO_ORDER)))
+    return (float('inf'), 0)
