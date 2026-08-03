@@ -119,9 +119,17 @@ class _ScoreDistributionChart(QWidget):
 
     def mouseMoveEvent(self, event):
         row = self._row_at(event.position().y())
-        if row != self._hovered_row:
-            self._hovered_row = row
-            self.update()
+        if row == self._hovered_row:
+            # Re-issuing showText() on every mouse-move tick within the
+            # same row (Wayland compositors send many) makes Qt tear
+            # down and recreate the tooltip's popup window each time --
+            # under wlroots-based compositors that popup comes up
+            # without a transient parent set, spamming
+            # "qt.qpa.wayland: Failed to create popup" to stderr. Only
+            # touch the tooltip on an actual row transition.
+            return
+        self._hovered_row = row
+        self.update()
         if row >= 0:
             label, count = self._rows[row]
             QToolTip.showText(
