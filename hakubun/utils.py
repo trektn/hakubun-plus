@@ -927,6 +927,10 @@ qt_defaults = {
     'episodebar_text': False,
     'filter_bar_position': 2,
     'filter_global': False,
+    # Whether the SubMiner on/off toggle (toolbar in normal mode, Tools
+    # menu in Taiga mode) is shown at all -- purely cosmetic, doesn't
+    # touch config_defaults' 'use_subminer' switch itself.
+    'show_subminer_toggle': True,
     'multisync_enabled': True,
     # Same keys/semantics as config_defaults above.
     'multisync_mode': 'merge',

@@ -259,17 +259,6 @@ class SettingsDialog(QDialog):
             'Only applies when the player above is mpv. Hands off playback '
             'to the already-running mpv window via its IPC socket instead '
             'of starting a new process each time.')
-        self.player_use_subminer = QCheckBox()
-        if utils.subminer_available():
-            self.player_use_subminer.setToolTip(
-                'Opens episodes with SubMiner (detected on PATH) instead '
-                'of the player configured above. SubMiner launches mpv '
-                'itself with a sentence-mining overlay.')
-        else:
-            self.player_use_subminer.setEnabled(False)
-            self.player_use_subminer.setToolTip(
-                'SubMiner was not found on PATH. Install it to enable '
-                'this option.')
         lbl_searchdirs = QLabel('Media directories')
         lbl_searchdirs.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.searchdirs = QListWidget()
@@ -307,27 +296,23 @@ class SettingsDialog(QDialog):
         g_playnext_layout.addWidget(
             self.player_reuse_mpv,               2, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Open episodes with SubMiner instead by default'), 3, 0, 1, 2)
+            lbl_searchdirs,                      3, 0, 1, 1)
         g_playnext_layout.addWidget(
-            self.player_use_subminer,            3, 2, 1, 1)
-        g_playnext_layout.addWidget(
-            lbl_searchdirs,                      4, 0, 1, 1)
-        g_playnext_layout.addWidget(
-            self.searchdirs,                     4, 1, 1, 1)
+            self.searchdirs,                     3, 1, 1, 1)
         g_playnext_layout.addLayout(
-            self.searchdirs_buttons,             4, 2, 1, 1)
+            self.searchdirs_buttons,             3, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Rescan Library at startup'), 5, 0, 1, 2)
+            QLabel('Rescan Library at startup'), 4, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_autoscan,               5, 2, 1, 1)
+            self.library_autoscan,               4, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Scan through whole list'),   6, 0, 1, 2)
+            QLabel('Scan through whole list'),   5, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.scan_whole_list,                6, 2, 1, 1)
+            self.scan_whole_list,                5, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Take subdirectory name into account'), 7, 0, 1, 2)
+            QLabel('Take subdirectory name into account'), 6, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_full_path,              7, 2, 1, 1)
+            self.library_full_path,              6, 2, 1, 1)
 
         g_playnext.setLayout(g_playnext_layout)
 
@@ -610,11 +595,25 @@ class SettingsDialog(QDialog):
             self.load_mal_scores_btn, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         g_mal_scores.setLayout(g_mal_scores_layout)
 
+        # Group: SubMiner
+        g_subminer = QGroupBox('SubMiner')
+        g_subminer.setFlat(True)
+        self.show_subminer_toggle = QCheckBox(
+            'Show the SubMiner toggle (toolbar / Tools menu)')
+        self.show_subminer_toggle.setToolTip(
+            'SubMiner itself is switched on and off from that toggle, not '
+            'here -- this only controls whether the toggle is shown at '
+            'all.')
+        g_subminer_layout = QVBoxLayout()
+        g_subminer_layout.addWidget(self.show_subminer_toggle)
+        g_subminer.setLayout(g_subminer_layout)
+
         # UI layout
         page_ui_layout.addWidget(g_icon)
         page_ui_layout.addWidget(g_window)
         page_ui_layout.addWidget(g_lists)
         page_ui_layout.addWidget(g_mal_scores)
+        page_ui_layout.addWidget(g_subminer)
         page_ui.setLayout(page_ui_layout)
 
         # Theming tab
@@ -751,8 +750,6 @@ class SettingsDialog(QDialog):
         self.player.setText(engine.get_config('player'))
         self.player_reuse_mpv.setChecked(
             engine.get_config('player_reuse_mpv_instance'))
-        self.player_use_subminer.setChecked(
-            engine.get_config('use_subminer') and utils.subminer_available())
         self.library_autoscan.setChecked(engine.get_config('library_autoscan'))
         self.scan_whole_list.setChecked(engine.get_config('scan_whole_list'))
         self.library_full_path.setChecked(
@@ -830,6 +827,8 @@ class SettingsDialog(QDialog):
         self.columns_per_api.setChecked(self.config['columns_per_api'])
         self.filter_bar_position.setCurrentIndex(
             self.filter_bar_position.findData(self.config['filter_bar_position']))
+        self.show_subminer_toggle.setChecked(
+            self.config['show_subminer_toggle'])
         self.inline_edit.setChecked(self.config['inline_edit'])
         self.filter_global.setChecked(self.config['filter_global'])
         self.multisync_enabled.setChecked(self.config['multisync_enabled'])
@@ -895,9 +894,6 @@ class SettingsDialog(QDialog):
         engine.set_config('player',            self.player.text())
         engine.set_config('player_reuse_mpv_instance',
                            self.player_reuse_mpv.isChecked())
-        if self.player_use_subminer.isEnabled():
-            engine.set_config('use_subminer',
-                              self.player_use_subminer.isChecked())
         engine.set_config('library_autoscan',
                           self.library_autoscan.isChecked())
         engine.set_config('scan_whole_list', self.scan_whole_list.isChecked())
@@ -980,6 +976,8 @@ class SettingsDialog(QDialog):
         self.config['columns_per_api'] = self.columns_per_api.isChecked()
         self.config['filter_bar_position'] = self.filter_bar_position.itemData(
             self.filter_bar_position.currentIndex())
+        self.config['show_subminer_toggle'] = \
+            self.show_subminer_toggle.isChecked()
         self.config['inline_edit'] = self.inline_edit.isChecked()
         self.config['filter_global'] = self.filter_global.isChecked()
         self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
