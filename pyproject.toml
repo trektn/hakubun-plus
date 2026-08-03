@@ -1,6 +1,6 @@
 [project]
 name = "hakubun-plus"
-version = "0.13.dev0"
+version = "0.13"
 description = "Open multi-site list manager for Unix-like systems (independent fork of Trackma, with Taiga mode and an airing schedule window)"
 authors = [{ name = "trektn", email = "trekt@poopf.art" }]
 requires-python = ">=3.9,<4"
