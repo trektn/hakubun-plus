@@ -156,6 +156,33 @@ class AnitomyNgWrapper():
         return (ep_start, ep_end)
 
     @staticmethod
+    def _dedupe_regex_can_match(temp, sep):
+        """Necessary (not sufficient) precondition for _DEDUPE_RE to find
+        anything in `temp`, cheap enough to run on every file so the
+        actual backtracking regex only runs on real candidates.
+
+        Any match's group 1 ends at or before some separator, and its
+        backreferenced duplicate starts strictly after that SAME
+        separator (the lookahead is `.*?SEP.*?DUP`) -- so a match is
+        possible only if, for at least one separator position p, the
+        (case-folded) text before p and the text after p share some
+        3-character run at all. Checking every separator therefore
+        can't rule out a real match; if none of them share so much as a
+        3-gram, the regex is guaranteed to fail and can be skipped.
+        """
+        folded = temp.lower()
+        positions = [i for i, c in enumerate(temp) if c == sep]
+        for p in positions:
+            before, after = folded[:p], folded[p + 1:]
+            if len(before) < 3 or len(after) < 3:
+                continue
+            before_grams = {before[i:i + 3] for i in range(len(before) - 2)}
+            after_grams = {after[i:i + 3] for i in range(len(after) - 2)}
+            if before_grams & after_grams:
+                return True
+        return False
+
+    @staticmethod
     def __dedupePathTitle(file_name):
         # When library_full_path feeds a path like "Show S01/Show
         # S01E05.mkv", anitomy-ng (like upstream Anitomy, and unlike
@@ -168,13 +195,22 @@ class AnitomyNgWrapper():
         try:
             temp = re.sub(r'[^\w\s{0}\(\)\{{\}}\[\]]'.format(re.escape(os.path.sep)),
                           r' ', file_name, flags=re.ASCII)
-            m = max(
-                (x for x in re.finditer(
-                    r'(\b.{{3,}}\b)(?=.*?{0}.*?(?P<DUP>\1))'.format(re.escape(os.path.sep)),
-                    temp, flags=re.IGNORECASE)),
-                key=lambda y: y.end() - y.start(),
-                default=None,
-            )
+            # The backtracking search below is what dominated real
+            # library-scan time once fuzzy title matching stopped being
+            # the bottleneck (rapidfuzz) -- most files have no duplicated
+            # parent-folder title at all, so a cheap necessary-condition
+            # check first (see _dedupe_regex_can_match) skips it for
+            # those without changing what a real candidate ever matches.
+            m = None
+            if AnitomyNgWrapper._dedupe_regex_can_match(temp, os.path.sep):
+                m = max(
+                    (x for x in re.finditer(
+                        r'(\b.{{3,}}\b)(?=.*?{0}.*?(?P<DUP>\1))'.format(
+                            re.escape(os.path.sep)),
+                        temp, flags=re.IGNORECASE)),
+                    key=lambda y: y.end() - y.start(),
+                    default=None,
+                )
             if m:
                 file_name = file_name[:m.start('DUP')] + ' ' + file_name[m.end('DUP'):]
         except ValueError:

@@ -310,19 +310,24 @@ class libkitsu(lib):
             })
 
         if 'included' in data_json:
-            # 'included' now mixes media and mapping resources; index
-            # the mappings first, then attach each media's MAL id.
+            # 'included' mixes media and mapping resources; classify
+            # each item once, then attach each media's MAL id -- a
+            # mapping can appear anywhere in the list relative to the
+            # media that references it, so mappings must be fully
+            # indexed before any media is processed (two passes, but
+            # over disjoint items instead of the same list twice).
             mappings = {}
+            media_items = []
             for res in data_json['included']:
                 if res['type'] == 'mappings':
                     attrs = res.get('attributes') or {}
                     mappings[res['id']] = (attrs.get('externalSite'),
                                            attrs.get('externalId'))
+                else:
+                    media_items.append(res)
             wanted_site = 'myanimelist/' + (
                 'manga' if self.mediatype == 'manga' else 'anime')
-            for media in data_json['included']:
-                if media['type'] == 'mappings':
-                    continue
+            for media in media_items:
                 mal_id = None
                 refs = ((media.get('relationships') or {})
                         .get('mappings', {}).get('data') or [])
@@ -555,11 +560,8 @@ class libkitsu(lib):
         if 'my_status' in item:
             values['data']['attributes']['status'] = item['my_status']
         if 'my_score' in item:
-            # ratingTwenty (2-20) only accepts EVEN values (half-stars);
-            # my_score is on a 0-5/0.5 grid (score_step) so my_score*4 is
-            # always even. 0 clears the rating.
-            values['data']['attributes']['ratingTwenty'] = int(
-                item['my_score']*4) or None
+            values['data']['attributes']['ratingTwenty'] = \
+                utils.kitsu_rating_twenty(item['my_score'])
 
         return json.dumps(values)
 

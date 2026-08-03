@@ -1265,9 +1265,15 @@ class Engine:
             self.msg.info("Local library unchanged, skipping scan.")
             return
 
-        self.scan_library()
+        self.scan_library(signature=signature)
 
-    def scan_library(self, my_status=None, rescan=False, path=None):
+    def scan_library(self, my_status=None, rescan=False, path=None,
+                     signature=None):
+        """`signature`, when given, is a precomputed
+        _library_dirs_signature() the caller already has (see
+        _scan_library_if_changed) -- reusing it skips a second,
+        redundant directory-tree walk to compute the same value again
+        after the scan completes."""
         # Check if operation is supported by the API
         if not self.mediainfo.get('can_play'):
             raise utils.EngineError(
@@ -1324,16 +1330,22 @@ class Engine:
                     guess_show, forced_show=forced_show)
 
             self.msg.debug(f"Time: {time.time() - t:.3}s")
-            self.data_handler.library_save(library)
-            self.data_handler.library_cache_save(library_cache)
+
+        # library/library_cache accumulate across every scan target, so
+        # only the final save reflects anything the earlier ones don't
+        # -- saving after each target (once per searchdir/pinned-folder)
+        # just re-pickles a growing superset of the same data.
+        self.data_handler.library_save(library)
+        self.data_handler.library_cache_save(library_cache)
 
         if path is None:
             # Only a full scan (all searchdirs + pinned show folders)
             # produces a signature that's safe to cache -- a single-
             # directory scan wouldn't reflect the true state of the
             # others. Must match _scan_library_if_changed's own inputs.
-            signature = self._library_dirs_signature(
-                self.searchdirs + list(show_folders.values()))
+            if signature is None:
+                signature = self._library_dirs_signature(
+                    self.searchdirs + list(show_folders.values()))
             self.data_handler.library_scan_signature_save(signature)
 
         return library
