@@ -14,6 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import contextlib
 import datetime
 import json
 import os
@@ -186,6 +187,11 @@ class Engine:
         self._undo_stack = deque(maxlen=self.UNDO_LIMIT)
         self._redo_stack = deque(maxlen=self.UNDO_LIMIT)
         self._replaying_undo = False
+        # While not None, _record_undo() appends to this list instead of
+        # pushing straight to _undo_stack, so a user action that triggers
+        # several field changes (e.g. set_episode's auto status/date
+        # change) is recorded and undone/redone as one compound entry.
+        self._undo_group = None
 
         # Bumped on every fetch_mal_scores() call so an in-flight fetch
         # batch from a previous sync can tell it's been superseded and
@@ -208,14 +214,44 @@ class Engine:
         single field of a single show) onto the undo stack, so it can
         later be undone (and redone) via undo()/redo(). Does nothing while
         an undo/redo is itself being replayed, to avoid the replay being
-        recorded as a new action.
+        recorded as a new action. If called while inside a
+        _grouped_undo() block, the entry is added to that group instead
+        of being pushed directly.
         """
         if self._replaying_undo:
             return
-        self._undo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        entry = (method, showid, title, old_value, new_value, description)
+        if self._undo_group is not None:
+            self._undo_group.append(entry)
+            return
+        self._undo_stack.append(entry)
         self._redo_stack.clear()
         self._emit_signal('undo_stack_changed')
+
+    @contextlib.contextmanager
+    def _grouped_undo(self):
+        """
+        Wrap a user-facing action that may internally call more than one
+        _record_undo()-ing method (e.g. set_episode's auto status/date
+        change) so the whole thing is recorded and undone/redone as a
+        single compound entry instead of separate ones the user would
+        have to undo one at a time. Nested calls join the outermost
+        group rather than starting a new one.
+        """
+        if self._undo_group is not None:
+            yield
+            return
+        self._undo_group = []
+        try:
+            yield
+        finally:
+            group = self._undo_group
+            self._undo_group = None
+            if not group:
+                return
+            self._undo_stack.append(group[0] if len(group) == 1 else group)
+            self._redo_stack.clear()
+            self._emit_signal('undo_stack_changed')
 
     def can_undo(self):
         return len(self._undo_stack) > 0
@@ -226,51 +262,56 @@ class Engine:
     def undo(self):
         """
         Reverts the last undoable user action (episode, score, status or
-        tags change) by re-applying its old value. The reversal is itself
-        queued for the next sync, same as any other change.
+        tags change, possibly a compound of several fields changed
+        together) by re-applying its old value(s). The reversal is
+        itself queued for the next sync, same as any other change.
         """
         if not self._undo_stack:
             raise utils.EngineError('Nothing to undo.')
 
-        method, showid, title, old_value, new_value, description = self._undo_stack.pop()
-        self.msg.info("Undoing: %s" % description)
+        entry = self._undo_stack.pop()
+        actions = entry if isinstance(entry, list) else [entry]
         self._replaying_undo = True
         try:
-            getattr(self, method)(showid, old_value)
-        except utils.EngineError as e:
-            # The show may no longer be in a state where the old value
-            # applies (e.g. it was deleted). Don't leave the stacks
-            # inconsistent.
-            self.msg.warn("Couldn't undo '%s': %s" % (description, e))
-            raise
+            for method, showid, title, old_value, new_value, description in reversed(actions):
+                self.msg.info("Undoing: %s" % description)
+                try:
+                    getattr(self, method)(showid, old_value)
+                except utils.EngineError as e:
+                    # The show may no longer be in a state where the old
+                    # value applies (e.g. it was deleted). Don't leave the
+                    # stacks inconsistent.
+                    self.msg.warn("Couldn't undo '%s': %s" % (description, e))
+                    raise
         finally:
             self._replaying_undo = False
 
-        self._redo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        self._redo_stack.append(entry)
         self._emit_signal('undo_stack_changed')
-        return description
+        return actions[0][5]
 
     def redo(self):
-        """Re-applies the last user action undone via undo()."""
+        """Re-applies the last user action (or compound of actions) undone via undo()."""
         if not self._redo_stack:
             raise utils.EngineError('Nothing to redo.')
 
-        method, showid, title, old_value, new_value, description = self._redo_stack.pop()
-        self.msg.info("Redoing: %s" % description)
+        entry = self._redo_stack.pop()
+        actions = entry if isinstance(entry, list) else [entry]
         self._replaying_undo = True
         try:
-            getattr(self, method)(showid, new_value)
-        except utils.EngineError as e:
-            self.msg.warn("Couldn't redo '%s': %s" % (description, e))
-            raise
+            for method, showid, title, old_value, new_value, description in actions:
+                self.msg.info("Redoing: %s" % description)
+                try:
+                    getattr(self, method)(showid, new_value)
+                except utils.EngineError as e:
+                    self.msg.warn("Couldn't redo '%s': %s" % (description, e))
+                    raise
         finally:
             self._replaying_undo = False
 
-        self._undo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        self._undo_stack.append(entry)
         self._emit_signal('undo_stack_changed')
-        return description
+        return actions[0][5]
 
     def _tracker_detected(self, path, filename):
         self.add_to_library(path, filename)
@@ -992,56 +1033,59 @@ class Engine:
         if show['my_progress'] == newep:
             raise utils.EngineError("Show already at episode %d" % newep)
 
-        # Change episode
-        old_progress = show['my_progress']
-        self.msg.info("Updating show %s to episode %d..." %
-                      (show['title'], newep))
-        self.data_handler.queue_update(show, 'my_progress', newep)
-        self._record_undo(
-            'set_episode', show['id'], show['title'], old_progress, newep,
-            "Episode change for %s (%d -> %d)" % (show['title'], old_progress, newep))
+        # Change episode. Grouped so that an auto status change triggered
+        # below is undone/redone together with the episode change as one
+        # user-facing action, instead of requiring two separate undos.
+        with self._grouped_undo():
+            old_progress = show['my_progress']
+            self.msg.info("Updating show %s to episode %d..." %
+                          (show['title'], newep))
+            self.data_handler.queue_update(show, 'my_progress', newep)
+            self._record_undo(
+                'set_episode', show['id'], show['title'], old_progress, newep,
+                "Episode change for %s (%d -> %d)" % (show['title'], old_progress, newep))
 
-        # Emit signal
-        self._emit_signal('episode_changed', show)
+            # Emit signal
+            self._emit_signal('episode_changed', show)
 
-        # Change status if required
-        oldstatus = show['my_status']
-        if self.config['auto_status_change'] and self.mediainfo.get('can_status'):
-            try:
-                if show['total'] and newep == show['total'] and self.mediainfo.get('statuses_finish'):
-                    if (
-                            not self.config['auto_status_change_if_scored'] or
-                            not self.mediainfo.get('can_score') or
-                            show['my_score']
-                    ):
-                        # Change to finished status
-                        self.set_status(
-                            show['id'], self._guess_new_finish(show))
-                    else:
-                        self.msg.warn("Updated episode but status won't be changed until a score is set.")
-                elif newep == 1 and self.mediainfo.get('statuses_start'):
-                    # Change to start status
-                    self.set_status(show['id'], self._guess_new_start(show))
-            except utils.EngineError as e:
-                # Only warn about engine errors since status change here is not critical
-                self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
+            # Change status if required
+            oldstatus = show['my_status']
+            if self.config['auto_status_change'] and self.mediainfo.get('can_status'):
+                try:
+                    if show['total'] and newep == show['total'] and self.mediainfo.get('statuses_finish'):
+                        if (
+                                not self.config['auto_status_change_if_scored'] or
+                                not self.mediainfo.get('can_score') or
+                                show['my_score']
+                        ):
+                            # Change to finished status
+                            self.set_status(
+                                show['id'], self._guess_new_finish(show))
+                        else:
+                            self.msg.warn("Updated episode but status won't be changed until a score is set.")
+                    elif newep == 1 and self.mediainfo.get('statuses_start'):
+                        # Change to start status
+                        self.set_status(show['id'], self._guess_new_start(show))
+                except utils.EngineError as e:
+                    # Only warn about engine errors since status change here is not critical
+                    self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
 
-        # Change dates if required
-        if self.config['auto_date_change'] and self.mediainfo.get('can_date'):
-            start_date = finish_date = None
+            # Change dates if required
+            if self.config['auto_date_change'] and self.mediainfo.get('can_date'):
+                start_date = finish_date = None
 
-            try:
-                initial_status = self.mediainfo.get('statuses_start')[0]
+                try:
+                    initial_status = self.mediainfo.get('statuses_start')[0]
 
-                if newep == 1 and show['my_status'] == initial_status:
-                    start_date = datetime.date.today()
-                if show['total'] and newep == show['total'] and oldstatus == initial_status:
-                    finish_date = datetime.date.today()
+                    if newep == 1 and show['my_status'] == initial_status:
+                        start_date = datetime.date.today()
+                    if show['total'] and newep == show['total'] and oldstatus == initial_status:
+                        finish_date = datetime.date.today()
 
-                self.set_dates(show['id'], start_date, finish_date)
-            except utils.EngineError as e:
-                # Only warn about engine errors since date change here is not critical
-                self.msg.warn('Updated episode but dates weren\'t changed: %s' % e)
+                    self.set_dates(show['id'], start_date, finish_date)
+                except utils.EngineError as e:
+                    # Only warn about engine errors since date change here is not critical
+                    self.msg.warn('Updated episode but dates weren\'t changed: %s' % e)
 
         # Update the tracker with the new information
         self._update_tracker()
@@ -1100,33 +1144,36 @@ class Engine:
         if show['my_score'] == newscore:
             raise utils.EngineError("Score already at %s" % newscore)
 
-        # Change score
-        old_score = show['my_score']
-        self.msg.info("Updating show %s score to %s..." %
-                      (show['title'], newscore))
-        self.data_handler.queue_update(show, 'my_score', newscore)
-        self._record_undo(
-            'set_score', show['id'], show['title'], old_score, newscore,
-            "Score change for %s (%s -> %s)" % (show['title'], old_score, newscore))
+        # Change score. Grouped for the same reason as set_episode: an
+        # auto status change below should undo/redo together with the
+        # score change as one action.
+        with self._grouped_undo():
+            old_score = show['my_score']
+            self.msg.info("Updating show %s score to %s..." %
+                          (show['title'], newscore))
+            self.data_handler.queue_update(show, 'my_score', newscore)
+            self._record_undo(
+                'set_score', show['id'], show['title'], old_score, newscore,
+                "Score change for %s (%s -> %s)" % (show['title'], old_score, newscore))
 
-        # Emit signal
-        self._emit_signal('score_changed', show)
+            # Emit signal
+            self._emit_signal('score_changed', show)
 
-        # Change status if required
-        if (
-                show['total'] and
-                show['my_progress'] == show['total'] and
-                show['my_score'] and
-                self.mediainfo.get('can_status') and
-                self.config['auto_status_change'] and
-                self.config['auto_status_change_if_scored'] and
-                self.mediainfo.get('statuses_finish')
-        ):
-            try:
-                self.set_status(show['id'], self._guess_new_finish(show))
-            except utils.EngineError as e:
-                # Only warn about engine errors since status change here is not critical
-                self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
+            # Change status if required
+            if (
+                    show['total'] and
+                    show['my_progress'] == show['total'] and
+                    show['my_score'] and
+                    self.mediainfo.get('can_status') and
+                    self.config['auto_status_change'] and
+                    self.config['auto_status_change_if_scored'] and
+                    self.mediainfo.get('statuses_finish')
+            ):
+                try:
+                    self.set_status(show['id'], self._guess_new_finish(show))
+                except utils.EngineError as e:
+                    # Only warn about engine errors since status change here is not critical
+                    self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
 
         return show
 
