@@ -106,3 +106,21 @@ def test_year_before_a_title_is_not_taken_as_an_episode(msg):
     # A four-digit year must not be salvaged as an episode number.
     w = parse(msg, "[Grp] Show 2011 - Movie Title (1080p).mkv")
     assert w.getEpisode() == 1
+
+
+def test_path_dedup_prefilter_skips_paths_with_no_shared_text(msg):
+    # A necessary-condition prefilter guards the parent-folder-dedup
+    # search (dominates real scan time on large libraries otherwise) --
+    # confirm the episode/title still parse normally when the folder and
+    # filename share no text, so there's genuinely nothing to strip.
+    w = parse(msg, "Random Folder Name/[SubsPlease] Frieren - 05 (1080p).mkv")
+    assert w.getEpisode() == 5
+
+
+def test_path_dedup_prefilter_still_strips_real_duplicates(msg):
+    # Contrast with the above: the parent folder's title is genuinely
+    # duplicated in the filename, so the prefilter must let the search
+    # run and the duplicate must still be stripped.
+    w = parse(msg, "Beyblade X/Beyblade X - 11 - Kadovar's Test (1080p).mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
