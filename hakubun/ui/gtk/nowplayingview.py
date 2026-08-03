@@ -61,7 +61,16 @@ class NowPlayingView(Gtk.Box):
         self.status_label = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
         self.pack_start(self.status_label, False, False, 0)
 
+        # A GtkBox's non-packing-direction size (width, here, since this
+        # box is VERTICAL) isn't governed by pack_start's expand/fill --
+        # those only affect height -- so a bare ProgressBar defaults to
+        # halign=FILL and stretches to the box's full width. That's fine
+        # in a normal-width window but turns into an absurdly long, thin
+        # sliver if the window is very wide, so it's capped and centered
+        # instead of left to fill.
         self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_halign(Gtk.Align.CENTER)
+        self.progress_bar.set_size_request(400, -1)
         self.pack_start(self.progress_bar, False, False, 0)
 
         self.position_label = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)

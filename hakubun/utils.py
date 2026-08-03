@@ -1232,3 +1232,23 @@ def get_season_label(show) -> str:
         if key == 'Season' and value:
             return value
     return date_to_season(show.get('start_date'))
+
+
+def season_sort_key(label):
+    """Sort key for a get_season_label()-style 'Season Year' label (e.g.
+    'Summer 2026'), ordering by year first and season name second.
+
+    A plain text sort on the label compares the season name before the
+    year, since the name comes first in the string -- 'Fall 2011' sorts
+    before 'Spring 2006' alphabetically even though 2006 is earlier.
+    Swapping the priority so year dominates fixes that, while season
+    name stays the (alphabetical) tiebreaker for same-year rows.
+    Unparseable/missing labels ('?') sort last.
+    """
+    text = str(label)
+    if text.isdigit():
+        return (int(text), '')
+    season, sep, year = text.rpartition(' ')
+    if sep and year.isdigit():
+        return (int(year), season)
+    return (float('inf'), text)

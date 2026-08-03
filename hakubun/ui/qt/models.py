@@ -392,6 +392,8 @@ class ShowListModel(QtCore.QAbstractTableModel):
             if column == ShowListModel.COL_LAST_UPDATED:
                 dt = show.get('my_last_update')
                 return dt.timestamp() if dt is not None else 0
+            elif column == ShowListModel.COL_SEASON:
+                return utils.season_sort_key(utils.get_season_label(show))
 
     def flags(self, index):
         if index.column() in self.editable_columns:
@@ -598,5 +600,10 @@ class ShowListProxy(QtCore.QSortFilterProxyModel):
             rnum = rv if isinstance(rv, (int, float)) else 0
 
             return int(lnum) < int(rnum)
+
+        if col == ShowListModel.COL_SEASON:
+            lv = self.sourceModel().data(left, QtCore.Qt.ItemDataRole.UserRole)
+            rv = self.sourceModel().data(right, QtCore.Qt.ItemDataRole.UserRole)
+            return lv < rv
 
         return super().lessThan(left, right)
