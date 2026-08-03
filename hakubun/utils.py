@@ -589,6 +589,10 @@ def show():
         'image':        '',
         'image_thumb':  '',
         'queued':       False,
+        # Minutes per episode, where the API provides it (MAL/AniList/
+        # Kitsu all do). Used only for the Statistics page's "Time
+        # spent watching"/"Time to complete".
+        'duration':     None,
         # Was 'my_last-update' (dash typo) for a long time, so shows
         # where the API didn't set this explicitly were missing the
         # underscore key entirely, causing KeyErrors wherever it's read.

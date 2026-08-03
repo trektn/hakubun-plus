@@ -210,11 +210,11 @@ class libkitsu_graphql(lib):
         if include_description:
             fields += self._MEDIA_DETAIL_FIELDS
         if concrete == 'anime':
-            return fields + '\n      subtype\n      episodeCount\n'
+            return fields + '\n      subtype\n      episodeCount\n      episodeLength\n'
         if concrete == 'manga':
             return fields + '\n      subtype\n      chapterCount\n'
         return fields + '''
-      ... on Anime { subtype episodeCount }
+      ... on Anime { subtype episodeCount episodeLength }
       ... on Manga { subtype chapterCount }
     '''
 
@@ -594,6 +594,7 @@ class libkitsu_graphql(lib):
         show['status'] = info['status']
         show['type'] = info['type']
         show['platform_score'] = info['platform_score']
+        show['duration'] = info.get('duration')
         # Carry the cross-referenced MAL id through so the engine's MAL
         # score feature works for Kitsu accounts too.
         show['mal_id'] = info.get('mal_id')
@@ -717,6 +718,7 @@ class libkitsu_graphql(lib):
                 (subtype or '').upper(), utils.Type.UNKNOWN),
             'status':      status,
             'platform_score': platform_score,
+            'duration':    media.get('episodeLength'),
             'mal_id':      self._mal_id_from_mappings(media.get('mappings')),
             'url': "https://kitsu.app/{}/{}".format(
                 self.mediatype, media.get('slug')),

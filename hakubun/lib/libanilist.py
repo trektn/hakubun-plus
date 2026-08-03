@@ -263,6 +263,7 @@ fragment mediaListEntry on MediaList {
     format
     status
     chapters episodes
+    duration
     nextAiringEpisode { airingAt episode }
     startDate { year month day }
     endDate { year month day }
@@ -319,6 +320,11 @@ fragment mediaListEntry on MediaList {
                     'my_start_date': self._dict2date(item['startedAt']),
                     'my_finish_date': self._dict2date(item['completedAt']),
                     'my_last_update': self._int2datetime(item['updatedAt']),
+                    # Minutes per episode -- AniList's own field, used
+                    # only for the Statistics page's "Time spent
+                    # watching"/"Time to complete" (no per-episode
+                    # duration is shown anywhere else).
+                    'duration': media.get('duration'),
                 }
                 if media['nextAiringEpisode']:
                     showdata['next_ep_number'] = media['nextAiringEpisode']['episode']

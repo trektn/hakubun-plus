@@ -354,6 +354,12 @@ class libkitsu(lib):
                 ]),
             }
 
+            if self.mediatype in ('anime', 'drama'):
+                # Minutes per episode -- used only for the Statistics
+                # page's "Time spent watching"/"Time to complete".
+                # Manga has no episodeLength attribute at all.
+                params[f'fields[{self.mediatype}]'] += ',episodeLength'
+
             if self.mediatype == 'anime':
                 params['fields[anime]'] += ',nsfw'
 
@@ -409,6 +415,7 @@ class libkitsu(lib):
         show['status'] = info['status']
         show['type'] = info['type']
         show['platform_score'] = info['platform_score']
+        show['duration'] = info.get('duration')
 
     def request_info(self, item_list):
         self.msg.debug("Missing show info requested: " + repr(item_list))
@@ -601,6 +608,7 @@ class libkitsu(lib):
             'status':      self.status_translate.get(attr['status'], utils.Status.UNKNOWN),
             'platform_score': (
                 '%.2f%%' % float(attr['averageRating']) if attr.get('averageRating') else None),
+            'duration': attr.get('episodeLength'),
             'url': "https://kitsu.app/{}/{}".format(self.mediatype, attr['slug']),
             'aliases':     list(filter(None, attr['titles'].values())),
             'extra': [

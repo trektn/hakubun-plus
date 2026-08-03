@@ -267,7 +267,8 @@ class libmal(lib):
         self.check_credentials()
         shows = {}
 
-        fields = 'id,alternative_titles,title,start_date,end_date,main_picture,status,media_type,mean,' + self.total_str
+        fields = ('id,alternative_titles,title,start_date,end_date,main_picture,status,'
+                 'media_type,mean,average_episode_duration,' + self.total_str)
         listfields = 'score,status,start_date,finish_date,updated_at,' + self.watched_str
         params = {
             'fields': '%s,list_status{%s}' % (fields, listfields),
@@ -304,6 +305,12 @@ class libmal(lib):
                     'my_start_date': self._str2date(item['list_status'].get('start_date')),
                     'my_finish_date': self._str2date(item['list_status'].get('finish_date')),
                     'my_last_update': self._iso2datetime(item['list_status'].get('updated_at')),
+                    # MAL reports this in seconds -- minutes matches
+                    # AniList/Kitsu's own duration fields, used only for
+                    # the Statistics page's "Time spent watching"/"Time
+                    # to complete".
+                    'duration': (item['node']['average_episode_duration'] // 60
+                                if item['node'].get('average_episode_duration') else None),
                 })
 
             url = data['paging'].get('next')

@@ -210,6 +210,11 @@ class Engine:
     def can_redo(self):
         return len(self._redo_stack) > 0
 
+    def undo_count(self):
+        """Number of actions available to undo -- used by the Statistics
+        page's Hakubun section, distinct from can_undo()'s plain bool."""
+        return len(self._undo_stack)
+
     def undo(self):
         """
         Reverts the last undoable user action (episode, score, status or
@@ -1263,6 +1268,16 @@ class Engine:
 
     def get_show_folder(self, show_id):
         return self.data_handler.show_folder_get(show_id)
+
+    def show_folder_count(self):
+        """Number of shows manually pinned to a local folder -- used by
+        the Statistics page's Hakubun section."""
+        return len(self.data_handler.show_folders_get())
+
+    def library_file_count(self):
+        """Total tracked episode files across the whole local library
+        -- used by the Statistics page's Hakubun section."""
+        return sum(len(episodes) for episodes in self.data_handler.library_get().values())
 
     def remove_from_library(self, path, filename):
         library = self.data_handler.library_get()
