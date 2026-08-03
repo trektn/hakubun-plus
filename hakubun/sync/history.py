@@ -35,8 +35,7 @@ class History:
             raise ValueError('unknown transaction: %s' % txn)
         if not sets:
             raise ValueError('transaction has nothing undoable: %s' % txn)
-        already = self._store.events_query(op='undo')
-        if any(e['source'] == txn for e in already):
+        if self._store.event_undo_exists(txn):
             raise ValueError('transaction already undone: %s' % txn)
 
         undo_txn = self.new_txn()

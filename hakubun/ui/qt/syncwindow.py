@@ -203,6 +203,19 @@ class SyncWindow(QDialog):
                                   # _on_change_item_toggled): the SAME
                                   # change appears in 'All' and in
                                   # exactly one category tab.
+        # Incremental-replan bookkeeping (see _update_category_tabs):
+        # which tab tree holds which category, what set of change
+        # objects it last showed (by identity), and the category order
+        # -- None means "never rendered", forcing a full rebuild once.
+        self._category_trees = {}
+        self._category_ids = {}
+        self._category_order = None
+        # (uuid, field, target) -> the FieldChange object last shown for
+        # that slot, so a replan that reproduces an identical change can
+        # reuse the SAME object and keep its `.selected` -- otherwise
+        # every replan (e.g. after resolving one conflict) silently
+        # discarded every other tick in the window.
+        self._prev_change_index = {}
         splitter.addWidget(self.preview_tabs)
 
         self.decisions_box = QGroupBox('Needs your decision')
@@ -280,9 +293,12 @@ class SyncWindow(QDialog):
         """Fill one category tab's tree: one box per show, its changes
         as directional child rows -- same shape 'All' and every
         per-field tab share, just over a different subset of changes.
-        Registers each item into self._change_items so a checkbox
-        toggle can be mirrored onto this same change's item in every
-        other tab that also shows it."""
+        Item registration into self._change_items (so a checkbox toggle
+        can be mirrored onto this same change's item in every other tab
+        that also shows it) happens in one pass over all tabs after
+        r_planned decides which trees to rebuild, not here -- rebuilding
+        it per-tree here would double-register tabs left untouched by
+        the incremental path in _update_category_tabs."""
         tree.clear()
         groups = {}
         for change in changes:
@@ -301,7 +317,6 @@ class SyncWindow(QDialog):
             for change in group_changes:
                 item = self._change_item(change)
                 group.addChild(item)
-                self._change_items.setdefault(id(change), []).append(item)
             # Set AFTER the children so Qt's autotristate derives the
             # header from them (a group of unticked first-sync rows must
             # not show as fully checked).
@@ -436,13 +451,8 @@ class SyncWindow(QDialog):
         self._run(self.engine.plan, self.r_planned, 'Planning...',
                   self.mode_combo.currentData())
 
-    def _iter_change_items(self):
-        # 'All' (always tab 0) holds every change exactly once; reading
-        # from it (rather than every tab) avoids processing the same
-        # change twice when it also appears in a category tab.
-        tree = self._all_changes_tree
-        if tree is None:
-            return   # no plan rendered yet -- nothing to iterate
+    @staticmethod
+    def _iter_tree_changes(tree):
         for i in range(tree.topLevelItemCount()):
             group = tree.topLevelItem(i)
             for j in range(group.childCount()):
@@ -450,6 +460,15 @@ class SyncWindow(QDialog):
                 data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
                 if isinstance(data, FieldChange):
                     yield child, data
+
+    def _iter_change_items(self):
+        # 'All' (always tab 0) holds every change exactly once; reading
+        # from it (rather than every tab) avoids processing the same
+        # change twice when it also appears in a category tab.
+        tree = self._all_changes_tree
+        if tree is None:
+            return   # no plan rendered yet -- nothing to iterate
+        yield from self._iter_tree_changes(tree)
 
     def s_fetch(self):
         self._cancel.clear()
@@ -466,43 +485,55 @@ class SyncWindow(QDialog):
         plan.errors.update(errors)
         return plan
 
-    def r_planned(self, plan, error):
-        if isinstance(error, SyncCancelled):
-            self._status('Sync cancelled.')
-            return
-        if error is not None:
-            self._status('Sync failed: %s' % error)
-            return
-        self._plan = plan
-        # Category tabs: 'All' always present, plus one per field that
-        # actually has a change this plan (Score, Watched Episodes,
-        # ...) -- a category with nothing to show just doesn't appear.
-        # Rebuilt fresh every plan since which categories are relevant
-        # changes plan to plan.
+    @staticmethod
+    def _change_content_equal(a, b):
+        """Whether two FieldChanges describe the same proposed edit --
+        everything except `.selected`, which is the user's own
+        tick/untick and must never be what decides whether a replan
+        treats a change as 'the same one' or a new proposal."""
+        return (a.old == b.old and a.new == b.new and a.source == b.source
+                and a.title == b.title and a.remote_raw == b.remote_raw
+                and a.first_sync == b.first_sync
+                and a.creates_entry == b.creates_entry)
+
+    def _reconcile_changes(self, changes):
+        """Swap a freshly-planned FieldChange for the previous render's
+        object when it describes the exact same edit (matched on
+        uuid+field+target, then content), so the user's tick survives
+        and -- just as importantly -- _update_category_tabs below can
+        tell an unchanged category from a changed one by comparing
+        object identity instead of walking every field of every
+        change."""
+        prev = self._prev_change_index
+        reconciled = []
+        for change in changes:
+            old = prev.get((change.uuid, change.field, change.target))
+            if old is not None and self._change_content_equal(old, change):
+                reconciled.append(old)
+            else:
+                reconciled.append(change)
+        return reconciled
+
+    def _rebuild_category_tabs(self, categories):
+        """Full teardown and rebuild of every preview tab. Used only
+        when the SET of categories changes (a field's change list goes
+        from empty to non-empty or back) -- the incremental path in
+        _update_category_tabs can't express that as a same-shape
+        update. Preserves the current tab selection by name, same as
+        before this was split out."""
         current_tab_label = self.preview_tabs.tabText(
             self.preview_tabs.currentIndex()) \
             if self.preview_tabs.count() else None
         self.preview_tabs.clear()
-        self._change_items = {}
-
-        self._all_changes_tree = self._make_preview_tree()
-        self._populate_preview_tree(self._all_changes_tree, plan.changes)
-        self.preview_tabs.addTab(self._all_changes_tree,
-                                 'All (%d)' % len(plan.changes))
-
-        by_field = {}
-        for change in plan.changes:
-            by_field.setdefault(change.field, []).append(change)
+        self._category_trees = {}
+        self._category_ids = {}
         restore_index = 0
-        for field in USER_FIELDS:
-            field_changes = by_field.get(field)
-            if not field_changes:
-                continue
+        for key, changes, label in categories:
             tree = self._make_preview_tree()
-            self._populate_preview_tree(tree, field_changes)
-            label = '%s (%d)' % (_FIELD_LABELS.get(field, field),
-                                 len(field_changes))
+            self._populate_preview_tree(tree, changes)
             self.preview_tabs.addTab(tree, label)
+            self._category_trees[key] = tree
+            self._category_ids[key] = frozenset(id(c) for c in changes)
             if current_tab_label and label.split(' (')[0] == \
                     (current_tab_label or '').split(' (')[0]:
                 restore_index = self.preview_tabs.count() - 1
@@ -511,6 +542,86 @@ class SyncWindow(QDialog):
         if current_tab_label and current_tab_label.startswith('All'):
             restore_index = 0
         self.preview_tabs.setCurrentIndex(restore_index)
+        self._category_order = [key for key, _changes, _label in categories]
+
+    def _update_category_tabs(self, categories):
+        """Same categories as last render, in the same order: rebuild
+        only the tab trees whose change SET actually differs from last
+        time (by object identity -- safe because _reconcile_changes
+        already folded identical changes back onto their previous
+        objects). Everything else -- widgets, scroll position, tick
+        state, expand/collapse state, the current tab -- is left
+        exactly as the user had it, since nothing about it changed.
+        This is what makes resolving one conflict (which almost always
+        touches a single field on a single show, see _resolve_inline)
+        cheap instead of tearing down every tree in the window."""
+        for index, (key, changes, label) in enumerate(categories):
+            ids = frozenset(id(c) for c in changes)
+            if self._category_ids.get(key) == ids:
+                continue
+            tree = self._category_trees[key]
+            self._populate_preview_tree(tree, changes)
+            self.preview_tabs.setTabText(index, label)
+            self._category_ids[key] = ids
+
+    def r_planned(self, plan, error):
+        if isinstance(error, SyncCancelled):
+            self._status('Sync cancelled.')
+            return
+        if error is not None:
+            self._status('Sync failed: %s' % error)
+            return
+        # A replanned change identical to what was already shown reuses
+        # that SAME FieldChange object, so its `.selected` (the user's
+        # own tick/untick) survives -- see _reconcile_changes. Without
+        # this, resolving one conflict (which always replans, see
+        # _replan) silently reset every other tick in the window back
+        # to the plan's own default on every single click.
+        plan.changes = self._reconcile_changes(plan.changes)
+        self._prev_change_index = {(c.uuid, c.field, c.target): c
+                                   for c in plan.changes}
+        self._plan = plan
+
+        # Category tabs: 'All' always present, plus one per field that
+        # actually has a change this plan (Score, Watched Episodes,
+        # ...) -- a category with nothing to show just doesn't appear.
+        by_field = {}
+        for change in plan.changes:
+            by_field.setdefault(change.field, []).append(change)
+        categories = [('__all__', plan.changes, 'All (%d)'
+                       % len(plan.changes))]
+        for field in USER_FIELDS:
+            field_changes = by_field.get(field)
+            if not field_changes:
+                continue
+            categories.append((field, field_changes, '%s (%d)' % (
+                _FIELD_LABELS.get(field, field), len(field_changes))))
+
+        # Which categories exist changes only when a field's change set
+        # goes from empty to non-empty or back -- comparatively rare
+        # (mostly full syncs where whole categories appear/disappear).
+        # The common replan -- resolving one conflict on one show --
+        # leaves the same categories present, just one of them changed,
+        # so it takes the incremental path and rebuilds only that one
+        # tab instead of tearing down every tree in the window.
+        desired_keys = [key for key, _changes, _label in categories]
+        if desired_keys != self._category_order:
+            self._rebuild_category_tabs(categories)
+        else:
+            self._update_category_tabs(categories)
+        self._all_changes_tree = self._category_trees['__all__']
+
+        # Re-derive from the CURRENT widget state (rebuilt tabs plus
+        # tabs the incremental path above left untouched) rather than
+        # accumulating registrations per-tree: an id(FieldChange) can
+        # be reused by the GC once an old, no-longer-referenced change
+        # object is dropped, so any stale entry left over from a
+        # rebuilt-away tree would risk mirroring a checkbox toggle onto
+        # a deleted Qt item -- or worse, a different, unrelated one.
+        self._change_items = {}
+        for tree in self._category_trees.values():
+            for item, change in self._iter_tree_changes(tree):
+                self._change_items.setdefault(id(change), []).append(item)
 
         groups = {change.uuid for change in plan.changes}
         self._set_decisions(plan.conflicts)
@@ -620,7 +731,16 @@ class SyncWindow(QDialog):
         self.store.reset()
         self._plan = None
         self.preview_tabs.clear()
+        self._all_changes_tree = None
         self._change_items = {}
+        # Tabs were just torn down out from under _category_trees --
+        # reset the incremental-replan bookkeeping too, or the next
+        # r_planned would think an unchanged category can be left alone
+        # and try to reuse a tree Qt has already deleted.
+        self._category_trees = {}
+        self._category_ids = {}
+        self._category_order = None
+        self._prev_change_index = {}
         self._set_decisions([])
         self.apply_progress.setVisible(False)
         self.apply_log.clear()

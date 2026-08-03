@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS events(
     op TEXT NOT NULL DEFAULT 'set');
 CREATE INDEX IF NOT EXISTS idx_events_txn ON events(txn);
 CREATE INDEX IF NOT EXISTS idx_events_uuid ON events(uuid, field);
+CREATE INDEX IF NOT EXISTS idx_events_op_source ON events(op, source);
 CREATE TABLE IF NOT EXISTS identity_conflicts(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL,
@@ -442,16 +443,17 @@ class SyncStore:
         not rewritten at all, which also keeps a full-list fetch from
         churning thousands of no-op row writes."""
         ts = ts if ts is not None else time.time()
+        provider_id = str(provider_id)
         with self.transaction():
-            for field, value in values.items():
-                self._exec(
-                    'INSERT INTO remote_state(provider, provider_id,'
-                    ' field, value, fetched_at) VALUES(?,?,?,?,?)'
-                    ' ON CONFLICT(provider, provider_id, field)'
-                    ' DO UPDATE SET value=excluded.value,'
-                    ' fetched_at=excluded.fetched_at'
-                    ' WHERE excluded.value IS NOT remote_state.value',
-                    (provider, str(provider_id), field, _dump(value), ts))
+            self._conn.executemany(
+                'INSERT INTO remote_state(provider, provider_id,'
+                ' field, value, fetched_at) VALUES(?,?,?,?,?)'
+                ' ON CONFLICT(provider, provider_id, field)'
+                ' DO UPDATE SET value=excluded.value,'
+                ' fetched_at=excluded.fetched_at'
+                ' WHERE excluded.value IS NOT remote_state.value',
+                [(provider, provider_id, field, _dump(value), ts)
+                 for field, value in values.items()])
 
     def remote_provider_ids(self, provider):
         """Every provider_id currently remote-tracked for a provider."""
@@ -554,6 +556,12 @@ class SyncStore:
             ' AND provider_id=?', (provider, str(provider_id))).fetchone()
         return self._identity_row(row)
 
+    def identity_get_by_id(self, conflict_id):
+        row = self._exec(
+            'SELECT * FROM identity_conflicts WHERE id=?',
+            (conflict_id,)).fetchone()
+        return self._identity_row(row)
+
     def identity_set_status(self, conflict_id, status):
         self._exec('UPDATE identity_conflicts SET status=? WHERE id=?',
                    (status, conflict_id))
@@ -587,6 +595,14 @@ class SyncStore:
         rows = self._exec('SELECT * FROM events WHERE txn=? ORDER BY id',
                           (txn,)).fetchall()
         return [self._event_row(r) for r in rows]
+
+    def event_undo_exists(self, txn):
+        """Whether `txn` already has an 'undo' event recording it as
+        the source -- an indexed point lookup instead of scanning
+        every undo event ever recorded (see idx_events_op_source)."""
+        return self._exec(
+            "SELECT 1 FROM events WHERE op='undo' AND source=? LIMIT 1",
+            (txn,)).fetchone() is not None
 
     def events_query(self, uid=None, field=None, op=None, limit=None):
         sql, params = 'SELECT * FROM events', []

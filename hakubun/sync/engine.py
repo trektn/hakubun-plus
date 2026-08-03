@@ -920,17 +920,30 @@ class SyncEngine:
             for c in changes:
                 by_entity.setdefault(c.uuid, []).append(c)
             entities = list(by_entity.items())
+            # Batch-load once per provider instead of one mappings_of()
+            # + remote_get() round-trip per entity: apply() never adds
+            # or changes a mapping mid-call (that only happens in
+            # identity.py, before plan()/apply() run), so nothing here
+            # can go stale between the load and the loop below.
+            mappings_by_uid = self.store.mappings_many(
+                [uid for uid, _ in entities])
+            provider_id_of = {}
+            for uid, _ in entities:
+                m = next((mm for mm in mappings_by_uid.get(uid, ())
+                          if mm['provider'] == provider), None)
+                if m is not None:
+                    provider_id_of[uid] = m['provider_id']
+            remote_by_provider_id = self.store.remote_get_many(
+                provider, provider_id_of.values())
             for i, (uid, chs) in enumerate(entities):
                 if should_cancel is not None and should_cancel():
                     cancelled = True
                     break
-                mapping = next((m for m in self.store.mappings_of(uid)
-                                if m['provider'] == provider), None)
-                if mapping is None:
+                provider_id = provider_id_of.get(uid)
+                if provider_id is None:
                     done += 1   # counted in total_steps; keep it honest
                     continue
-                remote = self.store.remote_get(provider,
-                                               mapping['provider_id'])
+                remote = remote_by_provider_id.get(provider_id, {})
                 # No remote row at all means this provider has never
                 # actually listed the entry (see _plan_rebase_add): the
                 # mapping only records an id someone else claimed for
@@ -945,12 +958,12 @@ class SyncEngine:
                 try:
                     if creating:
                         sent, new_my_id = adapter.add(
-                            mapping['provider_id'],
+                            provider_id,
                             {c.field: c.new for c in chs},
                             title=chs[0].title, on_wait=on_wait,
                             cancel=should_cancel)
                     else:
-                        sent = adapter.push(mapping['provider_id'],
+                        sent = adapter.push(provider_id,
                                             {c.field: c.new for c in chs},
                                             title=chs[0].title, my_id=my_id,
                                             on_wait=on_wait,
@@ -967,6 +980,7 @@ class SyncEngine:
                     report('FAILED %s: %s' % (provider.capitalize(), e))
                     break  # isolate: skip the rest of this provider
                 with self.store.transaction():
+                    remote_values = {}
                     for c in chs:
                         if c.field not in sent:
                             # The adapter could not represent this
@@ -984,14 +998,13 @@ class SyncEngine:
                         self.history.record(txn, uid, c.field, c.old,
                                             value, provider, op=op)
                         self.store.base_set(uid, provider, c.field, value)
-                        self.store.remote_set_all(
-                            provider, mapping['provider_id'],
-                            {c.field: value})
+                        remote_values[c.field] = value
                         pushed += 1
                     if creating and sent and new_my_id is not None:
+                        remote_values['_my_id'] = new_my_id
+                    if remote_values:
                         self.store.remote_set_all(
-                            provider, mapping['provider_id'],
-                            {'_my_id': new_my_id})
+                            provider, provider_id, remote_values)
                 done += 1
                 report('%s to %s: %s.' % ('Added' if creating else 'Pushed',
                                           provider.capitalize(),
