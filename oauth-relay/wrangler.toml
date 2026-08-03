@@ -1,0 +1,14 @@
+name = "mal-oauth-relay"
+main = "src/index.js"
+compatibility_date = "2026-08-03"
+
+# The workers.dev subdomain (https://mal-oauth-relay.<your-subdomain>.workers.dev)
+# is HTTPS by default and works as-is -- no custom domain is required to
+# satisfy MAL's "public HTTPS redirect_uri" requirement.
+#
+# To use your own domain instead, add it as a Worker route or custom domain
+# in the Cloudflare dashboard (Workers & Pages -> mal-oauth-relay -> Settings
+# -> Domains & Routes), or uncomment and edit:
+# routes = [
+#   { pattern = "oauth.example.com/mal/callback", custom_domain = true }
+# ]
