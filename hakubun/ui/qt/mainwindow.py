@@ -162,6 +162,20 @@ class MainWindow(QMainWindow):
         self.action_play_dialog = QAction('Play Episode...', self)
         self.action_play_dialog.setStatusTip('Select an episode to play.')
         self.action_play_dialog.triggered.connect(self.s_play_number)
+        self.action_use_subminer = QAction('Play with SubMiner', self)
+        self.action_use_subminer.setCheckable(True)
+        if utils.subminer_available():
+            self.action_use_subminer.setStatusTip(
+                'Open episodes with SubMiner instead of the configured '
+                'player. Same switch as Settings > Media.')
+            self.action_use_subminer.setToolTip(
+                'Open episodes with SubMiner instead of the configured '
+                'player. Same switch as Settings > Media.')
+        else:
+            self.action_use_subminer.setEnabled(False)
+            self.action_use_subminer.setToolTip(
+                'SubMiner was not found on PATH. Install it to enable this.')
+        self.action_use_subminer.toggled.connect(self.s_toggle_subminer)
         self.action_details = QAction('Show &details...', self)
         self.action_details.setStatusTip(
             'Show detailed information about the selected show.')
@@ -345,6 +359,7 @@ class MainWindow(QMainWindow):
         # Context menu for right click on list item
         self.menu_show_context = QMenu()
         self.menu_show_context.addMenu(self.menu_play)
+        self.menu_show_context.addAction(self.action_use_subminer)
         self.menu_show_context.addAction(self.action_details)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
@@ -354,6 +369,7 @@ class MainWindow(QMainWindow):
         self.menu_show_context.addSeparator()
         self.menu_show_context.addAction(self.action_delete)
         self.menu_show_context.aboutToShow.connect(self._update_folder_actions)
+        self.menu_show_context.aboutToShow.connect(self._update_subminer_action)
 
         # Make icons for viewed episodes
         rect = QtCore.QSize(16, 16)
@@ -1819,6 +1835,21 @@ class MainWindow(QMainWindow):
         self.action_clear_folder.setEnabled(has_folder)
         self.action_set_folder.setText(
             'Change folder...' if has_folder else 'Set folder...')
+
+    def _update_subminer_action(self):
+        # The global switch (Settings > Media) may have changed since this
+        # menu was last opened -- reflect it rather than the stale check
+        # state from last time.
+        if not self.action_use_subminer.isEnabled():
+            return
+        checked = bool(self.worker.engine.get_config('use_subminer'))
+        self.action_use_subminer.blockSignals(True)
+        self.action_use_subminer.setChecked(checked)
+        self.action_use_subminer.blockSignals(False)
+
+    def s_toggle_subminer(self, checked):
+        self.worker.engine.set_config('use_subminer', checked)
+        self.worker.engine.save_config()
 
     def _update_folder_label(self):
         """Keep the Taiga Edit tab's Folder row in step with the pin.
