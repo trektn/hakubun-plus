@@ -14,11 +14,16 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import os
+
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from hakubun import utils
 from hakubun.ui.qt.widgets import DetailsWidget, PlaybackBar
+from hakubun.ui.qt.workers import ImageWorker
+
+_IMAGE_SIZE = QtCore.QSize(200, 280)
 
 
 class NowPlayingWidget(QWidget):
@@ -58,6 +63,23 @@ class NowPlayingWidget(QWidget):
         self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
 
+        # An independent poster, not self.details.show_image (hidden
+        # below) -- that one only exists once self.details is populated
+        # and visible, i.e. never in the empty state, so a poster shown
+        # unconditionally up here needs its own widget and its own load
+        # path. Same approach GTK's NowPlayingView takes with its own
+        # image_box vs. the reused ShowInfoBox's image_container.
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(_IMAGE_SIZE)
+        self.image_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet(
+            "border: 1px solid palette(mid); border-radius: 3px;")
+        image_row = QHBoxLayout()
+        image_row.addStretch(1)
+        image_row.addWidget(self.image_label)
+        image_row.addStretch(1)
+        layout.addLayout(image_row)
+
         # Play/pause + progress bar and the elapsed/total time, in one row.
         position_row = QHBoxLayout()
         self.playback_bar = PlaybackBar(progress_color=progress_color)
@@ -89,6 +111,9 @@ class NowPlayingWidget(QWidget):
         # not-yet-laid-out width to elide against, truncates) what's
         # already on screen.
         self.details.show_title.hide()
+        # Same reasoning for the poster -- self.image_label above already
+        # shows it, unconditionally.
+        self.details.show_image.hide()
         layout.addWidget(self.details, 1)
 
         # Shown instead of self.details when nothing is recognized.
@@ -140,6 +165,7 @@ class NowPlayingWidget(QWidget):
             self.watch_next_btn.setEnabled(False)
             self.playback_bar.clear()
             self.time_label.setText('')
+            self.image_label.clear()
             self._show_empty_state()
             if state == utils.Tracker.UNRECOGNIZED:
                 self.title_label.setText('Unrecognized video')
@@ -183,6 +209,29 @@ class NowPlayingWidget(QWidget):
 
         if is_new_show:
             self.details.load(show)
+            self._load_image(show)
+
+    def _load_image(self, show):
+        if not show.get('image'):
+            self.image_label.clear()
+            return
+        api_info = self.worker.engine.api_info
+        filename = utils.to_cache_path("%s_%s_f_%s.jpg" % (
+            api_info['shortname'], api_info['mediatype'], show['id']))
+        if os.path.isfile(filename):
+            self._show_image(filename)
+        else:
+            utils.make_dir(utils.to_cache_path())
+            self.image_label.setText('Downloading...')
+            self._image_worker = ImageWorker(
+                show['image'], filename, (_IMAGE_SIZE.width(), _IMAGE_SIZE.height()))
+            self._image_worker.finished.connect(self._show_image)
+            self._image_worker.start()
+
+    def _show_image(self, filename):
+        self.image_label.setPixmap(QtGui.QPixmap(filename).scaled(
+            _IMAGE_SIZE, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation))
 
     def _on_watch_last(self):
         if self._show and self._episode and self._episode > 1:
