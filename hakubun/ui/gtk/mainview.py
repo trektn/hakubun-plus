@@ -25,7 +25,8 @@ from hakubun import utils
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.imagebox import ImageBox
 from hakubun.ui.gtk.showeventtype import ShowEventType
-from hakubun.ui.gtk.showtreeview import DRAG_TARGETS, ShowListFilter, ShowListStore, ShowTreeView
+from hakubun.ui.gtk.showtreeview import (
+    DRAG_TARGETS, ShowListFilter, ShowListStore, ShowTreeView, sort_by_season)
 
 
 @Gtk.Template.from_file(os.path.join(gtk_dir, 'data/mainview.ui'))
@@ -907,14 +908,17 @@ class NotebookPage(Gtk.ScrolledWindow):
             config['colors'],
             config['visible_columns'],
             config['episodebar_style'])
-        self._show_tree_view.set_model(
-            Gtk.TreeModelSort(
-                model=ShowListFilter(
-                    status=self.status,
-                    child_model=self._list
-                )
+        sorted_model = Gtk.TreeModelSort(
+            model=ShowListFilter(
+                status=self.status,
+                child_model=self._list
             )
         )
+        # TreeModelSort implements GtkTreeSortable itself; a sort func
+        # set on the child ShowListStore is never consulted, so the
+        # Season column's year-first sort has to be installed here.
+        sorted_model.set_sort_func(ShowListStore.column('season'), sort_by_season)
+        self._show_tree_view.set_model(sorted_model)
         self._title.set_text('%s (%d)' % (
             self._title_text,
             len(self._show_tree_view.props.model)

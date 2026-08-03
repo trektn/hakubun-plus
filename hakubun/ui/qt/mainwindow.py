@@ -162,20 +162,31 @@ class MainWindow(QMainWindow):
         self.action_play_dialog = QAction('Play Episode...', self)
         self.action_play_dialog.setStatusTip('Select an episode to play.')
         self.action_play_dialog.triggered.connect(self.s_play_number)
-        self.action_use_subminer = QAction('Play with SubMiner', self)
+        # Text shows the current state ('SubMiner: On'/'Off') rather than
+        # a static label -- see _apply_subminer_state, which keeps it in
+        # sync with the 'use_subminer' config value. One QAction shared
+        # between the toolbar (normal mode) and the Tools menu (Taiga
+        # mode, see menu_tools below) instead of a separate control per
+        # look.
+        self.action_use_subminer = QAction('SubMiner: Off', self)
         self.action_use_subminer.setCheckable(True)
         if utils.subminer_available():
             self.action_use_subminer.setStatusTip(
                 'Open episodes with SubMiner instead of the configured '
-                'player. Same switch as Settings > Media.')
+                'player.')
             self.action_use_subminer.setToolTip(
                 'Open episodes with SubMiner instead of the configured '
-                'player. Same switch as Settings > Media.')
+                'player.')
         else:
             self.action_use_subminer.setEnabled(False)
             self.action_use_subminer.setToolTip(
                 'SubMiner was not found on PATH. Install it to enable this.')
         self.action_use_subminer.toggled.connect(self.s_toggle_subminer)
+        # Visibility (Settings > User Interface) doesn't depend on the
+        # engine being loaded, unlike the checked state/text -- apply it
+        # here rather than waiting for r_engine_loaded.
+        self.action_use_subminer.setVisible(
+            self.config['show_subminer_toggle'])
         self.action_details = QAction('Show &details...', self)
         self.action_details.setStatusTip(
             'Show detailed information about the selected show.')
@@ -301,6 +312,8 @@ class MainWindow(QMainWindow):
             menu_tools.addAction(self.action_add)
             menu_tools.addAction(self.action_airing_schedule)
             menu_tools.addAction(self.action_multisync)
+            menu_tools.addSeparator()
+            menu_tools.addAction(self.action_use_subminer)
 
             menu_help = menubar.addMenu('&Help')
             menu_help.addAction(action_about)
@@ -350,6 +363,7 @@ class MainWindow(QMainWindow):
             toolbar.addAction(self.action_redo)
             toolbar.addSeparator()
             toolbar.addAction(action_settings)
+            toolbar.addAction(self.action_use_subminer)
 
         self.menu_play = QMenu('Play')
         # Populated per-account in _rebuild_statuses(), once the API's
@@ -359,7 +373,6 @@ class MainWindow(QMainWindow):
         # Context menu for right click on list item
         self.menu_show_context = QMenu()
         self.menu_show_context.addMenu(self.menu_play)
-        self.menu_show_context.addAction(self.action_use_subminer)
         self.menu_show_context.addAction(self.action_details)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
@@ -369,7 +382,6 @@ class MainWindow(QMainWindow):
         self.menu_show_context.addSeparator()
         self.menu_show_context.addAction(self.action_delete)
         self.menu_show_context.aboutToShow.connect(self._update_folder_actions)
-        self.menu_show_context.aboutToShow.connect(self._update_subminer_action)
 
         # Make icons for viewed episodes
         rect = QtCore.QSize(16, 16)
@@ -956,6 +968,7 @@ class MainWindow(QMainWindow):
         self._apply_tray()
         self._apply_filter_bar()
         self._apply_sync_action_label()
+        self._apply_subminer_state()
         # Refresh the multi-sync overlay so it follows the Settings
         # toggle immediately (on or off), instead of lingering until
         # the next full list rebuild.
@@ -1836,20 +1849,30 @@ class MainWindow(QMainWindow):
         self.action_set_folder.setText(
             'Change folder...' if has_folder else 'Set folder...')
 
-    def _update_subminer_action(self):
-        # The global switch (Settings > Media) may have changed since this
-        # menu was last opened -- reflect it rather than the stale check
-        # state from last time.
+    def _apply_subminer_state(self):
+        # Visibility (Settings > User Interface) is independent of
+        # whether the engine has finished loading, but the checked
+        # state/text mirror the 'use_subminer' config value, which does
+        # need a loaded engine -- called from r_engine_loaded and
+        # _update_config, not at __init__ time.
+        self.action_use_subminer.setVisible(
+            self.config['show_subminer_toggle'])
         if not self.action_use_subminer.isEnabled():
             return
         checked = bool(self.worker.engine.get_config('use_subminer'))
         self.action_use_subminer.blockSignals(True)
         self.action_use_subminer.setChecked(checked)
         self.action_use_subminer.blockSignals(False)
+        self._set_subminer_text(checked)
+
+    def _set_subminer_text(self, checked):
+        self.action_use_subminer.setText(
+            'SubMiner: On' if checked else 'SubMiner: Off')
 
     def s_toggle_subminer(self, checked):
         self.worker.engine.set_config('use_subminer', checked)
         self.worker.engine.save_config()
+        self._set_subminer_text(checked)
 
     def _update_folder_label(self):
         """Keep the Taiga Edit tab's Folder row in step with the pin.
@@ -2130,6 +2153,9 @@ class MainWindow(QMainWindow):
                           '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a> and '
                           '<a href="https://github.com/tylergibbs2/anitomy-ng">anitomy-ng</a>, '
                           'both licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Optional fuzzy title matching uses '
+                          '<a href="https://github.com/rapidfuzz/RapidFuzz">RapidFuzz</a>, '
+                          'licensed under the MIT license.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
                               utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
@@ -2354,6 +2380,8 @@ class MainWindow(QMainWindow):
             if self._taiga_mode:
                 self._rebuild_services_menu()
                 self._rebuild_library_folders_menu()
+
+            self._apply_subminer_state()
 
             # Show tracker info
             tracker_info = self.worker.engine.tracker_status()

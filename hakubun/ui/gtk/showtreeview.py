@@ -100,6 +100,24 @@ def overlay_cells(show, over, decimals, factor):
             'my_finish_date': my_finish}
 
 
+def sort_by_season(model, iter1, iter2, data):
+    """TreeSortable sort func for the 'season' column. The column holds
+    a display string ('Summer 2026'); a plain text sort compares the
+    season name before the year, so this parses it back into a
+    (year, season) key instead (see utils.season_sort_key).
+
+    Installed on the ShowTreeView's Gtk.TreeModelSort in mainview.py,
+    not on the underlying ShowListStore -- TreeModelSort implements
+    GtkTreeSortable independently of its child model, so a sort func
+    set on the store itself is never consulted once a TreeModelSort
+    sits between it and the view.
+    """
+    season_col = ShowListStore.column('season')
+    ka = utils.season_sort_key(model.get_value(iter1, season_col))
+    kb = utils.season_sort_key(model.get_value(iter2, season_col))
+    return (ka > kb) - (ka < kb)
+
+
 class ShowListStore(Gtk.ListStore):
     __cols = (
         ('id', int),
