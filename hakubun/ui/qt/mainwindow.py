@@ -887,7 +887,8 @@ class MainWindow(QMainWindow):
 
             self.seasons_widget = SeasonsWidget(self, self.worker)
             self.search_widget = SearchWidget(self, self.worker)
-            self.stats_widget = StatisticsWidget(self, self.worker)
+            self.stats_widget = StatisticsWidget(
+                self, self.worker, bar_color=self.config['colors']['progress_fg'])
 
             # Grouping matches real Taiga's sidebar: Now Playing on its
             # own, then list-management pages, then discovery pages
