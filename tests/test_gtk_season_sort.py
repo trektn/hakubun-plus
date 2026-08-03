@@ -51,6 +51,7 @@ def test_year_dominates_over_season_name_through_treemodelsort():
 
 
 def test_season_name_breaks_ties_within_a_year():
+    """Within a year, Winter sorts before Summer chronologically."""
     store = ShowListStore()
     store.append(_show(1, 'Winter 2026'))
     store.append(_show(2, 'Summer 2026'))
@@ -60,4 +61,4 @@ def test_season_name_breaks_ties_within_a_year():
     sorted_model.set_sort_column_id(
         ShowListStore.column('season'), Gtk.SortType.ASCENDING)
 
-    assert _titles_in_sort_order(sorted_model) == ['show-2', 'show-1']
+    assert _titles_in_sort_order(sorted_model) == ['show-1', 'show-2']

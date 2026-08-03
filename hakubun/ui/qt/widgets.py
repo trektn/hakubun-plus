@@ -129,7 +129,12 @@ class DetailsWidget(QWidget):
         content_layout.setContentsMargins(14, 14, 14, 14)
         content_layout.setSpacing(16)
 
-        top_row = QHBoxLayout()
+        # Exposed as an attribute (not just a local) so a caller that
+        # reparents show_image elsewhere (see NowPlayingWidget) can
+        # remove it from here first -- addWidget() alone moves a
+        # widget's QObject parent to the new layout's, but leaves the
+        # old layout's QLayoutItem for it dangling.
+        self.top_row = top_row = QHBoxLayout()
         top_row.setSpacing(18)
 
         self.show_image = QLabel()
