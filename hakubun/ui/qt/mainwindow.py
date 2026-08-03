@@ -20,16 +20,16 @@ import os
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox,
-                             QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                             QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-                             QSpinBox, QStackedWidget, QStyle, QStyleOptionButton, QSystemTrayIcon,
-                             QTabBar, QToolButton, QVBoxLayout, QWidget)
+                             QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
+                             QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+                             QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
+                             QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
+                             QWidget)
 
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
 from hakubun.sync import present
-from hakubun.sync.models import SyncMode
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
@@ -71,6 +71,10 @@ class MainWindow(QMainWindow):
     def __init__(self, debug=False, force_taiga=False):
         QMainWindow.__init__(self, None)
         self.debug = debug
+        # r_engine_loaded fires on every account/mediatype reload, not
+        # just the initial start -- only show the parser-fallback dialog
+        # once per session, not on every switch.
+        self._parser_fallback_shown = False
 
         # Load QT specific configuration
         self.configfile = utils.to_config_path('ui-qt.json')
@@ -227,6 +231,13 @@ class MainWindow(QMainWindow):
         action_rescan_library.triggered.connect(self.s_rescan_library)
         action_open_folder = QAction('Open containing folder', self)
         action_open_folder.triggered.connect(self.s_open_folder)
+        self.action_set_folder = QAction('Set folder...', self)
+        self.action_set_folder.setStatusTip(
+            'Manually point this show at a local folder, bypassing '
+            'filename guessing -- for folders the parser can\'t match.')
+        self.action_set_folder.triggered.connect(self.s_set_folder)
+        self.action_clear_folder = QAction('Clear folder', self)
+        self.action_clear_folder.triggered.connect(self.s_clear_folder)
 
         self.action_reload = QAction('Switch &Account', self)
         self.action_reload.setStatusTip('Switch to a different account.')
@@ -337,9 +348,12 @@ class MainWindow(QMainWindow):
         self.menu_show_context.addAction(self.action_details)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
+        self.menu_show_context.addAction(self.action_set_folder)
+        self.menu_show_context.addAction(self.action_clear_folder)
         self.menu_show_context.addAction(self.action_altname)
         self.menu_show_context.addSeparator()
         self.menu_show_context.addAction(self.action_delete)
+        self.menu_show_context.aboutToShow.connect(self._update_folder_actions)
 
         # Make icons for viewed episodes
         rect = QtCore.QSize(16, 16)
@@ -637,6 +651,20 @@ class MainWindow(QMainWindow):
             view_mode_hbox.addWidget(self.action_view_anime_list)
             left_box.addRow(view_mode_hbox)
 
+            # In Taiga mode the show list has no sidebar to hang this
+            # off, and the right-click Set/Clear folder actions give no
+            # feedback about what's currently pinned -- so the Edit tab
+            # is the one place a pinned folder is visible next to the
+            # controls that change it.
+            self.taiga_folder_label = QLabel()
+            self.taiga_folder_label.setWordWrap(True)
+            self.taiga_folder_label.setTextFormat(
+                QtCore.Qt.TextFormat.PlainText)
+            self.taiga_folder_label.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.taiga_folder_label.setStyleSheet(
+                'color: palette(placeholder-text);')
+
             edit_form = QFormLayout()
             edit_form.addRow(show_progress_label)
             edit_form.addRow(self.show_progress, self.show_progress_btn)
@@ -645,6 +673,7 @@ class MainWindow(QMainWindow):
             edit_form.addRow(self.show_score_system)
             edit_form.addRow(self.show_status)
             edit_form.addRow(self.show_tags_btn)
+            edit_form.addRow('Folder:', self.taiga_folder_label)
             self.taiga_edit_widget = QWidget()
             self.taiga_edit_widget.setLayout(edit_form)
         else:
@@ -1235,6 +1264,7 @@ class MainWindow(QMainWindow):
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
             self._enable_show_widgets(False)
+            self._update_folder_label()
 
             return
 
@@ -1299,6 +1329,7 @@ class MainWindow(QMainWindow):
 
         # Make it global
         self.selected_show_id = show['id']
+        self._update_folder_label()
 
         # Unblock signals
         self.show_status.blockSignals(False)
@@ -1760,6 +1791,49 @@ class MainWindow(QMainWindow):
         except utils.EngineError as e:
             self.error(e.args[0])
 
+    def s_set_folder(self):
+        if not self.selected_show_id:
+            return
+        current = self.worker.engine.get_show_folder(self.selected_show_id)
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Select folder', current or os.path.expanduser('~'))
+        if not folder:
+            return
+        # No _update_folder_label() here: set_show_folder runs on the
+        # worker thread, so the pin may not be written yet. The Edit tab
+        # only exists inside the details dialog, and s_show_details
+        # refreshes the row on the way in -- which is always after this.
+        self.worker_call('set_show_folder', self.r_library_scanned,
+                         self.selected_show_id, folder)
+
+    def s_clear_folder(self):
+        if not self.selected_show_id:
+            return
+        self.worker.engine.unset_show_folder(self.selected_show_id)
+        self._update_folder_label()
+        self.status('Folder cleared.')
+
+    def _update_folder_actions(self):
+        has_folder = bool(self.selected_show_id and self.worker.engine.get_show_folder(
+            self.selected_show_id))
+        self.action_clear_folder.setEnabled(has_folder)
+        self.action_set_folder.setText(
+            'Change folder...' if has_folder else 'Set folder...')
+
+    def _update_folder_label(self):
+        """Keep the Taiga Edit tab's Folder row in step with the pin.
+        Only exists in Taiga mode -- everywhere else the folder shows up
+        in the details view alone (see engine.get_show_details)."""
+        # getattr: _select_show can fire before the Taiga branch of the
+        # sidebar build has created this label.
+        label = getattr(self, 'taiga_folder_label', None)
+        if label is None:
+            return
+        folder = self.worker.engine.get_show_folder(self.selected_show_id) \
+            if self.selected_show_id else None
+        label.setText(folder or 'Not set')
+        label.setToolTip(folder or '')
+
     def s_retrieve(self, result=None):
         # `result` present because this is also used as a worker_call
         # callback (the upload-then-retrieve chain). The old signal
@@ -1807,6 +1881,7 @@ class MainWindow(QMainWindow):
 
         show = self.worker.engine.get_show_info(self.selected_show_id)
 
+        self._update_folder_label()
         edit_widget = self.taiga_edit_widget if self._taiga_mode else None
         self.detailswindow = DetailsDialog(
             None, self.worker, show, edit_widget=edit_widget)
@@ -1916,15 +1991,15 @@ class MainWindow(QMainWindow):
                         '(see the sync window).')
             return
 
-        mode = present.SETTINGS_MODES.get(
-            self.config['multisync_mode'], SyncMode.MERGE)
+        (mode, plan_only) = present.settings_sync_mode(self.config)
         idx = win.mode_combo.findData(mode)
         if idx >= 0:
             win.mode_combo.setCurrentIndex(idx)
 
         # No self._busy(): the main window stays usable while the sync
         # runs on the window's worker thread.
-        self.status('Multi-syncing (%s)...' % self.config['multisync_mode'])
+        self.status('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._r_multisync_planned(
                      win, plan, error),
@@ -1962,6 +2037,21 @@ class MainWindow(QMainWindow):
             self._surface_syncwindow(win)
             self.status('Multi-sync needs your decision on %d '
                        'conflict(s).' % len(plan.conflicts))
+            return
+        (_mode, plan_only) = present.settings_sync_mode(self.config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            self._surface_syncwindow(win)
+            if not plan.changes:
+                self.status('Multi-sync: already in sync.')
+            else:
+                self.status('Multi-sync: %d change(s) planned -- review '
+                            'and apply from the sync window.'
+                            % len(plan.changes))
             return
         if not plan.changes:
             self.status('Multi-sync: already in sync.')
@@ -2006,8 +2096,9 @@ class MainWindow(QMainWindow):
                           '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
                           '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
                           '<p>Thanks to all contributors. To see all contributors see AUTHORS file.</p>'
-                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a>, '
-                          'licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a> and '
+                          '<a href="https://github.com/tylergibbs2/anitomy-ng">anitomy-ng</a>, '
+                          'both licensed under the Mozilla Public License 2.0.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
                               utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
@@ -2185,6 +2276,15 @@ class MainWindow(QMainWindow):
 
     def r_engine_loaded(self, result):
         if result['success']:
+            # The status bar already shows the underlying warning, but it's
+            # transient and gets overwritten within the same startup
+            # sequence -- easy to miss even when printed to console. Show
+            # it once, durably, as an actual dialog.
+            parser_warning = self.worker.engine.parser_fallback_warning
+            if parser_warning and not self._parser_fallback_shown:
+                self._parser_fallback_shown = True
+                QMessageBox.warning(self, 'Title parser fallback', parser_warning)
+
             showlist = self.worker.engine.get_list()
             altnames = self.worker.engine.altnames()
             library = self.worker.engine.library()

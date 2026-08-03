@@ -14,6 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import os
 import re
 from decimal import Decimal
 
@@ -25,6 +26,43 @@ BRACKET_PAIRS = [
     (r'\(', r'\)'),
     (r'\{', r'\}'),
 ]
+
+
+def _dedupe_path_title(file_name):
+    # When library_full_path feeds a path like "Show S01/Show S01E05.mkv",
+    # this class has no concept of path separators and previously left them
+    # (and the duplicated title either side of them) in the extracted name
+    # verbatim. Strip the longest run shared between two path segments
+    # before the separator itself is discarded.
+    #
+    # Deliberately skips the bracket-hoisting AnitopyWrapper does for the
+    # same input: this class already finds [Group] tags anywhere in the
+    # string, and hoisting one ahead of an earlier bare path segment (e.g.
+    # a generic "anime" bucket folder) breaks the dedup match below.
+    file_name = os.path.sep + file_name
+    try:
+        temp = re.sub(r'[^\w\s{0}\(\)\{{\}}\[\]]'.format(re.escape(os.path.sep)),
+                      r' ', file_name, flags=re.ASCII)
+        m = max(
+            (x for x in re.finditer(
+                r'(\b.{{3,}}\b)(?=.*?{0}.*?(?P<DUP>\1))'.format(re.escape(os.path.sep)),
+                temp, flags=re.IGNORECASE)),
+            key=lambda y: y.end() - y.start(),
+            default=None,
+        )
+        if m:
+            file_name = file_name[:m.start('DUP')] + ' ' + file_name[m.end('DUP'):]
+    except ValueError:
+        pass
+
+    # Join with '.' rather than ' ': __cleanUpSpaces below treats "any
+    # space present" as "already space-delimited, skip dot/underscore/
+    # hyphen normalization" -- joining path segments with a literal space
+    # would falsely trip that guard for otherwise dot-delimited release
+    # names and leave their internal dots unconverted.
+    parts = file_name.split(os.path.sep)
+    file_name = '.'.join(parts).strip('.')
+    return re.sub(r'\s{2,}', r' ', file_name.strip())
 
 
 class AnimeInfoExtractor:
@@ -39,6 +77,7 @@ class AnimeInfoExtractor:
     def __init__(self, msg, filename):
         self.msg = msg.with_classname('Parser')
         self.originalFilename = filename
+        self._dedupedFilename = _dedupe_path_title(filename)
         self.resolution = ''
         self.hash = ''
         self.subberTag = ''
@@ -310,7 +349,7 @@ class AnimeInfoExtractor:
             self.name += " Season {}".format(self.season)
 
     def _processFilename(self):
-        filename = self.originalFilename
+        filename = self._dedupedFilename
         filename = self.__extractExtension(filename)
         filename = self.__cleanUpSpaces(filename)
         filename = self.__extractSpecialTags(filename)

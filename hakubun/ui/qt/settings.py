@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorD
                              QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.sync import present
 from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.themedcolorpicker import ThemedColorPicker
 from hakubun.ui.qt.util import FilterBar, getColor, getIcon
@@ -258,6 +259,17 @@ class SettingsDialog(QDialog):
             'Only applies when the player above is mpv. Hands off playback '
             'to the already-running mpv window via its IPC socket instead '
             'of starting a new process each time.')
+        self.player_use_subminer = QCheckBox()
+        if utils.subminer_available():
+            self.player_use_subminer.setToolTip(
+                'Opens episodes with SubMiner (detected on PATH) instead '
+                'of the player configured above. SubMiner launches mpv '
+                'itself with a sentence-mining overlay.')
+        else:
+            self.player_use_subminer.setEnabled(False)
+            self.player_use_subminer.setToolTip(
+                'SubMiner was not found on PATH. Install it to enable '
+                'this option.')
         lbl_searchdirs = QLabel('Media directories')
         lbl_searchdirs.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.searchdirs = QListWidget()
@@ -295,23 +307,27 @@ class SettingsDialog(QDialog):
         g_playnext_layout.addWidget(
             self.player_reuse_mpv,               2, 2, 1, 1)
         g_playnext_layout.addWidget(
-            lbl_searchdirs,                      3, 0, 1, 1)
+            QLabel('Open episodes with SubMiner'), 3, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.searchdirs,                     3, 1, 1, 1)
+            self.player_use_subminer,            3, 2, 1, 1)
+        g_playnext_layout.addWidget(
+            lbl_searchdirs,                      4, 0, 1, 1)
+        g_playnext_layout.addWidget(
+            self.searchdirs,                     4, 1, 1, 1)
         g_playnext_layout.addLayout(
-            self.searchdirs_buttons,             3, 2, 1, 1)
+            self.searchdirs_buttons,             4, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Rescan Library at startup'), 4, 0, 1, 2)
+            QLabel('Rescan Library at startup'), 5, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_autoscan,               4, 2, 1, 1)
+            self.library_autoscan,               5, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Scan through whole list'),   5, 0, 1, 2)
+            QLabel('Scan through whole list'),   6, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.scan_whole_list,                5, 2, 1, 1)
+            self.scan_whole_list,                6, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Take subdirectory name into account'), 6, 0, 1, 2)
+            QLabel('Take subdirectory name into account'), 7, 0, 1, 2)
         g_playnext_layout.addWidget(
-            self.library_full_path,              6, 2, 1, 1)
+            self.library_full_path,              7, 2, 1, 1)
 
         g_playnext.setLayout(g_playnext_layout)
 
@@ -448,6 +464,15 @@ class SettingsDialog(QDialog):
                                     'pull')
         self.multisync_mode.addItem('Push (local overwrites providers)',
                                     'push')
+        self.multisync_plan_only = QCheckBox(
+            'Fetch && plan only (review before applying)')
+        self.multisync_plan_only.setToolTip(
+            'Sync fetches every provider and works out what would '
+            'change in the mode above, then always opens the sync '
+            'window so you can review and apply it yourself. Turn this '
+            'off to let Sync apply clean changes headlessly -- '
+            'conflicts and first-time syncs still always stop for '
+            'review either way.')
         self.multisync_edit_owned_score = QCheckBox(
             'Edit owned scores in the owner\'s rating system')
         self.multisync_edit_owned_score.setToolTip(
@@ -459,12 +484,15 @@ class SettingsDialog(QDialog):
         self.multisync_enabled.toggled.connect(
             self.multisync_mode.setEnabled)
         self.multisync_enabled.toggled.connect(
+            self.multisync_plan_only.setEnabled)
+        self.multisync_enabled.toggled.connect(
             self.multisync_edit_owned_score.setEnabled)
         g_sync_layout = QVBoxLayout()
         g_sync_layout.addWidget(self.multisync_enabled)
         mode_row = QFormLayout()
         mode_row.addRow('Mode:', self.multisync_mode)
         g_sync_layout.addLayout(mode_row)
+        g_sync_layout.addWidget(self.multisync_plan_only)
         g_sync_layout.addWidget(self.multisync_edit_owned_score)
         g_sync.setLayout(g_sync_layout)
 
@@ -723,6 +751,8 @@ class SettingsDialog(QDialog):
         self.player.setText(engine.get_config('player'))
         self.player_reuse_mpv.setChecked(
             engine.get_config('player_reuse_mpv_instance'))
+        self.player_use_subminer.setChecked(
+            engine.get_config('use_subminer') and utils.subminer_available())
         self.library_autoscan.setChecked(engine.get_config('library_autoscan'))
         self.scan_whole_list.setChecked(engine.get_config('scan_whole_list'))
         self.library_full_path.setChecked(
@@ -803,10 +833,16 @@ class SettingsDialog(QDialog):
         self.inline_edit.setChecked(self.config['inline_edit'])
         self.filter_global.setChecked(self.config['filter_global'])
         self.multisync_enabled.setChecked(self.config['multisync_enabled'])
+        # A config still on the retired 'plan_only' mode resolves to
+        # merge + the review checkbox, which is what it always meant.
+        (mode, plan_only) = present.settings_sync_mode(self.config)
+        mode_key = next((k for k, v in present.SETTINGS_MODES.items()
+                         if v == mode), 'merge')
         self.multisync_mode.setCurrentIndex(
-            max(0, self.multisync_mode.findData(
-                self.config['multisync_mode'])))
+            max(0, self.multisync_mode.findData(mode_key)))
         self.multisync_mode.setEnabled(self.config['multisync_enabled'])
+        self.multisync_plan_only.setChecked(plan_only)
+        self.multisync_plan_only.setEnabled(self.config['multisync_enabled'])
         self.multisync_edit_owned_score.setChecked(
             self.config['multisync_edit_owned_score'])
         self.multisync_edit_owned_score.setEnabled(
@@ -859,6 +895,9 @@ class SettingsDialog(QDialog):
         engine.set_config('player',            self.player.text())
         engine.set_config('player_reuse_mpv_instance',
                            self.player_reuse_mpv.isChecked())
+        if self.player_use_subminer.isEnabled():
+            engine.set_config('use_subminer',
+                              self.player_use_subminer.isChecked())
         engine.set_config('library_autoscan',
                           self.library_autoscan.isChecked())
         engine.set_config('scan_whole_list', self.scan_whole_list.isChecked())
@@ -946,6 +985,8 @@ class SettingsDialog(QDialog):
         self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
         self.config['multisync_mode'] = self.multisync_mode.itemData(
             self.multisync_mode.currentIndex())
+        self.config['multisync_plan_only'] = \
+            self.multisync_plan_only.isChecked()
         self.config['multisync_edit_owned_score'] = \
             self.multisync_edit_owned_score.isChecked()
 

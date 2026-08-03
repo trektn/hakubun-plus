@@ -6,7 +6,8 @@ authors = [{ name = "trektn", email = "trekt@poopf.art" }]
 requires-python = ">=3.9,<4"
 readme = "README.md"
 license = "GPL-3.0-or-later"
-license-files = ["COPYING"]
+license-files = ["COPYING", "THIRD_PARTY_NOTICES.md"]
+dependencies = ["anitomy-ng>=1.0.7,<2"]
 keywords = [
     "list manager",
     "gtk",
@@ -55,6 +56,7 @@ trackers = [
 ]
 discord_rpc = ["pypresence>=4.2.1,<5"]
 anitopy = ["anitopy>=2.0.0,<3"]
+fuzzy = ["rapidfuzz>=3.0.0,<4"]
 
 [project.urls]
 Homepage = "https://github.com/trektn/hakubun-plus"

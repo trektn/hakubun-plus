@@ -129,7 +129,7 @@ class MultiSyncWindow(Gtk.Window):
             lib_info = utils.available_libs.get(self.engine.primary)
             if lib_info:
                 icon = Gtk.Image.new_from_file(lib_info[1])
-                icon.set_tooltip_text('Signed into %s -- its changes count '
+                icon.set_tooltip_text('Signed into %s: its changes count '
                                       'as your local edits.' % lib_info[0])
                 bar.pack_start(icon, False, False, 0)
         bar.pack_start(Gtk.Label(label='Mode:'), False, False, 0)
@@ -170,9 +170,9 @@ class MultiSyncWindow(Gtk.Window):
         page.pack_start(self.mode_context, False, False, 0)
         legend = Gtk.Label(xalign=0)
         legend.set_markup(
-            '<span foreground="%s">↑ push to a site</span>  '
-            '<span foreground="%s">↓ pull into Hakubun</span>  '
-            '-- uncheck anything to skip it' % (_PUSH_COLOR, _PULL_COLOR))
+            '<span foreground="%s">↑ push to a site</span>  ·  '
+            '<span foreground="%s">↓ pull into Hakubun</span>  ·  '
+            'uncheck anything to skip it' % (_PUSH_COLOR, _PULL_COLOR))
         page.pack_start(legend, False, False, 0)
 
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -268,7 +268,7 @@ class MultiSyncWindow(Gtk.Window):
         # ignores the foreground colour and breaks the push/pull coding.
         arrow, color = (('↓', _PULL_COLOR) if direction == 'pull'
                         else ('↑', _PUSH_COLOR))
-        if change.first_sync:
+        if change.first_sync or change.creates_entry:
             color = _FIRST_SYNC_COLOR
         return ('%s %s' % (arrow, text), color)
 
@@ -284,7 +284,7 @@ class MultiSyncWindow(Gtk.Window):
             states = {c.selected for c in group_changes}
             parent = self._changes_store.append(
                 None, [states == {True}, len(states) > 1,
-                       '%s    --  %d change(s)'
+                       '%s (%d change(s))'
                        % (title, len(group_changes)), None, None])
             for change in group_changes:
                 label, color = self._change_label(change)
@@ -332,7 +332,7 @@ class MultiSyncWindow(Gtk.Window):
         return present.conflict_why(conflict, self.engine.primary)
 
     def _decision_card(self, conflict):
-        frame = Gtk.Frame(label='%s -- %s' % (
+        frame = Gtk.Frame(label='%s: %s' % (
             conflict.title, _FIELD_LABELS.get(conflict.field, conflict.field)))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_border_width(6)
@@ -386,7 +386,7 @@ class MultiSyncWindow(Gtk.Window):
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
-        self._status('Resolved %s for %s -- replanning...' % (
+        self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
         self._run(self.engine.plan, self.r_planned, 'Planning...',
                   self._current_mode())
@@ -414,7 +414,7 @@ class MultiSyncWindow(Gtk.Window):
         if response != Gtk.ResponseType.OK:
             return
         self.engine.resolve_conflict(conflict, 'value', value=value)
-        self._status('Resolved %s for %s -- replanning...' % (
+        self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
         self._run(self.engine.plan, self.r_planned, 'Planning...',
                   self._current_mode())
@@ -459,9 +459,15 @@ class MultiSyncWindow(Gtk.Window):
         first_sync = sum(1 for c in plan.changes if c.first_sync)
         if first_sync:
             self.preview_summary.set_text(
-                '%s  --  %d first-sync overwrite(s) left unticked. %s'
+                '%s %d first-sync overwrite(s) left unticked. %s'
                 % (self.preview_summary.get_text(), first_sync,
                    present.FIRST_SYNC_HELP))
+        creates = sum(1 for c in plan.changes if c.creates_entry)
+        if creates:
+            self.preview_summary.set_text(
+                '%s %d new-entry add(s) left unticked. %s'
+                % (self.preview_summary.get_text(), creates,
+                   present.CREATES_ENTRY_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
@@ -513,7 +519,7 @@ class MultiSyncWindow(Gtk.Window):
         text = '%s %d local change(s), %d push(es)' % (
             verb, result['local'], result['pushed'])
         if result['errors']:
-            text += ' -- failed: %s (their changes stay planned)' % ', '.join(
+            text += '. Failed: %s (their changes stay planned)' % ', '.join(
                 '%s (%s)' % kv for kv in result['errors'].items())
         self._append_log(text)
         self._status(text)
@@ -538,7 +544,7 @@ class MultiSyncWindow(Gtk.Window):
             # tables out from under it (and block the main loop on the
             # store lock). Ask it to stop; the user clicks again.
             self._cancel.set()
-            self._status('Stopping the running operation first -- press '
+            self._status('Stopping the running operation first. Press '
                          'Reset again once it has.')
             return
         self.store.reset()
@@ -551,7 +557,7 @@ class MultiSyncWindow(Gtk.Window):
         self.preview_summary.set_text('')
         self.apply_button.set_sensitive(False)
         self._refresh_identity()
-        self._status('Sync database reset -- run Fetch & Plan to re-derive it.')
+        self._status('Sync database reset. Run Fetch & Plan to re-derive it.')
 
     def _set_log(self, text):
         self.apply_log.get_buffer().set_text(text)
@@ -628,7 +634,7 @@ class MultiSyncWindow(Gtk.Window):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_border_width(8)
         page.pack_start(Gtk.Label(
-            label='Unresolved identities -- entries with ambiguous matches '
+            label='Unresolved identities: entries with ambiguous matches '
             'only. Exact ID links and single exact-title matches are linked '
             'automatically and never appear here.', xalign=0, wrap=True),
             False, False, 0)
@@ -658,7 +664,7 @@ class MultiSyncWindow(Gtk.Window):
             None, 'Use a matched entry')
         self._candidate_combo = Gtk.ComboBoxText()
         self._rb_search = Gtk.RadioButton.new_with_label_from_widget(
-            self._rb_confirm, 'Search manually -- find it on another provider')
+            self._rb_confirm, 'Search manually: find it on another provider')
         search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self._search_provider = Gtk.ComboBoxText()
         self._search_text = Gtk.Entry()
@@ -670,11 +676,11 @@ class MultiSyncWindow(Gtk.Window):
         self._search_results = Gtk.ComboBoxText()
         self._search_result_entries = []
         self._rb_provider_only = Gtk.RadioButton.new_with_label_from_widget(
-            self._rb_confirm, 'Keep provider-only -- do not sync elsewhere')
+            self._rb_confirm, 'Keep provider-only: do not sync elsewhere')
         self._rb_defer = Gtk.RadioButton.new_with_label_from_widget(
-            self._rb_confirm, 'Create mappings later -- keep watching')
+            self._rb_confirm, 'Create mappings later: keep watching')
         self._rb_ignore = Gtk.RadioButton.new_with_label_from_widget(
-            self._rb_confirm, 'Ignore this title -- never ask again')
+            self._rb_confirm, 'Ignore this title: never ask again')
         for w in (self._rb_confirm, self._candidate_combo, self._rb_search):
             rbox.pack_start(w, False, False, 0)
         rbox.pack_start(search_row, False, False, 0)
@@ -730,7 +736,7 @@ class MultiSyncWindow(Gtk.Window):
                'No existing entry matched and no cross-provider ID was '
                'published.')
         self._identity_info.set_markup(
-            '<b>%s</b>%s -- %s entry %s. %s' % (
+            '<b>%s</b>%s: %s entry %s. %s' % (
                 GLib.markup_escape_text(self._display_title(
                     issue['title'], info.get('aliases'))),
                 year, issue['provider'], issue['provider_id'], why))
@@ -739,7 +745,7 @@ class MultiSyncWindow(Gtk.Window):
         for cand in candidates:
             provs = ', '.join('on %s (%s)' % kv for kv in sorted(
                 cand.get('providers', {}).items()))
-            self._candidate_combo.append_text('%s%s -- %s -- %s' % (
+            self._candidate_combo.append_text('%s%s: %s (%s)' % (
                 self._display_title(cand.get('title'), cand.get('aliases')),
                 ' (%s)' % cand['year'] if cand.get('year') else '',
                 provs or 'no providers yet', cand.get('via', '')))
@@ -750,7 +756,7 @@ class MultiSyncWindow(Gtk.Window):
         else:
             self._rb_defer.set_active(True)
         self._rb_provider_only.set_label(
-            'Keep %s-only -- do not sync this entry elsewhere'
+            'Keep %s-only: do not sync this entry elsewhere'
             % issue['provider'])
         self._search_provider.remove_all()
         for name in self.engine.adapters:
@@ -833,8 +839,8 @@ class MultiSyncWindow(Gtk.Window):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_border_width(8)
         page.pack_start(Gtk.Label(
-            label='Identity inspector -- punch in one entry by its provider '
-            'id and see how multisync resolved it: what it maps to on your '
+            label='Identity inspector: enter one entry by its provider ID '
+            'and see how multisync resolved it: what it maps to on your '
             'other providers, how each link was made, and its raw data.',
             xalign=0, wrap=True), False, False, 0)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -887,39 +893,46 @@ class MultiSyncWindow(Gtk.Window):
             Gtk.show_uri_on_window(self, self._inspect_url,
                                    Gtk.get_current_event_time())
 
+    @staticmethod
+    def _mono(text):
+        """Wrap an id/technical value in monospace (Pango <tt>)."""
+        return '<tt>%s</tt>' % text
+
     def _render_inspection(self, r):
         esc = GLib.markup_escape_text
-        p = ['<b>%s id %s</b>\n' % (r.provider.capitalize(), esc(str(r.provider_id)))]
+        p = ['<b>%s id %s</b>\n' % (r.provider.capitalize(),
+                                    self._mono(esc(str(r.provider_id))))]
         if not r.found:
             p.append('\n%s' % esc(r.note))
             issue = r.identity_issue
             if issue and issue.get('candidates'):
                 p.append('\n\n<b>Candidates on file:</b>')
                 for c in issue['candidates']:
-                    provs = ', '.join('%s:%s' % kv for kv in
+                    provs = ', '.join(self._mono(esc('%s:%s' % kv)) for kv in
                                       (c.get('providers') or {}).items()) \
                         or 'no providers yet'
-                    p.append('\n  - %s%s -- %s -- <i>%s</i>' % (
+                    p.append('\n  - %s%s: %s (<i>%s</i>)' % (
                         esc(c.get('title') or '?'),
                         ' (%s)' % c['year'] if c.get('year') else '',
-                        esc(provs), esc(c.get('via', ''))))
+                        provs, esc(c.get('via', ''))))
             if r.atlas_hint:
-                p.append('\n\n<b>anime-relations atlas says:</b> %s' % esc(
-                    ', '.join('%s=%s' % kv for kv in r.atlas_hint.items())))
+                p.append('\n\n<b>anime-relations atlas says:</b> %s'
+                         % self._mono(esc(', '.join(
+                             '%s=%s' % kv for kv in r.atlas_hint.items()))))
             return ''.join(p)
 
         p.append('\n<b>%s</b>%s%s' % (
             esc(r.title or '?'), ' (%s)' % r.year if r.year else '',
-            ' -- pinned provider-only (%s)' % r.provider_only.capitalize()
+            ', pinned provider-only (%s)' % r.provider_only.capitalize()
             if r.provider_only else ''))
         if r.aliases:
             p.append('\nAlso known as: %s'
                      % esc(', '.join(a for a in r.aliases if a != r.title)))
-        p.append('\nInternal id: <tt>%s</tt>' % esc(str(r.uuid)))
+        p.append('\nInternal id: %s' % self._mono(esc(str(r.uuid))))
         p.append('\n\n<b>Mapped providers</b>')
         for m in r.mappings:
             p.append('\n  %s: %s  (%s, via %s)' % (
-                m.provider.capitalize(), esc(str(m.provider_id)),
+                m.provider.capitalize(), self._mono(esc(str(m.provider_id))),
                 'confirmed' if m.confirmed else 'auto', esc(m.via or '-')))
         providers = sorted({prov for row in r.fields for prov in row.per_provider})
         rows = [row for row in r.fields
@@ -936,7 +949,7 @@ class MultiSyncWindow(Gtk.Window):
                         self._fmt_value(row.field, pv['base'])))
                 p.append('\n  %s: %s' % (
                     _FIELD_LABELS.get(row.field, row.field),
-                    esc(' | '.join(cells))))
+                    self._mono(esc(' | '.join(cells)))))
         return ''.join(p)
 
     # -- plumbing ------------------------------------------------------

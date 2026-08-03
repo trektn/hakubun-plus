@@ -84,7 +84,69 @@ class SyncEngine:
                 break   # this provider rolled back; stop cleanly
             except Exception as e:
                 errors[name] = '%s: %s' % (type(e).__name__, e)
+        self._discover_cross_ids(providers, should_cancel)
         return errors
+
+    def _discover_cross_ids(self, providers, should_cancel):
+        """After every connected provider's own list is ingested, ask
+        any provider whose lib exposes an exact reverse lookup
+        (currently AniList's Media(idMal:...); duck-typed via
+        ProviderAdapter.supports_mal_id_lookup) whether it has each
+        entity whose MAL id is already known from elsewhere (Kitsu's
+        published mal_id, the community atlas, ...) but that provider
+        has no mapping for yet -- e.g. a show only ever added on Kitsu,
+        whose MAL cross-id is known, but that was never independently
+        matched by title on AniList because it was never fetched from
+        there at all.
+
+        DISCOVERY only: a hit writes a mapping with an EMPTY remote
+        snapshot, identical in shape to identity._record_external_ids's
+        own pre-emptive linking, so Merge/Pull/Push ignore it entirely
+        (they only touch providers with SOME remote row to diff
+        against); only Rebase's create step (_plan_rebase_add) ever
+        acts on it. A miss is remembered (resolved_absent) so it isn't
+        re-queried every fetch forever -- superseded automatically the
+        moment a real mapping appears for that (entity, provider) pair
+        through any path, since that's checked first.
+
+        Genuine network calls, one per (missing entity, capable
+        provider) not already resolved_absent -- paced/rate-limited
+        like a push via ProviderAdapter.resolve_by_mal_id. A provider
+        failure isolates (stops that provider's discovery only) rather
+        than raising into the main fetch above."""
+        mal_ids = {m['uuid']: m['provider_id']
+                  for m in self.store.mappings_of_provider('mal')}
+        if not mal_ids:
+            return
+        for name, adapter in self.adapters.items():
+            if providers and name not in providers:
+                continue
+            if name == 'mal' or not adapter.supports_mal_id_lookup():
+                continue
+            if should_cancel is not None and should_cancel():
+                return
+            mapped = {m['uuid'] for m in
+                     self.store.mappings_of_provider(name)}
+            absent = self.store.absent_for_provider(name)
+            for uid, mal_id in mal_ids.items():
+                if uid in mapped or uid in absent:
+                    continue
+                if should_cancel is not None and should_cancel():
+                    return
+                try:
+                    found = adapter.resolve_by_mal_id(
+                        mal_id, cancel=should_cancel)
+                except SyncCancelled:
+                    return
+                except AdapterError:
+                    break   # isolate: stop this provider, others proceed
+                if found is None:
+                    self.store.mark_absent(uid, name)
+                    continue
+                if self.store.mapping_for(name, found) is not None:
+                    continue   # already claimed -- not ours to add
+                self.store.add_mapping(uid, name, found, confirmed=False,
+                                       via='resolved via MAL id lookup')
 
     def _ingest(self, name, entries, seed_txn, should_cancel=None):
         """Store one provider's fetched entries (inside a transaction)."""
@@ -283,6 +345,9 @@ class SyncEngine:
                 snapshot['remote'].get(provider, {}).get(
                     m['provider_id'], {}),
                 snapshot['base'].get((uid, provider), {}))
+
+        if mode is SyncMode.REBASE:
+            self._plan_rebase_add(plan, uid, title, ownership, sides, local)
 
         ent_total = ent.get('total')
         for field, policy in ownership.items():
@@ -555,6 +620,65 @@ class SyncEngine:
             survivors.append(r_val)
         return kept
 
+    def _plan_rebase_add(self, plan, uid, title, ownership, sides, local):
+        """REBASE-only: create the show on every connected, MAPPED
+        provider that doesn't have it yet -- an empty remote snapshot
+        for that provider (`sides[provider][0]`) despite a mapping
+        existing means identity resolution knows the id (e.g. a
+        provider-published cross-id another provider's fetch recorded
+        pre-emptively, see identity._record_external_ids) but that
+        provider's own fetch has never actually listed an entry there.
+        Ordinary rebase pushes (_plan_rebase/_plan_push below) can never
+        reach these: they only iterate `states`, which by construction
+        only contains providers with SOME remote row to diff against.
+
+        Bundles every owned field's CURRENT authoritative value (the
+        same value an ordinary rebase would push to an existing entry)
+        into one create per missing provider -- apply() tells create
+        from update purely by remote-snapshot presence at apply time,
+        so no separate plumbing is needed there. Fields with no single
+        owner (merge/ask/individual) contribute nothing, same as an
+        ordinary rebase push. A provider-owned field whose declared
+        owner has nothing to give (typically because the owner IS one
+        of the providers being created -- it can't be its own source)
+        falls back to local's current value instead of leaving a brand
+        new entry with that field blank; ordinary rebase reconciles it
+        properly against the real owner once that owner actually
+        exists. Planned unselected, like first_sync -- see
+        FieldChange.creates_entry."""
+        missing = [p for p, (remote, _base) in sides.items() if not remote]
+        if not missing:
+            return
+        values = {}   # field -> (value, source) -- source shown in the
+                      # UI so "where did this come from" is never a
+                      # guess: 'local' for a local-owned field, the
+                      # owning provider's name for a provider-owned one.
+        for field, policy in ownership.items():
+            if policy.kind is PolicyKind.LOCAL:
+                val = local.get(field, (None, 0))[0]
+                source = 'local'
+            elif policy.kind is PolicyKind.PROVIDER:
+                remote, _base = sides.get(policy.provider, ({}, {}))
+                val = remote.get(field, (None, 0))[0]
+                source = policy.provider
+                if val in (None, '', []):
+                    val = local.get(field, (None, 0))[0]
+                    source = 'local'
+            else:
+                continue
+            if val not in (None, '', []):
+                values[field] = (val, source)
+        if not values:
+            return
+        for provider in missing:
+            if not self.adapters[provider].mediainfo.get('can_add', True):
+                continue
+            for field, (val, source) in values.items():
+                plan.changes.append(FieldChange(
+                    uid, field, None, val, target=provider,
+                    source=source, title=title,
+                    selected=False, creates_entry=True))
+
     def _plan_rebase(self, plan, uid, title, field, policy, l_val,
                      orig_l, intent, states, progress_field, p_scales,
                      ent_total):
@@ -805,18 +929,32 @@ class SyncEngine:
                 if mapping is None:
                     done += 1   # counted in total_steps; keep it honest
                     continue
-                report('Pushing to %s: %s (%s)...' % (
-                    provider.capitalize(), chs[0].title,
-                    ', '.join(c.field for c in chs)))
                 remote = self.store.remote_get(provider,
                                                mapping['provider_id'])
+                # No remote row at all means this provider has never
+                # actually listed the entry (see _plan_rebase_add): the
+                # mapping only records an id someone else claimed for
+                # it. Create it there instead of trying to update an
+                # entry that doesn't exist.
+                creating = not remote
                 my_id = (remote.get('_my_id') or (None, None))[0]
+                report('%s to %s: %s (%s)...' % (
+                    'Adding' if creating else 'Pushing',
+                    provider.capitalize(), chs[0].title,
+                    ', '.join(c.field for c in chs)))
                 try:
-                    sent = adapter.push(mapping['provider_id'],
-                                        {c.field: c.new for c in chs},
-                                        title=chs[0].title, my_id=my_id,
-                                        on_wait=on_wait,
-                                        cancel=should_cancel)
+                    if creating:
+                        sent, new_my_id = adapter.add(
+                            mapping['provider_id'],
+                            {c.field: c.new for c in chs},
+                            title=chs[0].title, on_wait=on_wait,
+                            cancel=should_cancel)
+                    else:
+                        sent = adapter.push(mapping['provider_id'],
+                                            {c.field: c.new for c in chs},
+                                            title=chs[0].title, my_id=my_id,
+                                            on_wait=on_wait,
+                                            cancel=should_cancel)
                 except SyncCancelled:
                     cancelled = True
                     break
@@ -842,16 +980,22 @@ class SyncEngine:
                             # back OVER local. Record nothing.
                             continue
                         value = sent[c.field]
+                        op = 'add' if creating else 'push'
                         self.history.record(txn, uid, c.field, c.old,
-                                            value, provider, op='push')
+                                            value, provider, op=op)
                         self.store.base_set(uid, provider, c.field, value)
                         self.store.remote_set_all(
                             provider, mapping['provider_id'],
                             {c.field: value})
                         pushed += 1
+                    if creating and sent and new_my_id is not None:
+                        self.store.remote_set_all(
+                            provider, mapping['provider_id'],
+                            {'_my_id': new_my_id})
                 done += 1
-                report('Pushed to %s: %s.' % (provider.capitalize(),
-                                              chs[0].title))
+                report('%s to %s: %s.' % ('Added' if creating else 'Pushed',
+                                          provider.capitalize(),
+                                          chs[0].title))
         if cancelled:
             report('Sync cancelled -- %d push(es) done, the rest '
                    're-plan.' % pushed)

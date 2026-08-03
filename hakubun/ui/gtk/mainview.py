@@ -40,6 +40,8 @@ class MainView(Gtk.Box):
                     ()),
         'error-fatal': (GObject.SignalFlags.RUN_FIRST, None,
                         (str,)),
+        'parser-fallback-warning': (GObject.SignalFlags.RUN_FIRST, None,
+                                    (str,)),
         'show-action': (GObject.SignalFlags.RUN_FIRST, None,
                         (int, object)),
     }
@@ -200,6 +202,10 @@ class MainView(Gtk.Box):
         except utils.HakubunFatal as e:
             self.emit('error-fatal', e)
             return
+
+        if self._engine.parser_fallback_warning:
+            self.emit('parser-fallback-warning',
+                     self._engine.parser_fallback_warning)
 
         GLib.idle_add(self._update_widgets)
 
@@ -1023,6 +1029,20 @@ class NotebookPage(Gtk.ScrolledWindow):
         mb_folder.connect("activate",
                           self._on_mb_activate,
                           ShowEventType.OPEN_FOLDER)
+        has_folder = bool(self._engine.get_show_folder(self._selected_show))
+        mb_set_folder = Gtk.MenuItem(
+            "Change folder..." if has_folder else "Set folder...")
+        mb_set_folder.set_tooltip_text(
+            "Manually point this show at a local folder, bypassing "
+            "filename guessing -- for folders the parser can't match.")
+        mb_set_folder.connect("activate",
+                              self._on_mb_activate,
+                              ShowEventType.SET_FOLDER)
+        mb_clear_folder = Gtk.MenuItem("Clear folder")
+        mb_clear_folder.set_sensitive(has_folder)
+        mb_clear_folder.connect("activate",
+                                self._on_mb_activate,
+                                ShowEventType.CLEAR_FOLDER)
         mb_copy = Gtk.MenuItem("Copy title to clipboard")
         mb_copy.connect("activate",
                         self._on_mb_activate,
@@ -1051,6 +1071,8 @@ class NotebookPage(Gtk.ScrolledWindow):
         menu.append(mb_move_to)
         menu.append(mb_web)
         menu.append(mb_folder)
+        menu.append(mb_set_folder)
+        menu.append(mb_clear_folder)
         menu.append(Gtk.SeparatorMenuItem())
         menu.append(mb_copy)
         menu.append(mb_alt_title)

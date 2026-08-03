@@ -19,6 +19,7 @@ import os
 from gi.repository import GObject, Gdk, Gtk, Pango
 
 from hakubun import utils
+from hakubun.sync import present
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.statusicon import HakubunStatusIcon
 
@@ -57,6 +58,8 @@ class SettingsWindow(Gtk.Window):
     entry_player_process = Gtk.Template.Child()
     btn_file_chooser_executable = Gtk.Template.Child()
     checkbox_player_reuse_mpv = Gtk.Template.Child()
+    combo_title_parser = Gtk.Template.Child()
+    checkbox_use_subminer = Gtk.Template.Child()
     listbox_directories = Gtk.Template.Child()
     btn_add_directory = Gtk.Template.Child()
     checkbox_library_startup = Gtk.Template.Child()
@@ -113,6 +116,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_sync_on_settings_apply = Gtk.Template.Child()
     checkbox_multisync_enabled = Gtk.Template.Child()
     combo_multisync_mode = Gtk.Template.Child()
+    checkbox_multisync_plan_only = Gtk.Template.Child()
     checkbox_multisync_edit_owned_score = Gtk.Template.Child()
 
     checkbox_show_tray = Gtk.Template.Child()
@@ -211,6 +215,18 @@ class SettingsWindow(Gtk.Window):
             self.engine.get_config('player'))
         self.checkbox_player_reuse_mpv.set_active(
             self.engine.get_config('player_reuse_mpv_instance'))
+        if not self.combo_title_parser.set_active_id(
+                self.engine.get_config('title_parser')):
+            self.combo_title_parser.set_active_id('aie')
+        if utils.subminer_available():
+            self.checkbox_use_subminer.set_active(
+                self.engine.get_config('use_subminer'))
+        else:
+            self.checkbox_use_subminer.set_active(False)
+            self.checkbox_use_subminer.set_sensitive(False)
+            self.checkbox_use_subminer.set_tooltip_text(
+                'SubMiner was not found on PATH. Install it to enable '
+                'this option.')
         self.checkbox_library_startup.set_active(
             self.engine.get_config('library_autoscan'))
         self.checkbox_library_entire_list.set_active(
@@ -305,10 +321,17 @@ class SettingsWindow(Gtk.Window):
         # button's headless multi-sync gate on it per-frontend.
         self.checkbox_multisync_enabled.set_active(
             self.config['multisync_enabled'])
-        if not self.combo_multisync_mode.set_active_id(
-                self.config['multisync_mode']):
+        # A config still on the retired 'plan_only' mode resolves to
+        # merge + the review checkbox, which is what it always meant.
+        (mode, plan_only) = present.settings_sync_mode(self.config)
+        mode_key = next((k for k, v in present.SETTINGS_MODES.items()
+                         if v == mode), 'merge')
+        if not self.combo_multisync_mode.set_active_id(mode_key):
             self.combo_multisync_mode.set_active_id('merge')
         self.combo_multisync_mode.set_sensitive(
+            self.config['multisync_enabled'])
+        self.checkbox_multisync_plan_only.set_active(plan_only)
+        self.checkbox_multisync_plan_only.set_sensitive(
             self.config['multisync_enabled'])
         self.checkbox_multisync_edit_owned_score.set_active(
             self.config['multisync_edit_owned_score'])
@@ -317,6 +340,8 @@ class SettingsWindow(Gtk.Window):
         self.checkbox_multisync_enabled.connect(
             'toggled', lambda w: (
                 self.combo_multisync_mode.set_sensitive(w.get_active()),
+                self.checkbox_multisync_plan_only.set_sensitive(
+                    w.get_active()),
                 self.checkbox_multisync_edit_owned_score.set_sensitive(
                     w.get_active())))
 
@@ -503,6 +528,12 @@ class SettingsWindow(Gtk.Window):
             'player', self.btn_file_chooser_executable.get_filename() or '')
         self.engine.set_config('player_reuse_mpv_instance',
                                self.checkbox_player_reuse_mpv.get_active())
+        if self.checkbox_use_subminer.get_sensitive():
+            self.engine.set_config('use_subminer',
+                                   self.checkbox_use_subminer.get_active())
+        self.engine.set_config(
+            'title_parser',
+            self.combo_title_parser.get_active_id() or 'aie')
         self.engine.set_config(
             'tracker_process', self.entry_player_process.get_text())
         self.engine.set_config('library_autoscan',
@@ -632,6 +663,8 @@ class SettingsWindow(Gtk.Window):
             self.checkbox_multisync_enabled.get_active()
         self.config['multisync_mode'] = \
             self.combo_multisync_mode.get_active_id() or 'merge'
+        self.config['multisync_plan_only'] = \
+            self.checkbox_multisync_plan_only.get_active()
         self.config['multisync_edit_owned_score'] = \
             self.checkbox_multisync_edit_owned_score.get_active()
 

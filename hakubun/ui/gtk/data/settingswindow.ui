@@ -368,6 +368,48 @@
                                 <property name="width">2</property>
                               </packing>
                             </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Parser</property>
+                                <property name="xalign">0</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">4</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkComboBoxText" id="combo_title_parser">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <items>
+                                  <item id="aie" translatable="yes">AnimeInfoExtractor (Default)</item>
+                                  <item id="anitopy" translatable="yes">Anitopy</item>
+                                  <item id="anitomy_ng" translatable="yes">Anitomy-NG (Experimental)</item>
+                                </items>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">4</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkCheckButton" id="checkbox_use_subminer">
+                                <property name="label" translatable="yes">Open episodes with SubMiner instead</property>
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="receives_default">False</property>
+                                <property name="draw_indicator">True</property>
+                                <property name="tooltip_text" translatable="yes">Opens episodes with SubMiner (its sentence-mining mpv wrapper) instead of the player configured above.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">5</property>
+                                <property name="width">2</property>
+                              </packing>
+                            </child>
                           </object>
                           <packing>
                             <property name="expand">False</property>
@@ -2306,6 +2348,22 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkCheckButton" id="checkbox_multisync_plan_only">
+                    <property name="label" translatable="yes">Fetch &amp; plan only (review before applying)</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="receives_default">False</property>
+                    <property name="margin_start">12</property>
+                    <property name="draw_indicator">True</property>
+                    <property name="tooltip_text" translatable="yes">Sync fetches every provider and works out what would change in the mode above, then always opens the sync window so you can review and apply it yourself. Turn this off to let Sync apply clean changes headlessly -- conflicts and first-time syncs still always stop for review either way.</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">3</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkCheckButton" id="checkbox_multisync_edit_owned_score">
                     <property name="label" translatable="yes">Edit owned scores in the owner's rating system</property>
                     <property name="visible">True</property>
@@ -2318,7 +2376,7 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">3</property>
+                    <property name="position">4</property>
                   </packing>
                 </child>
               </object>

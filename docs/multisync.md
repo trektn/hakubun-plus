@@ -92,22 +92,39 @@ Resolution pipeline (per fetched provider entry):
    user, with the candidates and the entry's own titles attached.
 5. Unmatched, no candidates → new entity with a single mapping.
 
+All of the above is purely local (no network calls) — it can only link
+ids the fetched entries already carry or the bundled atlas already
+knows. `SyncEngine._discover_cross_ids` runs once after every fetch as
+a separate, DELIBERATELY network-calling step: for any connected
+provider whose lib exposes an exact reverse lookup (AniList's
+`Media(idMal:...)`, Kitsu GraphQL's `lookupMapping`, duck-typed via
+`ProviderAdapter.supports_mal_id_lookup`), it asks whether that
+provider has an entry for each entity's already-known MAL id that it
+has no mapping for yet — the case tiers 1-5 can never reach, since
+they only see what was actually fetched. A hit records an id-only
+mapping (empty remote snapshot, `confirmed = 0`); a miss is
+remembered (`resolved_absent`) so it isn't re-queried every fetch.
+Paced/rate-limited per provider like a push; a provider failure
+isolates to that provider's discovery only. Purely additive groundwork
+— see "Sync modes" below for the one thing that currently acts on it
+(Rebase's create step).
+
 Titles are matched after NFKC + casefold normalization that preserves
 every script (a Native-language AniList title like 葬送のフリーレン must
 survive), and entities **accumulate aliases** — every title any
 provider reports, merged on every fetch and link — so an entity created
 with a native title still matches a romaji entry via the shared alias.
 
-Identity conflict workflow (per unresolved entry — UI mock is the spec):
+Identity conflict workflow (per unresolved entry; UI mock is the spec):
 
 ```
 Kitsu: Ghost in the Shell (2026)
 Possible matches: MAL ID 12345, AniList ID 67890
 
-( ) Keep Kitsu-only        — do not sync this entry elsewhere
-( ) Search manually        — find the MAL/AniList entry by search
-( ) Create mappings later  — keep watching for new matches (defer)
-( ) Ignore this title      — never ask again
+( ) Keep Kitsu-only:        do not sync this entry elsewhere
+( ) Search manually:        find the MAL/AniList entry by search
+( ) Create mappings later:  keep watching for new matches (defer)
+( ) Ignore this title:      never ask again
 ```
 
 Confirming a candidate stores the mapping permanently
@@ -298,6 +315,16 @@ Record history         sync/history.py    — event log, undo, stats
   it true everywhere now." Manual-only (the sync-window Preview), never
   a background/auto mode; previewed and checkbox-selectable like any
   plan, and it still converges (pushes advance each provider's base).
+  Rebase is also the only mode that calls `add_show`: for any connected,
+  *mapped* provider with no remote row at all (identity resolution or
+  the `_discover_cross_ids` lookup above knows the id — from another
+  provider's published cross-id, the anime-relations atlas, or an
+  on-demand reverse lookup — but that provider's own fetch has never
+  actually listed the entry), it bundles every owned field's current
+  value into one create call there. Planned unselected like a
+  first-sync overwrite (`FieldChange.creates_entry`): adding a new
+  library entry to a real account is opted into per show, never
+  applied by a headless Sync.
 
 ### Diff semantics (per entity, per synced field, per mapped provider)
 

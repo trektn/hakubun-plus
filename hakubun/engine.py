@@ -100,8 +100,28 @@ class Engine:
     ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co'
     AIRING_SCHEDULE_BATCH = 50
 
+    # How long a cached next-airing answer stays good. An episode airs
+    # once a week, so an hour is nowhere near stale enough to mislead,
+    # and it keeps repeated details opens off the network.
+    NEXT_AIRING_CACHE_SECONDS = 3600
+
     def __init__(self, account=None, message_handler=None, accountnum=None):
         self.msg = messenger.Messenger(message_handler, self.name)
+
+        # Set by start() if the configured title_parser couldn't be
+        # imported and a fallback was used instead -- checked once by the
+        # UI after the first successful load so it can surface this
+        # somewhere more durable than a status-bar message that's about
+        # to be overwritten by "Ready.".
+        self.parser_fallback_warning = None
+
+        # mal id -> (fetched_at, episode, aware UTC airing time), or
+        # (fetched_at, None, None) for a show AniList has no schedule
+        # for. Shared by get_airing_schedule and the per-show lookup the
+        # details view does, so opening details for a show right after
+        # viewing the schedule costs nothing -- and so a "no schedule"
+        # answer isn't re-asked on every single open.
+        self._next_airing_cache = {}
 
         # Utility parameter to get the account from the account manager
         if accountnum:
@@ -406,22 +426,42 @@ class Engine:
                 self.msg.warn("Error parsing anime-relations.txt!")
                 self.msg.debug("{}".format(e))
 
-        # Determine parser library
-        try:
-            self.msg.debug(self.name, "Initializing parser...")
-            self.parser_class = get_parser_class(self.msg, self.config['title_parser'])
-        except ImportError as e:
-            self.msg.warn(self.name, "Couldn't import specified parser: {}; {}".format(
-                self.config['title_parser'], e))
-            self.msg.warn(self.name, "Falling back to aie...")
-            self.parser_class = get_parser_class(self.msg, "aie")
+        # Determine parser library. If the configured parser can't be
+        # imported (an optional dependency isn't installed), cascade down
+        # through progressively more basic parsers rather than jumping
+        # straight to aie -- e.g. anitomy_ng missing should still try
+        # anitopy before giving up, not skip past a perfectly good parser
+        # the user may already have installed.
+        parser_fallback_chain = {
+            'anitomy_ng': 'anitopy',
+            'anitopy': 'aie',
+        }
+        requested_parser = self.config['title_parser']
+        parser_name = requested_parser
+        while True:
+            try:
+                self.msg.debug(self.name, "Initializing parser...")
+                self.parser_class = get_parser_class(self.msg, parser_name)
+                break
+            except ImportError as e:
+                self.msg.warn(self.name, "Couldn't import specified parser: {}; {}".format(
+                    parser_name, e))
+                next_parser = parser_fallback_chain.get(parser_name, 'aie')
+                self.msg.warn(self.name, "Falling back to {}...".format(next_parser))
+                parser_name = next_parser
+
+        if parser_name != requested_parser:
+            self.parser_fallback_warning = (
+                "Couldn't load the configured title parser '{}' (its optional "
+                "dependency isn't installed); using '{}' instead.".format(
+                    requested_parser, parser_name))
             # Also correct the config value in memory (not persisted to
             # disk), not just self.parser_class -- the tracker looks up
             # config['title_parser'] independently when it starts (see
             # TrackerBase.__init__), and would otherwise retry the same
             # broken import and fail with a misleading "couldn't import
             # the tracker" instead of this already-explained parser issue.
-            self.config['title_parser'] = 'aie'
+            self.config['title_parser'] = parser_name
 
         # Rescan library if necessary
         if self.config['library_autoscan']:
@@ -617,11 +657,111 @@ class Engine:
             except Exception as e:
                 self.msg.debug("Couldn't fetch MAL score for details: %s" % e)
 
+        # Everything below is appended to 'extra', which both UIs (and
+        # the CLI) render generically as label/value rows -- so a row
+        # added here shows up in all of them without UI-side work.
+        rows = []
+
         if show.get('mal_score'):
+            rows.append(('MAL Score', show['mal_score']))
+
+        # Phrased as a full sentence-fragment label because the value is
+        # a duration, not a fact about the show: "Next episode will air
+        # in: 3 days (Sat Aug 02, 2026)".
+        try:
+            next_airing = self.get_next_airing(show)
+        except Exception as e:
+            self.msg.debug("Couldn't resolve next airing for details: %s" % e)
+            next_airing = None
+        if next_airing:
+            (episode, airing_at) = next_airing
+            when = utils.format_next_airing(airing_at)
+            if when:
+                rows.append(('Next episode will air in', when))
+                if episode:
+                    rows.append(('Next episode', str(episode)))
+
+        # A manually pinned folder (set_show_folder) is otherwise
+        # invisible once set -- nothing in the list marks a show as
+        # pinned, so the details view is where you find out.
+        folder = self.get_show_folder(show['id'])
+        if folder:
+            rows.append(('Folder', folder))
+
+        if rows:
             details = dict(details)
-            details['extra'] = list(details.get('extra') or []) + \
-                [('MAL Score', show['mal_score'])]
+            details['extra'] = list(details.get('extra') or []) + rows
         return details
+
+    def _mal_id_of(self, show):
+        """The show's MAL id, which is what AniList's public API is
+        queried by.
+
+        'mal_id' is only ever populated by the MAL-score cross-reference
+        feature (see fetch_mal_scores), which exists for accounts on a
+        *different* backend -- it's never set for an actual MAL account,
+        since there was never anything to cross-reference against. For
+        MAL accounts, 'id' already *is* the MAL id, so use that instead
+        of treating every show as unresolvable.
+        """
+        if self.api_info.get('shortname') == 'mal':
+            return show.get('id')
+        return show.get('mal_id')
+
+    def _cache_next_airing(self, mal_id, episode, airing_at):
+        self._next_airing_cache[mal_id] = (
+            time.time(), episode, airing_at)
+
+    def get_next_airing(self, show):
+        """When **show**'s next episode airs, as (episode, aware UTC
+        datetime), or None if it isn't airing / nothing knows.
+
+        Three sources, cheapest first: the show dict itself (AniList
+        accounts get 'next_ep_time' with the list, for free), this
+        session's cache (populated by get_airing_schedule and by earlier
+        calls here), and finally a single-show query against AniList's
+        public API by MAL id -- the same cross-reference the airing
+        schedule uses, so it works on every backend.
+        """
+        if show.get('status') != utils.Status.AIRING:
+            return None
+
+        if show.get('next_ep_time'):
+            return (show.get('next_ep_number'),
+                    utils.as_utc(show['next_ep_time']))
+
+        mal_id = self._mal_id_of(show)
+        if not mal_id:
+            return None
+
+        cached = self._next_airing_cache.get(mal_id)
+        if cached and time.time() - cached[0] < self.NEXT_AIRING_CACHE_SECONDS:
+            return (cached[1], cached[2]) if cached[2] else None
+
+        query = '''
+        query ($id: Int) {
+          Media(idMal: $id, type: ANIME) {
+            nextAiringEpisode { airingAt episode }
+          }
+        }'''
+        try:
+            data = self._anilist_public_query(query, {'id': mal_id})
+        except utils.HakubunError as e:
+            # A details view is not worth failing over a schedule
+            # lookup; the row is simply omitted.
+            self.msg.debug("Couldn't fetch airing time for details: %s" % e)
+            return None
+
+        media = (data.get('data') or {}).get('Media') or {}
+        next_ep = media.get('nextAiringEpisode')
+        if not next_ep:
+            self._cache_next_airing(mal_id, None, None)
+            return None
+
+        airing_at = datetime.datetime.fromtimestamp(
+            next_ep['airingAt'], tz=datetime.timezone.utc)
+        self._cache_next_airing(mal_id, next_ep['episode'], airing_at)
+        return (next_ep['episode'], airing_at)
 
     def get_airing_schedule(self):
         """
@@ -633,17 +773,7 @@ class Engine:
         without a resolvable mal_id, or that AniList doesn't have a
         schedule for, are silently skipped.
         """
-        # 'mal_id' is only ever populated by the MAL-score cross-reference
-        # feature (see fetch_mal_scores), which exists for accounts on a
-        # *different* backend -- it's never set for an actual MAL account,
-        # since there was never anything to cross-reference against. For
-        # MAL accounts, 'id' already *is* the MAL id, so use that instead
-        # of leaving every show filtered out below.
-        is_mal_account = self.api_info.get('shortname') == 'mal'
-
-        def mal_id_of(show):
-            return show['id'] if is_mal_account else show.get('mal_id')
-
+        mal_id_of = self._mal_id_of
         shows = [s for s in self.data_handler.get().values()
                 if mal_id_of(s) and s.get('status') == utils.Status.AIRING]
         if not shows:
@@ -685,15 +815,21 @@ class Engine:
             for media in page.get('media') or []:
                 next_ep = media.get('nextAiringEpisode')
                 if not next_ep:
+                    # Remember the negative answer too, so the details
+                    # view doesn't go ask again one show at a time.
+                    self._cache_next_airing(media['idMal'], None, None)
                     continue
                 show = by_mal_id.get(media['idMal'])
                 if not show:
                     continue
+                airing_at = datetime.datetime.fromtimestamp(
+                    next_ep['airingAt'], tz=datetime.timezone.utc)
+                self._cache_next_airing(
+                    media['idMal'], next_ep['episode'], airing_at)
                 schedule.append({
                     'show': show,
                     'episode': next_ep['episode'],
-                    'airing_at': datetime.datetime.fromtimestamp(
-                        next_ep['airingAt'], tz=datetime.timezone.utc),
+                    'airing_at': airing_at,
                 })
 
         schedule.sort(key=lambda entry: entry['airing_at'])
@@ -1114,10 +1250,13 @@ class Engine:
         mediatype switch, which previously re-did this even when nothing
         on disk had changed at all.
         """
-        if not self.mediainfo.get('can_play') or not self.config['searchdir']:
+        show_folders = self.data_handler.show_folders_get()
+        if not self.mediainfo.get('can_play') \
+                or not (self.config['searchdir'] or show_folders):
             return
 
-        signature = self._library_dirs_signature(self.searchdirs)
+        signature = self._library_dirs_signature(
+            self.searchdirs + list(show_folders.values()))
         cached_signature = self.data_handler.library_scan_signature_get()
 
         if cached_signature is not None \
@@ -1133,7 +1272,8 @@ class Engine:
         if not self.mediainfo.get('can_play'):
             raise utils.EngineError(
                 'Operation not supported by current site or mediatype.')
-        if not self.config['searchdir']:
+        show_folders = self.data_handler.show_folders_get()
+        if not path and not self.config['searchdir'] and not show_folders:
             raise utils.EngineError('Media directories not set.')
 
         t = time.time()
@@ -1155,8 +1295,24 @@ class Engine:
         tracker_list = self._get_tracker_list(my_status)
         guess_show = lru_cache(partial(utils.guess_show, tracker_list=tracker_list))
 
-        paths = [path] if path else self.searchdirs
-        for searchdir in paths:
+        if path:
+            # An explicit single directory (CLI's --scan-library-dir):
+            # unchanged behaviour, still guessed by title.
+            scan_targets = [(path, None)]
+        else:
+            scan_targets = [(d, None) for d in self.searchdirs]
+            # Manually pinned show folders (set_show_folder) are swept on
+            # every full scan too, not just when first assigned -- they
+            # may live outside searchdir entirely, and a show removed
+            # from the list since is simply skipped.
+            for show_id, folder in show_folders.items():
+                try:
+                    forced_show = self.get_show_info(show_id)
+                except utils.EngineError:
+                    continue
+                scan_targets.append((folder, forced_show))
+
+        for searchdir, forced_show in scan_targets:
             self.msg.debug("Directory: %s" % searchdir)
 
             # Do a full listing of the media directory
@@ -1164,20 +1320,58 @@ class Engine:
                 if self.config['library_full_path']:
                     filename = self._get_relative_path_or_basename(searchdir, fullpath)
                 (library, library_cache) = self._add_show_to_library(
-                    library, library_cache, rescan, fullpath, filename, tracker_list, guess_show)
+                    library, library_cache, rescan, fullpath, filename, tracker_list,
+                    guess_show, forced_show=forced_show)
 
             self.msg.debug(f"Time: {time.time() - t:.3}s")
             self.data_handler.library_save(library)
             self.data_handler.library_cache_save(library_cache)
 
         if path is None:
-            # Only a full scan (all searchdirs) produces a signature that's
-            # safe to cache -- a single-directory scan wouldn't reflect the
-            # true state of the others.
-            signature = self._library_dirs_signature(self.searchdirs)
+            # Only a full scan (all searchdirs + pinned show folders)
+            # produces a signature that's safe to cache -- a single-
+            # directory scan wouldn't reflect the true state of the
+            # others. Must match _scan_library_if_changed's own inputs.
+            signature = self._library_dirs_signature(
+                self.searchdirs + list(show_folders.values()))
             self.data_handler.library_scan_signature_save(signature)
 
         return library
+
+    def set_show_folder(self, show_id, path):
+        """Manually pin a show to a specific local folder: every video
+        file under it is attributed directly to this show (only the
+        episode number is still parsed from the filename), bypassing
+        title-based guessing entirely -- the escape hatch for a folder
+        whose name the parser/guesser can't (or shouldn't have to)
+        make sense of. Scanned immediately so it takes effect now, and
+        swept again on every future full library scan (scan_library)."""
+        if not self.mediainfo.get('can_play'):
+            raise utils.EngineError(
+                'Operation not supported by current site or mediatype.')
+        show = self.get_show_info(show_id)
+        self.data_handler.show_folder_set(show_id, path)
+
+        library = self.data_handler.library_get()
+        library_cache = self.data_handler.library_cache_get()
+        tracker_list = self._get_tracker_list()
+        for fullpath, filename in utils.regex_find_videos(path):
+            if self.config['library_full_path']:
+                filename = self._get_relative_path_or_basename(path, fullpath)
+            (library, library_cache) = self._add_show_to_library(
+                library, library_cache, True, fullpath, filename, tracker_list,
+                None, forced_show=show)
+        self.data_handler.library_save(library)
+        self.data_handler.library_cache_save(library_cache)
+
+    def unset_show_folder(self, show_id):
+        """Un-pin a show's manually assigned folder. Already-cached
+        library entries from it are left alone (harmless either way)
+        until the next full library scan re-derives them normally."""
+        self.data_handler.show_folder_clear(show_id)
+
+    def get_show_folder(self, show_id):
+        return self.data_handler.show_folder_get(show_id)
 
     def remove_from_library(self, path, filename):
         library = self.data_handler.library_get()
@@ -1201,10 +1395,24 @@ class Engine:
         tracker_list = self._get_tracker_list()
         fullpath = path+"/"+filename
         guess_show = partial(utils.guess_show, tracker_list=tracker_list)
+        # A newly-created file inside a manually pinned show folder
+        # (set_show_folder) is attributed straight to that show, same
+        # as a full scan would -- the whole point of pinning a folder
+        # is to never depend on the guesser for it.
+        forced_show = None
+        for show_id, folder in self.data_handler.show_folders_get().items():
+            if path == folder or path.startswith(folder.rstrip('/') + '/'):
+                try:
+                    forced_show = self.get_show_info(show_id)
+                except utils.EngineError:
+                    pass
+                break
         self._add_show_to_library(
-            library, library_cache, rescan, fullpath, filename, tracker_list, guess_show)
+            library, library_cache, rescan, fullpath, filename, tracker_list, guess_show,
+            forced_show=forced_show)
 
-    def _add_show_to_library(self, library, library_cache, rescan, fullpath, filename, tracker_list, guess_show):
+    def _add_show_to_library(self, library, library_cache, rescan, fullpath, filename,
+                             tracker_list, guess_show, forced_show=None):
         show_id = None
         if not rescan and filename in library_cache:
             # If the filename was already seen before
@@ -1227,32 +1435,33 @@ class Engine:
             anime_info = self.parser_class(self.msg, filename)
             show_title = anime_info.getName()
             (show_ep_start, show_ep_end) = anime_info.getEpisodeNumbers(True)
-            if show_title:
+            # A manually pinned folder (forced_show) already tells us
+            # the show -- skip guessing by title entirely, since that's
+            # precisely the step a pinned folder exists to bypass.
+            show = forced_show
+            if show is None and show_title:
                 show = guess_show(show_title)
-                if show:
-                    self.msg.debug("Adding to library: {}".format(fullpath))
-                    self.msg.debug("Show guess: {}".format(show_title))
+            if show:
+                self.msg.debug("Adding to library: {}".format(fullpath))
+                self.msg.debug("Show guess: {}".format(show_title))
 
-                    if show_ep_start == show_ep_end:
-                        # TODO : Support redirections for episode ranges
-                        (show, show_ep) = utils.redirect_show(
-                            (show, show_ep_start), self.redirections, tracker_list)
-                        show_ep_end = show_ep_start = show_ep
+                if show_ep_start == show_ep_end:
+                    # TODO : Support redirections for episode ranges
+                    (show, show_ep) = utils.redirect_show(
+                        (show, show_ep_start), self.redirections, tracker_list)
+                    show_ep_end = show_ep_start = show_ep
 
-                        self.msg.debug("Redirected to: {} - {}".format(
-                            show['title'], show_ep))
-                        library_cache[filename] = (show['id'], show_ep)
-                    else:
-                        library_cache[filename] = (
-                            show['id'], (show_ep_start, show_ep_end))
-
-                    show_id = show['id']
+                    self.msg.debug("Redirected to: {} - {}".format(
+                        show['title'], show_ep))
+                    library_cache[filename] = (show['id'], show_ep)
                 else:
-                    self.msg.debug("Unable to match '{}', skipping: {}"
-                                   .format(show_title, fullpath))
-                    library_cache[filename] = None
+                    library_cache[filename] = (
+                        show['id'], (show_ep_start, show_ep_end))
+
+                show_id = show['id']
             else:
-                self.msg.debug("Not recognized, skipping: {}".format(fullpath))
+                self.msg.debug("Unable to match '{}', skipping: {}"
+                               .format(show_title, fullpath))
                 library_cache[filename] = None
 
         # After we got our information, add it to our library
@@ -1344,6 +1553,26 @@ class Engine:
             return []
 
         self.msg.info('Found. Starting player...')
+
+        if self.config.get('use_subminer'):
+            subminer_bin = shutil.which('subminer')
+            if not subminer_bin:
+                raise utils.EngineError(
+                    'SubMiner not found. Install it or disable '
+                    '"Open episodes with SubMiner" in settings.')
+
+            if self.config['player_reuse_mpv_instance']:
+                # SubMiner manages its own single mpv+overlay instance
+                # under its own fixed socket (not our mpv_ipc_socket_path)
+                # -- ask it where that is and hand off the same way we do
+                # for a plain mpv player below.
+                subminer_socket = utils.subminer_mpv_socket_path(subminer_bin)
+                if subminer_socket and utils.mpv_ipc_loadfile(filename, subminer_socket):
+                    self.msg.info('Handed off to the running SubMiner instance.')
+                    return []
+
+            return [subminer_bin, filename]
+
         args = shlex.split(self.config['player'])
 
         if not args:

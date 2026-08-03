@@ -502,6 +502,31 @@ class libkitsu_graphql(lib):
 
         return infolist
 
+    def find_by_mal_id(self, mal_id):
+        """Exact reverse lookup: Kitsu's own media id for a given MAL
+        id, or None if Kitsu has no entry for it at all. Uses
+        lookupMapping, the same mapping data legacy Kitsu's REST fetch
+        already reads forward (media -> its MAL id, see libkitsu.py);
+        this is the other direction. Used by multisync's cross-provider
+        discovery (hakubun.sync.engine.SyncEngine._discover_cross_ids)
+        to find where a show already linked via another provider's
+        published MAL id also lives on Kitsu, even if it was never
+        independently matched by title."""
+        self.check_credentials()
+        site = ('MYANIMELIST_MANGA' if self.mediatype == 'manga'
+               else 'MYANIMELIST_ANIME')
+        query = '''
+        query ($id: ID!, $site: MappingExternalSiteEnum!) {
+          lookupMapping(externalId: $id, externalSite: $site) {
+            ... on Anime { id }
+            ... on Manga { id }
+          }
+        }'''
+        data = self._gql(query, {'id': str(mal_id), 'site': site},
+                         auth=True)
+        media = data['lookupMapping']
+        return media['id'] if media else None
+
     # -- Writing ----------------------------------------------------------
 
     def add_show(self, item):

@@ -125,6 +125,13 @@ class FieldChange:
     # by a headless Sync click (docs/multisync.md, "nothing silently
     # overwrites").
     first_sync: bool = False
+    # True when this push has no existing entry to update -- REBASE
+    # (only) additionally creates the show on a connected, mapped
+    # provider that doesn't have it yet (SyncEngine._plan_rebase_add).
+    # A bigger action than an ordinary field push (a new library entry
+    # on a real account), so like first_sync it is planned UNSELECTED
+    # by default: opt-in only, never applied by a headless Sync click.
+    creates_entry: bool = False
 
     def describe(self) -> str:
         return '%s  %s %s -> %s' % (self.target, self.field,

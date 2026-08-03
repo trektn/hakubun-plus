@@ -8,6 +8,10 @@ def get_parser_class(msg, parser_name):
         msg.debug('Using Anitopy parser')
         from .anitopy import AnitopyWrapper
         return AnitopyWrapper
+    elif parser_name == 'anitomy_ng':
+        msg.debug('Using anitomy-ng parser')
+        from .anitomy_ng import AnitomyNgWrapper
+        return AnitomyNgWrapper
     else:
         msg.debug('Unknown parser "{}", falling back to default'.format(parser_name))
-        return get_parser_class('aie')
+        return get_parser_class(msg, 'aie')

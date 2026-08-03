@@ -204,6 +204,16 @@ class libanilist(lib):
                 raise err
             if e.code == 400:
                 raise utils.APIError("Invalid HTTP request: %s" % body)
+            if e.code == 404:
+                # AniList's Media resolver 404s (with data.Media: null)
+                # instead of returning a clean empty result -- flag it
+                # distinctly like the 429 case above so a caller doing
+                # an existence check (find_by_mal_id) can tell "genuinely
+                # not there" apart from a real failure, instead of every
+                # miss reading as an error.
+                err = utils.APIError("Not found: %s" % body)
+                err.not_found = True
+                raise err
             raise utils.APIError("HTTP error status: %s" % body)
         except urllib.error.URLError as e:
             raise utils.APIError("HTTP connection error: %s" % e.reason)
@@ -449,6 +459,29 @@ fragment mediaListEntry on MediaList {
 
         self._emit_signal('show_info_changed', infolist)
         return infolist
+
+    def find_by_mal_id(self, mal_id):
+        """Exact reverse lookup: AniList's own media id for a given MAL
+        id, or None if AniList has no entry for it at all. Unlike
+        search() this is precise (AniList's own idMal filter), not a
+        title guess -- used by multisync's cross-provider discovery
+        (hakubun.sync.engine.SyncEngine._discover_cross_ids) to find
+        where a show already linked via another provider's published
+        MAL id also lives on AniList, even if it was never independently
+        matched by title."""
+        self.check_credentials()
+        query = '''query ($malId: Int, $type: MediaType) {
+  Media(idMal: $malId, type: $type) { id }
+}'''
+        variables = {'malId': int(mal_id), 'type': self.mediatype.upper()}
+        try:
+            data = self._request(query, variables)['data']
+        except utils.APIError as e:
+            if getattr(e, 'not_found', False):
+                return None
+            raise
+        media = data.get('Media')
+        return media['id'] if media else None
 
     def request_info(self, itemlist):
         self.check_credentials()

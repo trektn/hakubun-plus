@@ -99,6 +99,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.connect('success', self._on_main_view_success)
             self._main_view.connect(
                 'error-fatal', self._on_main_view_error_fatal)
+            self._main_view.connect(
+                'parser-fallback-warning', self._on_main_view_parser_fallback_warning)
             self._main_view.connect('show-action', self._on_show_action)
 
             # The filter bar lives directly below the header bar (outside
@@ -439,10 +441,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.set_status_idle(
                 'Multi-sync: an operation is already running.')
             return
-        mode_key = self._config.get('multisync_mode') or 'merge'
-        win.set_mode(present.SETTINGS_MODES.get(mode_key,
-                                                present.SyncMode.MERGE))
-        self._main_view.set_status_idle('Multi-syncing (%s)...' % mode_key)
+        (mode, plan_only) = present.settings_sync_mode(self._config)
+        win.set_mode(mode)
+        self._main_view.set_status_idle('Multi-syncing (%s%s)...' % (
+            mode.name.lower(), ', review' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._multisync_planned(
                      win, plan, error),
@@ -454,6 +456,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
         # account or its media type changed meanwhile, this window is
         # no longer current -- discard the stale plan rather than
         # rendering/applying it against the wrong database.
+        from hakubun.sync import present
         if error is not None:
             self._main_view.set_status_idle('Multi-sync failed: %s' % error)
             return
@@ -470,6 +473,22 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.set_status_idle(
                 'Multi-sync needs your decision on %d conflict(s).'
                 % len(plan.conflicts))
+            return
+        (_mode, plan_only) = present.settings_sync_mode(self._config)
+        if plan_only:
+            # Checked "Fetch & plan only": the point of the setting is
+            # seeing the plan, so surface the window even when the plan
+            # is empty -- reporting "already in sync" into the status
+            # bar and leaving the window shut made the setting look like
+            # it did nothing at all.
+            win.present()
+            if not plan.changes:
+                self._main_view.set_status_idle(
+                    'Multi-sync: already in sync.')
+            else:
+                self._main_view.set_status_idle(
+                    'Multi-sync: %d change(s) planned -- review and '
+                    'apply from the sync window.' % len(plan.changes))
             return
         if not plan.changes:
             self._main_view.set_status_idle('Multi-sync: already in sync.')
@@ -653,7 +672,8 @@ class HakubunWindow(Gtk.ApplicationWindow):
         about.set_authors(["See AUTHORS file"])
         about.add_credit_section(
             "Filename parsing",
-            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy"])
+            ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy",
+             "anitomy-ng (MPL-2.0) https://github.com/tylergibbs2/anitomy-ng"])
         # The window/tray icon is the plain hanko mark (see
         # Gtk.Window.set_default_icon_from_file) -- About gets the fuller
         # "Hakubun+" wordmark instead, since it has the room to show it.
@@ -717,6 +737,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
     def _on_main_view_error_fatal(self, main_view, error_msg):
         self._show_accounts_idle(switch=False, forget=True)
         self._error_dialog_idle(error_msg)
+
+    def _on_main_view_parser_fallback_warning(self, main_view, warning_msg):
+        self._error_dialog_idle(warning_msg, Gtk.MessageType.WARNING)
 
     def _error_dialog_idle(self, msg, icon=Gtk.MessageType.ERROR):
         # Thread safe
@@ -791,6 +814,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._open_website(*data)
         elif event_type == ShowEventType.OPEN_FOLDER:
             self._open_folder(*data)
+        elif event_type == ShowEventType.SET_FOLDER:
+            self._set_folder(*data)
+        elif event_type == ShowEventType.CLEAR_FOLDER:
+            self._clear_folder(*data)
         elif event_type == ShowEventType.COPY_TITLE:
             self._copy_title(*data)
         elif event_type == ShowEventType.CHANGE_ALTERNATIVE_TITLE:
@@ -900,6 +927,42 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._engine.open_show_folder(show_id)
         except utils.EngineError as e:
             self._error_dialog_idle(e.args[0])
+
+    def _set_folder(self, show_id):
+        show = self._engine.get_show_info(show_id)
+        current = self._engine.get_show_folder(show_id)
+        dialog = Gtk.FileChooserDialog(
+            title='Select folder for %s' % show['title'],
+            parent=self, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        if current:
+            dialog.set_filename(current)
+        response = dialog.run()
+        folder = dialog.get_filename() if response == Gtk.ResponseType.OK else None
+        dialog.destroy()
+        if not folder:
+            return
+        threading.Thread(target=self._set_folder_task,
+                         args=(show_id, folder)).start()
+
+    def _set_folder_task(self, show_id, folder):
+        # Manually pointing a show at a folder bypasses filename
+        # guessing for it -- the escape hatch for a folder the parser
+        # can't (or shouldn't have to) make sense of. Mirrors
+        # _scanfiles_task: runs off the main thread since it walks the
+        # folder immediately, same as any other library scan.
+        self._set_buttons_sensitive_idle(False)
+        try:
+            self._engine.set_show_folder(show_id, folder)
+        except utils.HakubunError as e:
+            self._error_dialog_idle(e)
+        finally:
+            self._set_buttons_sensitive_idle(True)
+
+    def _clear_folder(self, show_id):
+        self._engine.unset_show_folder(show_id)
+        self._main_view.set_status_idle('Folder cleared.')
 
     def _copy_title(self, show_id):
         show = self._engine.get_show_info(show_id)

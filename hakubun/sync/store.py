@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS identity_conflicts(
 CREATE TABLE IF NOT EXISTS ownership(
     field TEXT PRIMARY KEY,
     policy TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS resolved_absent(
+    uuid TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    checked_at REAL NOT NULL,
+    PRIMARY KEY(uuid, provider));
 """
 
 
@@ -327,6 +332,23 @@ class SyncStore:
         return [dict(r) for r in self._exec(
             'SELECT * FROM mappings WHERE provider=?',
             (provider,)).fetchall()]
+
+    def mark_absent(self, uid, provider):
+        """Record that a cross-provider id lookup (engine.py's
+        _discover_cross_ids) asked `provider` for this entity and got a
+        genuine 'no entry there' answer -- so the next fetch doesn't
+        repeat the same network call forever. Superseded automatically
+        the moment a REAL mapping appears for (uid, provider) through
+        any path (mappings_of_provider is checked first), so this can
+        never block a later legitimate add or identity link."""
+        self._exec(
+            'INSERT OR REPLACE INTO resolved_absent(uuid, provider,'
+            ' checked_at) VALUES(?,?,?)', (uid, provider, time.time()))
+
+    def absent_for_provider(self, provider):
+        return {r['uuid'] for r in self._exec(
+            'SELECT uuid FROM resolved_absent WHERE provider=?',
+            (provider,)).fetchall()}
 
     def mappings_many(self, uids):
         """{uid: [mapping, ...]} for many entities in a few queries.

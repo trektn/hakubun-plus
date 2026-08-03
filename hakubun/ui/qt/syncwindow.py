@@ -138,7 +138,7 @@ class SyncWindow(QDialog):
                     24, 24, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                     QtCore.Qt.TransformationMode.SmoothTransformation))
                 icon_label.setToolTip(
-                    'Signed into %s -- its changes count as your local '
+                    'Signed into %s: its changes count as your local '
                     'edits.' % lib_info[0])
                 bar.addWidget(icon_label)
         bar.addWidget(QLabel('Mode:'))
@@ -181,7 +181,7 @@ class SyncWindow(QDialog):
 
         legend = QLabel(
             '<span style="color:#42a5f5">⬆ push to a site</span> · '
-            '<span style="color:#4caf50">⬇ pull into Hakubun</span> — '
+            '<span style="color:#4caf50">⬇ pull into Hakubun</span> · '
             'uncheck anything to skip it')
         layout.addWidget(legend)
 
@@ -265,7 +265,8 @@ class SyncWindow(QDialog):
         arrow, color = (('⬇', self._PULL_COLOR) if direction == 'pull'
                         else ('⬆', self._PUSH_COLOR))
         item = QTreeWidgetItem(['%s %s' % (arrow, text)])
-        item.setForeground(0, self._FIRST_SYNC_COLOR if change.first_sync
+        item.setForeground(0, self._FIRST_SYNC_COLOR
+                           if change.first_sync or change.creates_entry
                            else color)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
         # Honour the plan's own selection: a first-sync overwrite is
@@ -291,7 +292,7 @@ class SyncWindow(QDialog):
         bold.setBold(True)
         for uid, (show_title, group_changes) in sorted(
                 groups.items(), key=lambda kv: kv[1][0].casefold()):
-            group = QTreeWidgetItem(['%s    —  %d change(s)'
+            group = QTreeWidgetItem(['%s (%d change(s))'
                                      % (show_title, len(group_changes))])
             group.setFont(0, bold)
             group.setFlags(group.flags()
@@ -338,7 +339,7 @@ class SyncWindow(QDialog):
         return present.conflict_why(conflict, self.engine.primary)
 
     def _decision_card(self, conflict):
-        box = QGroupBox('%s — %s' % (
+        box = QGroupBox('%s: %s' % (
             conflict.title,
             _FIELD_LABELS.get(conflict.field, conflict.field)))
         card = QVBoxLayout(box)
@@ -408,7 +409,7 @@ class SyncWindow(QDialog):
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
-        self._status('Resolved %s for %s — replanning...' % (
+        self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field),
             conflict.title))
         self._replan()
@@ -424,7 +425,7 @@ class SyncWindow(QDialog):
         if not ok:
             return
         self.engine.resolve_conflict(conflict, 'value', value=value)
-        self._status('Resolved %s for %s — replanning...' % (
+        self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field),
             conflict.title))
         self._replan()
@@ -526,9 +527,15 @@ class SyncWindow(QDialog):
         first_sync = sum(1 for c in plan.changes if c.first_sync)
         if first_sync:
             self.preview_summary.setText(
-                '%s  —  %d first-sync overwrite(s) left unticked. %s'
+                '%s %d first-sync overwrite(s) left unticked. %s'
                 % (self.preview_summary.text(), first_sync,
                    present.FIRST_SYNC_HELP))
+        creates = sum(1 for c in plan.changes if c.creates_entry)
+        if creates:
+            self.preview_summary.setText(
+                '%s %d new-entry add(s) left unticked. %s'
+                % (self.preview_summary.text(), creates,
+                   present.CREATES_ENTRY_HELP))
         parts = ['%d change(s)' % len(plan.changes),
                  '%d conflict(s)' % len(plan.conflicts),
                  '%d identity issue(s)' % len(plan.identity)]
@@ -585,7 +592,7 @@ class SyncWindow(QDialog):
         text = '%s %d local change(s), %d push(es)' % (
             verb, result['local'], result['pushed'])
         if result['errors']:
-            text += ' -- failed: %s' % ', '.join(
+            text += '. Failed: %s' % ', '.join(
                 '%s (%s)' % kv for kv in result['errors'].items())
             text += ' (their changes stay planned)'
         self.apply_log.appendPlainText(text)
@@ -607,7 +614,7 @@ class SyncWindow(QDialog):
             # unrepaintable window. Ask the worker to stop and let the
             # user click again once it has.
             self._cancel.set()
-            self._status('Stopping the running operation first -- press '
+            self._status('Stopping the running operation first. Press '
                          'Reset again once it has.')
             return
         self.store.reset()
@@ -621,7 +628,7 @@ class SyncWindow(QDialog):
         self.preview_summary.clear()
         self.apply_button.setEnabled(False)
         self._refresh_identity()
-        self._status('Sync database reset -- run Fetch & Plan to '
+        self._status('Sync database reset. Run Fetch & Plan to '
                      're-derive it.')
 
     # -- Ownership -----------------------------------------------------
@@ -706,7 +713,7 @@ class SyncWindow(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel(
-            '<b>Unresolved identities</b> -- entries with ambiguous '
+            '<b>Unresolved identities:</b> entries with ambiguous '
             'matches only. Exact ID links and single exact-title '
             'matches are linked automatically and never appear here. '
             'Right-click a row to inspect it or open it on its site.'))
@@ -739,7 +746,7 @@ class SyncWindow(QDialog):
             QToolButton.ToolButtonPopupMode.InstantPopup)
         self.candidate_open_button.setMenu(QMenu(self.candidate_open_button))
         self.candidate_open_button.setEnabled(False)
-        self.rb_search = QRadioButton('Search manually -- '
+        self.rb_search = QRadioButton('Search manually: '
                                       'find the entry on another provider')
         search_bar = QHBoxLayout()
         self.search_provider = QComboBox()
@@ -759,11 +766,11 @@ class SyncWindow(QDialog):
         results_row.addWidget(self.search_results, 1)
         results_row.addWidget(self.search_open_button)
         self.rb_provider_only = QRadioButton(
-            'Keep provider-only -- do not sync this entry elsewhere')
+            'Keep provider-only: do not sync this entry elsewhere')
         self.rb_defer = QRadioButton(
-            'Create provider mappings later -- keep watching for new '
+            'Create provider mappings later: keep watching for new '
             'matches')
-        self.rb_ignore = QRadioButton('Ignore this title -- never ask again')
+        self.rb_ignore = QRadioButton('Ignore this title: never ask again')
         for w in (self.rb_confirm, self.candidate_combo,
                  self.candidate_open_button, self.rb_search):
             box_layout.addWidget(w)
@@ -832,7 +839,7 @@ class SyncWindow(QDialog):
                'No existing entry matched and no cross-provider ID '
                'was published.')
         self.identity_info.setText(
-            '<b>%s</b>%s -- %s entry %s.<br>%s' % (
+            '<b>%s</b>%s: %s entry %s.<br>%s' % (
                 self._display_title(issue['title'],
                                     info.get('aliases')),
                 year, issue['provider'], issue['provider_id'], why))
@@ -841,7 +848,7 @@ class SyncWindow(QDialog):
             providers = ', '.join('on %s (%s)' % kv
                                   for kv in sorted(
                                       cand.get('providers', {}).items()))
-            label = '%s%s -- %s -- %s' % (
+            label = '%s%s: %s (%s)' % (
                 self._display_title(cand.get('title'),
                                     cand.get('aliases')),
                 ' (%s)' % cand['year'] if cand.get('year') else '',
@@ -855,7 +862,7 @@ class SyncWindow(QDialog):
         else:
             self.rb_defer.setChecked(True)
         self.rb_provider_only.setText(
-            'Keep %s-only -- do not sync this entry elsewhere'
+            'Keep %s-only: do not sync this entry elsewhere'
             % issue['provider'])
         self.search_provider.clear()
         for name in self.engine.adapters:
@@ -1007,12 +1014,12 @@ class SyncWindow(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         intro = QLabel(
-            '<b>Identity inspector</b> — punch in one entry by its '
-            'provider id and see exactly how multisync resolved it: '
-            'what it maps to on your other providers, how each link '
-            'was made (a published id, the anime-relations atlas, a '
-            'title match, or your own confirmation), and the raw data '
-            'recorded for it.')
+            '<b>Identity inspector:</b> enter one entry by its provider '
+            'ID to see exactly how multisync resolved it: what it maps '
+            'to on your other providers, how each link was made (a '
+            'published ID, the anime-relations atlas, a title match, '
+            'or your own confirmation), and the raw data recorded for '
+            'it.')
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -1066,9 +1073,15 @@ class SyncWindow(QDialog):
         if getattr(self, '_inspect_url', None):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl(self._inspect_url))
 
+    @staticmethod
+    def _mono(text):
+        """Wrap an id/technical value in monospace, escaping nothing
+        beyond what's needed for ids/enums (never raw user titles)."""
+        return '<code>%s</code>' % text
+
     def _render_inspection(self, r):
         p = ['<h3>%s id %s</h3>' % (r.provider.capitalize(),
-                                    r.provider_id)]
+                                    self._mono(r.provider_id))]
         if not r.found:
             p.append('<p>%s</p>' % r.note)
             issue = r.identity_issue
@@ -1076,30 +1089,30 @@ class SyncWindow(QDialog):
                 p.append('<p><b>Candidates on file:</b></p><ul>')
                 for c in issue['candidates']:
                     providers = ', '.join(
-                        '%s:%s' % kv
+                        self._mono('%s:%s' % kv)
                         for kv in (c.get('providers') or {}).items()) \
                         or 'no providers yet'
-                    p.append('<li>%s%s — %s — <i>%s</i></li>' % (
+                    p.append('<li>%s%s: %s (<i>%s</i>)</li>' % (
                         c.get('title') or '?',
                         ' (%s)' % c['year'] if c.get('year') else '',
                         providers, c.get('via', '')))
                 p.append('</ul>')
             if r.atlas_hint:
                 p.append('<p><b>anime-relations atlas independently '
-                         'says:</b> %s</p>' % ', '.join(
+                         'says:</b> %s</p>' % self._mono(', '.join(
                              '%s=%s' % kv for kv in
-                             r.atlas_hint.items()))
+                             r.atlas_hint.items())))
             return ''.join(p)
 
         p.append('<p><b>%s</b>%s%s</p>' % (
             r.title or '?', ' (%s)' % r.year if r.year else '',
-            ' — pinned provider-only (%s), excluded from cross-'
-            'provider sync' % r.provider_only.capitalize()
+            ', pinned provider-only (%s), excluded from cross-provider '
+            'sync' % r.provider_only.capitalize()
             if r.provider_only else ''))
         if r.aliases:
             p.append('<p>Also known as: %s</p>'
                      % ', '.join(a for a in r.aliases if a != r.title))
-        p.append('<p>Internal id: <code>%s</code></p>' % r.uuid)
+        p.append('<p>Internal id: %s</p>' % self._mono(r.uuid))
 
         p.append('<h4>Mapped providers</h4>'
                  '<table border="1" cellpadding="4" cellspacing="0">'
@@ -1110,25 +1123,28 @@ class SyncWindow(QDialog):
             mapped_ids[m.provider] = m.provider_id
             p.append('<tr><td>%s</td><td>%s</td><td>%s</td>'
                      '<td>%s</td></tr>' % (
-                         m.provider.capitalize(), m.provider_id,
+                         m.provider.capitalize(),
+                         self._mono(m.provider_id),
                          'Yes' if m.confirmed else 'Auto',
-                         m.via or '—'))
+                         m.via or '-'))
         p.append('</table>')
 
         if r.atlas_hint:
             mismatches = [
                 '%s: mapped %s, atlas says %s'
-                % (prov.capitalize(), mapped_ids[prov], hint_id)
+                % (prov.capitalize(), self._mono(mapped_ids[prov]),
+                   self._mono(hint_id))
                 for prov, hint_id in r.atlas_hint.items()
                 if prov in mapped_ids and mapped_ids[prov] != hint_id]
             verdict = ('<span style="color:#ff9800">differs from the '
-                      'mapping above: %s</span>' % '; '.join(mismatches)
+                      'mapping above (%s)</span>' % '; '.join(mismatches)
                       if mismatches else
                       'consistent with the mapping above')
             p.append('<p><b>anime-relations atlas independently says:'
-                     '</b> %s — %s</p>' % (
-                         ', '.join('%s=%s' % kv
-                                   for kv in r.atlas_hint.items()),
+                     '</b> %s, %s</p>' % (
+                         self._mono(', '.join(
+                             '%s=%s' % kv
+                             for kv in r.atlas_hint.items())),
                          verdict))
 
         providers = sorted({prov for row in r.fields
@@ -1145,15 +1161,16 @@ class SyncWindow(QDialog):
             for row in rows:
                 cells = ['<td>%s</td>' % _FIELD_LABELS.get(
                              row.field, row.field),
-                        '<td>%s</td>' % self._fmt_value(row.field,
-                                                        row.local)]
+                        '<td>%s</td>' % self._mono(self._fmt_value(
+                            row.field, row.local))]
                 for prov in providers:
                     pv = row.per_provider.get(prov)
                     cells.append(
-                        '<td>—</td>' if pv is None else
-                        '<td>%s / %s</td>' % (
-                            self._fmt_value(row.field, pv['remote']),
-                            self._fmt_value(row.field, pv['base'])))
+                        '<td>-</td>' if pv is None else
+                        '<td>%s</td>' % self._mono(
+                            '%s / %s' % (
+                                self._fmt_value(row.field, pv['remote']),
+                                self._fmt_value(row.field, pv['base']))))
                 p.append('<tr>%s</tr>' % ''.join(cells))
             p.append('</table>')
         return ''.join(p)

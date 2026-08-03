@@ -32,6 +32,12 @@ import time
 import uuid
 from enum import Enum, auto
 
+try:
+    from rapidfuzz import fuzz as rapidfuzz_fuzz
+    from rapidfuzz import process as rapidfuzz_process
+except ImportError:
+    rapidfuzz_fuzz = rapidfuzz_process = None
+
 VERSION = '0.13.dev0'
 
 DATADIR = os.path.dirname(__file__) + '/data'
@@ -186,7 +192,8 @@ available_trackers = [
 
 available_parsers = [
     ('aie', 'AnimeInfoExtractor (Default)'),
-    ('anitopy', 'Anitopy (Experimental)'),
+    ('anitopy', 'Anitopy'),
+    ('anitomy_ng', 'Anitomy-NG (Experimental)'),
 ]
 
 def oauth_generate_pkce() -> str:
@@ -394,6 +401,75 @@ def estimate_aired_episodes(show):
     return 0
 
 
+GUESS_SHOW_CUTOFF = 0.7
+
+# Flat (choices, owners) view of the most recent tracker list, so a library scan
+# doesn't rebuild it once per filename. Keyed by identity; the strong reference
+# to the showlist keeps that id() from being recycled under us. _get_tracker_list
+# builds a fresh dict every time, so a changed list is always a cache miss.
+_guess_index = (None, None, None)
+
+
+def _title_index(showlist):
+    global _guess_index
+
+    (cached_list, choices, owners) = _guess_index
+    if cached_list is showlist:
+        return (choices, owners)
+
+    choices, owners = [], []
+    for item in showlist.values():
+        for title in item['titles']:
+            choices.append(title.lower())
+            owners.append(item)
+
+    _guess_index = (showlist, choices, owners)
+    return (choices, owners)
+
+
+def _guess_show_difflib(show_title, showlist):
+    """ Fallback matcher for when rapidfuzz isn't installed.
+
+    Same metric and same result as a plain ratio() sweep, but skips the real
+    comparison whenever difflib's cheap upper bounds already rule a title out.
+    Roughly 4x faster than the naive loop on a large list.
+
+    Note the argument order matters: difflib's ratio() is not symmetric, so the
+    query has to stay as seq1 the way the original sweep had it.
+    """
+    highest_ratio = (None, 0)
+    matcher = difflib.SequenceMatcher()
+    matcher.set_seq1(show_title.lower())
+
+    for item in showlist.values():
+        # Make sure to search through all the aliases
+        for title in item['titles']:
+            matcher.set_seq2(title.lower())
+            if matcher.real_quick_ratio() <= highest_ratio[1]:
+                continue
+            if matcher.quick_ratio() <= highest_ratio[1]:
+                continue
+            ratio = matcher.ratio()
+            if ratio > highest_ratio[1]:
+                highest_ratio = (item, ratio)
+
+    return highest_ratio
+
+
+def _guess_show_rapidfuzz(show_title, showlist):
+    (choices, owners) = _title_index(showlist)
+
+    # fuzz.ratio is difflib's ratio computed with an optimal alignment rather
+    # than difflib's greedy one, so it only ever differs on pairs far below the
+    # cutoff -- where difflib undercounts and both answers mean "no match".
+    match = rapidfuzz_process.extractOne(
+        show_title.lower(), choices, scorer=rapidfuzz_fuzz.ratio)
+
+    if not match:
+        return (None, 0)
+    return (owners[match[2]], match[1] / 100)
+
+
 def guess_show(show_title, tracker_list):
     """ Take a title and search for it fuzzily in the tracker list """
     (showlist, altnames_map) = tracker_list
@@ -405,24 +481,16 @@ def guess_show(show_title, tracker_list):
         if showid in showlist:
             return showlist[showid]
 
-    # Use difflib to see if the show title is similar to
-    # one we have in the list
-    highest_ratio = (None, 0)
-    matcher = difflib.SequenceMatcher()
-    matcher.set_seq1(show_title.lower())
-
-    # Compare to every show in our list to see which one
-    # has the most similar name
-    for item in showlist.values():
-        # Make sure to search through all the aliases
-        for title in item['titles']:
-            matcher.set_seq2(title.lower())
-            ratio = matcher.ratio()
-            if ratio > highest_ratio[1]:
-                highest_ratio = (item, ratio)
+    # Compare to every show in our list to see which one has the most
+    # similar name. This runs once per unique title in the library during a
+    # scan, against every title and alias, so it dominates scan time.
+    if rapidfuzz_fuzz:
+        highest_ratio = _guess_show_rapidfuzz(show_title, showlist)
+    else:
+        highest_ratio = _guess_show_difflib(show_title, showlist)
 
     playing_show = highest_ratio[0]
-    if highest_ratio[1] > 0.7:
+    if highest_ratio[1] > GUESS_SHOW_CUTOFF:
         return playing_show
 
 
@@ -449,6 +517,11 @@ def redirect_show(show_tuple, redirections, tracker_list):
                     return (showlist[new_show_id], new_ep)
 
     return show_tuple
+
+
+def subminer_available():
+    """Whether the SubMiner CLI (external sentence-mining MPV wrapper) is on PATH."""
+    return shutil.which('subminer') is not None
 
 
 def open_folder(path):
@@ -508,21 +581,39 @@ def mpv_ipc_socket_path():
     return to_cache_path('mpv-socket')
 
 
-def mpv_ipc_loadfile(filename):
+def subminer_mpv_socket_path(subminer_bin):
+    """SubMiner's own mpv IPC socket path (it manages a single mpv
+    instance under a fixed socket, normally /tmp/subminer-socket, rather
+    than our own mpv_ipc_socket_path()). Asked from the binary itself,
+    since it's not exposed in config.jsonc and could move with TMPDIR.
+    Returns None if subminer can't be asked (e.g. it hung or errored)."""
+    try:
+        result = subprocess.run(
+            [subminer_bin, 'mpv', 'socket'],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    path = result.stdout.strip()
+    return path or None
+
+
+def mpv_ipc_loadfile(filename, socket_path=None):
     """
     Tries to tell an already-running mpv instance (found via the fixed
-    IPC socket above) to play `filename` in place of whatever it's
-    currently playing. Returns True if the command was sent successfully
-    -- the caller shouldn't spawn a new process in that case -- or False
-    if nothing is listening on the socket (no reusable instance up yet,
-    or the previous one wasn't started with --input-ipc-server), meaning
+    IPC socket above, or `socket_path` if given -- e.g. SubMiner's own
+    socket) to play `filename` in place of whatever it's currently
+    playing. Returns True if the command was sent successfully -- the
+    caller shouldn't spawn a new process in that case -- or False if
+    nothing is listening on the socket (no reusable instance up yet, or
+    the previous one wasn't started with --input-ipc-server), meaning
     the caller should fall back to spawning a new mpv process normally.
     """
     if not hasattr(socket, 'AF_UNIX'):
         # mpv's IPC socket is a Windows named pipe there, not a Unix
         # domain socket -- instance reuse is POSIX-only for now.
         return False
-    socket_path = mpv_ipc_socket_path()
+    if socket_path is None:
+        socket_path = mpv_ipc_socket_path()
     if not os.path.exists(socket_path):
         return False
     try:
@@ -640,6 +731,7 @@ config_defaults = {
     # process/window each time. Falls back to spawning normally if no
     # instance is listening yet.
     'player_reuse_mpv_instance': True,
+    'use_subminer': False,
     'searchdir': ['~/Videos'],
     'tracker_enabled': True,
     'tracker_update_wait_s': 300,
@@ -779,7 +871,16 @@ gtk_defaults = {
     # overlay, owner-system score editing and the Sync button's
     # headless multi-sync all gate on these.
     'multisync_enabled': True,
+    # Which reconciliation the Sync button performs: 'merge', 'pull' or
+    # 'push' (see sync.present.SETTINGS_MODES). The legacy value
+    # 'plan_only' is still understood on read and means merge +
+    # multisync_plan_only -- see sync.present.settings_sync_mode.
     'multisync_mode': 'merge',
+    # Never auto-apply: always fetch, plan, and surface the sync window
+    # for review, whatever the mode above says. On by default while
+    # multisync is beta -- the safe posture for anyone who hasn't
+    # audited what merge/pull/push do to their real accounts yet.
+    'multisync_plan_only': True,
     # When on (and multisync is enabled), the sidebar score editor can
     # edit an owned entry's score in its OWNER's rating system, toggled
     # live via the Synced/Platform switch by the slider. Off keeps the
@@ -820,7 +921,9 @@ qt_defaults = {
     'filter_bar_position': 2,
     'filter_global': False,
     'multisync_enabled': True,
+    # Same keys/semantics as config_defaults above.
     'multisync_mode': 'merge',
+    'multisync_plan_only': True,
     'multisync_edit_owned_score': True,
     'colors': {
         'is_airing': '#D2FAFA',
@@ -875,6 +978,45 @@ def clean_synopsis(text):
     return text.strip()
 
 
+def as_utc(dt):
+    """Attach UTC to a naive datetime. The two sources of airing times
+    disagree on this: engine.get_airing_schedule builds aware UTC out of
+    AniList's airingAt, while libanilist's own 'next_ep_time' comes from
+    utcfromtimestamp() and is naive. Both mean UTC, so normalize rather
+    than letting a naive/aware subtraction raise."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+def format_airtime_delta(dt, now=None) -> str:
+    """How far off an airing time is, as a bare quantity: "3 days",
+    "5 hours", "12 minutes". Returns None once it's no longer in the
+    future, since there is no sensible quantity to name then -- callers
+    that need a label for that case should use format_relative_airtime.
+    """
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    seconds = (as_utc(dt) - as_utc(now)).total_seconds()
+
+    if seconds <= 0:
+        return None
+
+    minutes = seconds / 60
+    if minutes < 60:
+        n = max(1, round(minutes))
+        return '%d minute%s' % (n, '' if n == 1 else 's')
+
+    hours = minutes / 60
+    if hours < 24:
+        n = max(1, round(hours))
+        return '%d hour%s' % (n, '' if n == 1 else 's')
+
+    days = hours / 24
+    n = max(1, round(days))
+    return '%d day%s' % (n, '' if n == 1 else 's')
+
+
 def format_relative_airtime(dt, now=None) -> str:
     """Human-relative description of an airing time -- days out by
     default, switching to hours and then minutes as it gets closer, e.g.
@@ -882,26 +1024,28 @@ def format_relative_airtime(dt, now=None) -> str:
     the absolute time somewhere too (e.g. a tooltip), since the relative
     form alone loses precision.
     """
+    delta = format_airtime_delta(dt, now)
+    if delta is not None:
+        return 'In %s' % delta
+
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
-    seconds = (dt - now).total_seconds()
+    seconds = (as_utc(dt) - as_utc(now)).total_seconds()
+    return 'Airing now' if seconds > -1800 else 'Aired'
 
-    if seconds <= 0:
-        return 'Airing now' if seconds > -1800 else 'Aired'
 
-    minutes = seconds / 60
-    if minutes < 60:
-        n = max(1, round(minutes))
-        return 'In %d minute%s' % (n, '' if n == 1 else 's')
-
-    hours = minutes / 60
-    if hours < 24:
-        n = max(1, round(hours))
-        return 'In %d hour%s' % (n, '' if n == 1 else 's')
-
-    days = hours / 24
-    n = max(1, round(days))
-    return 'In %d day%s' % (n, '' if n == 1 else 's')
+def format_next_airing(dt, now=None) -> str:
+    """The details view's phrasing for a next-episode time: the same
+    reduced quantity the airing scheduler shows, followed by the
+    absolute local date it resolves to -- "3 days (Sat Aug 02, 2026)".
+    The scheduler can rely on its own day-grouped columns for the date;
+    a lone detail row can't, and "3 days" with no anchor is unreadable
+    a day later. Returns None when the time isn't in the future."""
+    delta = format_airtime_delta(dt, now)
+    if delta is None:
+        return None
+    local = as_utc(dt).astimezone()
+    return '%s (%s)' % (delta, local.strftime('%a %b %d, %Y'))
 
 
 def format_clock(milliseconds) -> str:

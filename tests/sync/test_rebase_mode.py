@@ -93,3 +93,94 @@ def test_rebase_leaves_unowned_fields_alone(store):
     # tags default to Merge, notes to Individual -- no single owner, so
     # rebase touches only the owned score.
     assert {c.field for c in plan.changes} == {'score'}
+
+
+def _kitsu_only_with_known_mal_id(store):
+    """A show that exists only on Kitsu, which publishes a MAL id
+    (56566) MAL's own account has never actually added -- exactly the
+    'recognized but never pushed' bug report this feature answers.
+    MAL is still a connected/fetched provider, just with an empty list,
+    so identity resolution's pre-emptive mapping (from Kitsu's
+    published mal_id) sits unused: a real mapping row with no remote
+    snapshot behind it."""
+    mal = FakeLib('mal', [])
+    kitsu = FakeLib('kitsu', [show('kitsu', 47546, 'Undead Girl Murder Farce',
+                                   progress=5, score=4, mal_id=56566)])
+    engine = make_engine(store, {'mal': mal, 'kitsu': kitsu})
+    engine.fetch()
+    uid = store.mapping_for('kitsu', '47546')['uuid']
+    assert store.mapping_for('mal', '56566')['uuid'] == uid   # pre-linked
+    assert store.remote_get('mal', '56566') == {}             # never fetched
+    return engine, mal, kitsu, uid
+
+
+def test_rebase_creates_missing_entry_on_a_connected_provider(store):
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    plan = engine.plan(mode=SyncMode.REBASE)
+
+    creates = [c for c in plan.changes if c.creates_entry]
+    assert {c.target for c in creates} == {'mal'}
+    assert all(c.target != 'kitsu' for c in plan.changes)   # already exists
+    # Unselected by default: adding to a real account is opt-in.
+    assert all(not c.selected for c in creates)
+    score_create = next(c for c in creates if c.field == 'score')
+    assert score_create.old is None
+    assert score_create.new == 8.0   # Kitsu 4/5 stars -> canonical 8.0
+    # score defaults to the LOCAL policy: source says so, not the
+    # provider that happened to seed local (Kitsu) -- "where did this
+    # come from" must be answerable from the change alone.
+    assert score_create.source == 'local'
+
+    for c in creates:
+        c.selected = True
+    engine.apply(plan)
+
+    assert mal.shows['56566']['my_score'] == 8
+    assert mal.shows['56566']['my_progress'] == 5
+    assert store.remote_get('mal', '56566')['score'][0] == 8.0
+    assert store.base_get(uid, 'mal').get('score') == 8.0
+
+
+def test_rebase_missing_entry_not_selected_stays_unapplied(store):
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    plan = engine.plan(mode=SyncMode.REBASE)
+    engine.apply(plan)   # nothing ticked -- must be a no-op for MAL
+    assert mal.shows == {}
+    assert store.remote_get('mal', '56566') == {}
+
+
+def test_rebase_add_skips_provider_without_can_add(store):
+    mal = FakeLib('mal', [], extra_info={'can_add': False})
+    kitsu = FakeLib('kitsu', [show('kitsu', 1, 'X', score=4, mal_id=9)])
+    engine = make_engine(store, {'mal': mal, 'kitsu': kitsu})
+    engine.fetch()
+    plan = engine.plan(mode=SyncMode.REBASE)
+    assert [c for c in plan.changes if c.creates_entry] == []
+
+
+def test_rebase_create_credits_the_actual_provider_owner(store):
+    """A provider-owned field's create value is attributed to that
+    provider, not blanket-labeled 'local' -- the UI's 'from %s' note
+    (present.change_line) reads change.source directly."""
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    store.set_ownership('progress', FieldPolicy(PolicyKind.PROVIDER, 'kitsu'))
+    plan = engine.plan(mode=SyncMode.REBASE)
+    progress_create = next(c for c in plan.changes
+                           if c.creates_entry and c.field == 'progress')
+    assert progress_create.source == 'kitsu'
+
+
+def test_rebase_create_falls_back_to_local_when_the_owner_is_missing(store):
+    """A field owned by the very provider being created has no value
+    to draw from there -- fall back to local instead of leaving a
+    brand-new entry blank on that field."""
+    engine, mal, kitsu, uid = _kitsu_only_with_known_mal_id(store)
+    # MAL is the missing provider; make it the declared owner of
+    # status too, on top of the default LOCAL score/progress/etc.
+    store.set_ownership('status', FieldPolicy(PolicyKind.PROVIDER, 'mal'))
+    plan = engine.plan(mode=SyncMode.REBASE)
+    status_create = next(c for c in plan.changes
+                         if c.creates_entry and c.target == 'mal'
+                         and c.field == 'status')
+    assert status_create.source == 'local'
+    assert status_create.new == store.local_get(uid)['status'][0]
