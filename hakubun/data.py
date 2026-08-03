@@ -622,7 +622,7 @@ class Data:
 
     def _save_cache(self):
         self.msg.debug("Saving cache...")
-        utils.save_data(self.showlist, self.cache_file)
+        self._safe_save(self.showlist, self.cache_file, "cache")
 
     def save_cache(self):
         """Public hook for the engine to persist the show list after
@@ -636,7 +636,7 @@ class Data:
 
     def _save_info(self):
         self.msg.debug("Saving info DB...")
-        utils.save_data(self.infocache, self.info_file)
+        self._safe_save(self.infocache, self.info_file, "info DB")
 
     def _load_userconfig(self):
         self.msg.debug("Reading userconfig...")
@@ -645,7 +645,11 @@ class Data:
 
     def _save_userconfig(self):
         self.msg.debug("Saving userconfig...")
-        utils.save_config(self.userconfig, self.userconfig_file)
+        try:
+            utils.save_config(self.userconfig, self.userconfig_file)
+        except OSError as e:
+            self.msg.warn(
+                "Couldn't save userconfig to %s: %s" % (self.userconfig_file, e))
 
     def _load_queue(self):
         self.msg.debug("Reading queue...")
@@ -653,7 +657,7 @@ class Data:
 
     def _save_queue(self):
         self.msg.debug("Saving queue...")
-        utils.save_data(self.queue, self.queue_file)
+        self._safe_save(self.queue, self.queue_file, "queue")
 
     def _load_meta(self):
         self.msg.debug("Reading metadata...")
@@ -662,7 +666,17 @@ class Data:
 
     def _save_meta(self):
         self.msg.debug("Saving metadata...")
-        utils.save_data(self.meta, self.meta_file)
+        self._safe_save(self.meta, self.meta_file, "metadata")
+
+    def _safe_save(self, data, filename, description):
+        """Save via utils.save_data (which writes atomically), catching
+        OSError so a disk-full/permissions failure is reported through
+        the messenger instead of crashing the caller or leaving the
+        destination file corrupted."""
+        try:
+            utils.save_data(data, filename)
+        except OSError as e:
+            self.msg.warn("Couldn't save %s to %s: %s" % (description, filename, e))
 
     def download_data(self):
         """Downloads the remote list and overwrites the cache"""

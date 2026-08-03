@@ -28,6 +28,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -228,14 +229,33 @@ def parse_config(filename, default):
     return config
 
 
-def save_config(config_dict, filename):
+def _atomic_write(filename, write_func):
+    """Write to a temp file in the same directory, fsync, then rename onto
+    filename. Guarantees filename is either the old contents or the new
+    contents in full, never a truncated/corrupted partial write."""
     path = os.path.dirname(filename)
     if not os.path.isdir(path):
         os.mkdir(path)
 
-    with open(filename, 'wb') as configfile:
-        configfile.write(json.dumps(config_dict, sort_keys=True,
-                                    indent=4, separators=(',', ': ')).encode('utf-8'))
+    fd, tmp_path = tempfile.mkstemp(dir=path or '.', prefix='.tmp-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as tmpfile:
+            write_func(tmpfile)
+            tmpfile.flush()
+            os.fsync(tmpfile.fileno())
+        os.replace(tmp_path, filename)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def save_config(config_dict, filename):
+    _atomic_write(filename, lambda f: f.write(
+        json.dumps(config_dict, sort_keys=True,
+                   indent=4, separators=(',', ': ')).encode('utf-8')))
 
 
 def load_data(filename):
@@ -244,8 +264,7 @@ def load_data(filename):
 
 
 def save_data(data, filename):
-    with open(filename, 'wb') as datafile:
-        pickle.dump(data, datafile, protocol=2)
+    _atomic_write(filename, lambda f: pickle.dump(data, f, protocol=2))
 
 
 def log_error(msg):
