@@ -307,7 +307,7 @@ class SettingsDialog(QDialog):
         g_playnext_layout.addWidget(
             self.player_reuse_mpv,               2, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Open episodes with SubMiner'), 3, 0, 1, 2)
+            QLabel('Open episodes with SubMiner instead by default'), 3, 0, 1, 2)
         g_playnext_layout.addWidget(
             self.player_use_subminer,            3, 2, 1, 1)
         g_playnext_layout.addWidget(

@@ -397,7 +397,7 @@
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="checkbox_use_subminer">
-                                <property name="label" translatable="yes">Open episodes with SubMiner instead</property>
+                                <property name="label" translatable="yes">Open episodes with SubMiner instead by default</property>
                                 <property name="visible">True</property>
                                 <property name="can_focus">True</property>
                                 <property name="receives_default">False</property>
