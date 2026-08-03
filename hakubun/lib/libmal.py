@@ -127,7 +127,7 @@ class libmal(lib):
 
     auth_url = "https://myanimelist.net/v1/oauth2/token"
     query_url = "https://api.myanimelist.net/v2"
-    client_id = "32c510ab2f47a1048a8dd24de266dc0c"
+    client_id = "54ac679bcb073d20fb81ca9e5c78837b"
     user_agent = 'Hakubun-Plus/{}'.format(utils.VERSION)
 
     library_page_limit = 1000
