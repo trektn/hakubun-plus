@@ -674,6 +674,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
             "Filename parsing",
             ["Anitopy (MPL-2.0) https://github.com/igorcmoura/anitopy",
              "anitomy-ng (MPL-2.0) https://github.com/tylergibbs2/anitomy-ng"])
+        about.add_credit_section(
+            "Fuzzy title matching (optional)",
+            ["RapidFuzz (MIT) https://github.com/rapidfuzz/RapidFuzz"])
         # The window/tray icon is the plain hanko mark (see
         # Gtk.Window.set_default_icon_from_file) -- About gets the fuller
         # "Hakubun+" wordmark instead, since it has the room to show it.

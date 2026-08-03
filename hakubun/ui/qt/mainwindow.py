@@ -2153,6 +2153,9 @@ class MainWindow(QMainWindow):
                           '<p>Filename parsing uses <a href="https://github.com/igorcmoura/anitopy">Anitopy</a> and '
                           '<a href="https://github.com/tylergibbs2/anitomy-ng">anitomy-ng</a>, '
                           'both licensed under the Mozilla Public License 2.0.</p>'
+                          '<p>Optional fuzzy title matching uses '
+                          '<a href="https://github.com/rapidfuzz/RapidFuzz">RapidFuzz</a>, '
+                          'licensed under the MIT license.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
                               utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
