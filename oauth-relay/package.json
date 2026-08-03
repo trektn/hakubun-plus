@@ -2,7 +2,7 @@
   "name": "mal-oauth-relay",
   "private": true,
   "version": "1.0.0",
-  "description": "Cloudflare Worker that relays MyAnimeList's OAuth redirect to the Hakubun+ desktop app via a custom URI scheme.",
+  "description": "Cloudflare Worker that shows MyAnimeList's OAuth authorization code so it can be pasted into Hakubun+'s PIN field.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

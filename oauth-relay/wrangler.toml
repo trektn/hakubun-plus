@@ -2,13 +2,15 @@ name = "mal-oauth-relay"
 main = "src/index.js"
 compatibility_date = "2026-08-03"
 
-# The workers.dev subdomain (https://mal-oauth-relay.<your-subdomain>.workers.dev)
-# is HTTPS by default and works as-is -- no custom domain is required to
-# satisfy MAL's "public HTTPS redirect_uri" requirement.
+# poopf.art is already on Cloudflare, so this is served from there instead
+# of the default *.workers.dev subdomain. Requires poopf.art's zone to be
+# active in the same Cloudflare account this Worker is deployed to --
+# `wrangler deploy` creates the DNS record for this hostname automatically
+# the first time (it shows up as a proxied CNAME to the Worker).
 #
-# To use your own domain instead, add it as a Worker route or custom domain
-# in the Cloudflare dashboard (Workers & Pages -> mal-oauth-relay -> Settings
-# -> Domains & Routes), or uncomment and edit:
-# routes = [
-#   { pattern = "oauth.example.com/mal/callback", custom_domain = true }
-# ]
+# Custom Domains map a whole hostname to a Worker -- no path component is
+# allowed here. The Worker itself only responds on /mal/callback (see
+# CALLBACK_PATH in src/index.js) and 404s every other path on this host.
+routes = [
+  { pattern = "oauth.poopf.art", custom_domain = true }
+]
