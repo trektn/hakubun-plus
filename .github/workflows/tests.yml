@@ -17,6 +17,7 @@ jobs:
           sudo apt-get install -y \
             xvfb \
             gobject-introspection \
+            libgirepository-2.0-dev \
             libgirepository1.0-dev \
             libcairo2-dev \
             gir1.2-gtk-3.0 \
