@@ -190,10 +190,14 @@ class ShowListStore(Gtk.ListStore):
 
     @classmethod
     def column(cls, key):
-        try:
-            return cls.__cols.index(next(i for i in cls.__cols if i[0] == key))
-        except ValueError:
-            return None
+        # next()'s default avoids StopIteration for an unknown key -- the
+        # previous `except ValueError` here was dead code, since a
+        # not-found next() raises StopIteration, not ValueError; it never
+        # actually caught anything, and callers relying on this returning
+        # None for a bad key were silently saved only by their own
+        # broad-except handling further up the call chain.
+        found = next((i for i in cls.__cols if i[0] == key), None)
+        return cls.__cols.index(found) if found is not None else None
 
     def _get_color(self, show, eps, my_progress=None):
         # my_progress override lets the 'new episode' highlight key off
@@ -387,13 +391,18 @@ class ShowListFilter(Gtk.TreeModelFilter):
         return True
 
     def get_value(self, obj, key='id'):
+        # ValueError: obj was a stale/invalid TreePath (get_iter). TypeError:
+        # key didn't match a known column, so column() returned None and
+        # get_value() got a non-int index. Both are routine (e.g. a row
+        # removed between a signal firing and this being called), so return
+        # None instead of crashing; anything else should propagate.
         try:
             if type(obj) is Gtk.TreePath:
                 obj = self.get_iter(obj)
             if isinstance(key, (str,)):
                 key = self.props.child_model.column(key)
             return super().get_value(obj, key)
-        except Exception:
+        except (ValueError, TypeError):
             return None
 
 
