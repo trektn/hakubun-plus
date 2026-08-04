@@ -68,6 +68,9 @@ hakubun-plus = "hakubun.ui.cli:main"
 hakubun-plus-gtk = "hakubun.ui.gtk:main"
 hakubun-plus-qt = "hakubun.ui.qt:main"
 
+[dependency-groups]
+dev = ["pytest>=8,<9", "pytest-qt>=4,<5"]
+
 [tool.uv]
 
 [tool.uv.build-backend]
