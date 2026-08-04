@@ -822,7 +822,7 @@ class libkitsu_graphql(lib):
             return None
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%d")
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None
 
@@ -835,6 +835,6 @@ class libkitsu_graphql(lib):
             return None
         try:
             return datetime.datetime.fromisoformat(string.replace('Z', '+00:00'))
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid datetime {}'.format(string))
             return None
