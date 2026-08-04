@@ -571,7 +571,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%d")
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
@@ -581,7 +581,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%dT%H:%M:%S.%fZ").date()
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
@@ -591,7 +591,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc)
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
