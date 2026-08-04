@@ -87,10 +87,26 @@ class PlaybackBar(QWidget):
         length = status.get('length')
         offset = status.get('viewOffset')
         if playing and length and offset is not None:
+            self.bar.setRange(0, 100)
             percent = min(100, round(offset / length * 100))
             self.bar.setValue(percent)
             self.percent_label.setText('%d%%' % percent)
+        elif playing and offset is not None:
+            # Elapsed position is known but not the episode's total
+            # duration -- some MPRIS players never expose mpris:length
+            # in their metadata at all, even while position updates
+            # normally. There's no ratio to compute without a length to
+            # divide by, but going blank here reads as "nothing is
+            # happening" right next to a position label (see
+            # utils.format_playback_position, which already degrades to
+            # elapsed-time-only in this exact case) that's visibly
+            # ticking up -- setRange(0, 0) puts the bar into Qt's
+            # indeterminate/"busy" mode instead, so it visibly animates
+            # while playback continues.
+            self.bar.setRange(0, 0)
+            self.percent_label.setText('')
         else:
+            self.bar.setRange(0, 100)
             self.bar.setValue(0)
             self.percent_label.setText('')
 
