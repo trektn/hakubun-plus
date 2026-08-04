@@ -84,6 +84,30 @@ def test_near_miss_distinguishes_sequels(tracker_list):
     assert utils.guess_show('Steins;Gate', tracker_list)['id'] == 1
 
 
+def test_parser_added_season_suffix_falls_back_to_the_bare_title(tracker_list):
+    # Every parser wrapper blindly appends " Season N" for season > 1 (see
+    # _PARSER_SUFFIX_RE). A franchise with one continuous tracker entry
+    # (no "Season" in its own title) must still match once that decoration
+    # is stripped as a fallback.
+    assert utils.guess_show('Cowboy Bebop Season 2', tracker_list)['id'] == 0
+
+
+def test_parser_added_year_and_type_suffix_falls_back(tracker_list):
+    assert utils.guess_show('Ping Pong the Animation OVA (2014)', tracker_list)['id'] == 9
+
+
+def test_suffix_fallback_never_overrides_a_real_direct_match(tracker_list):
+    # A tracker title that legitimately contains "Season" text of its own
+    # must keep matching on the unstripped title -- the fallback only
+    # fires after the direct match has already failed.
+    assert utils.guess_show(
+        'Monogatari Series: Second Season', tracker_list)['id'] == 6
+
+
+def test_suffix_fallback_does_not_rescue_an_unrelated_title(tracker_list):
+    assert utils.guess_show('Sesame Street Season 2', tracker_list) is None
+
+
 def _perturb(title, rng):
     chars = list(title)
     for _ in range(rng.randint(1, max(2, len(chars) // 4))):

@@ -423,6 +423,23 @@ def estimate_aired_episodes(show):
 
 GUESS_SHOW_CUTOFF = 0.7
 
+# Every parser wrapper (AnimeInfoExtractor, AnitopyWrapper, AnitomyNgWrapper)
+# unconditionally appends these decorations to a parsed title -- " Season N"
+# for season > 1, a bare special/OVA/etc. type keyword, and "(YYYY)" for a
+# detected year -- in that order, so they read right-to-left off a title
+# built as base + season + type + year. None of that text exists in a
+# tracker's own title for franchises with a single continuous entry (e.g.
+# "Naruto", "Bleach", "One Punch Man"), so the decoration alone routinely
+# drags an otherwise-exact title below GUESS_SHOW_CUTOFF. Stripped only as
+# a fallback retry after the undecorated title has already failed to match,
+# so it can only recover a match a plain lookup would otherwise miss, never
+# steal one a real title match would have won on its own.
+_PARSER_SUFFIX_RE = re.compile(
+    r'(\s+\((?:19|20)\d{2}\))?'
+    r'(\s+(?:OAD|OAV|ONA|OVA|SPECIALS?))?'
+    r'(\s+Season\s+\d+)?$',
+    re.IGNORECASE)
+
 # Flat (choices, owners) view of the most recent tracker list, so a library scan
 # doesn't rebuild it once per filename. _get_tracker_list builds a fresh dict on
 # every call, so keying the cache by object identity makes it a guaranteed miss
@@ -515,9 +532,20 @@ def guess_show(show_title, tracker_list):
     else:
         highest_ratio = _guess_show_difflib(show_title, showlist)
 
-    playing_show = highest_ratio[0]
     if highest_ratio[1] > GUESS_SHOW_CUTOFF:
-        return playing_show
+        return highest_ratio[0]
+
+    # Retry once with a parser-added "Season N"/type/year decoration
+    # stripped off the end -- see _PARSER_SUFFIX_RE.
+    stripped_title = _PARSER_SUFFIX_RE.sub('', show_title).strip()
+    if stripped_title and stripped_title.lower() != show_title.lower():
+        if rapidfuzz_fuzz:
+            highest_ratio = _guess_show_rapidfuzz(stripped_title, showlist)
+        else:
+            highest_ratio = _guess_show_difflib(stripped_title, showlist)
+
+        if highest_ratio[1] > GUESS_SHOW_CUTOFF:
+            return highest_ratio[0]
 
 
 def redirect_show(show_tuple, redirections, tracker_list):
