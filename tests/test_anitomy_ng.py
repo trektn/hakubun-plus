@@ -26,19 +26,21 @@ def test_version_number_title_not_mistaken_for_episode(msg):
 
 
 def test_lowercase_season_episode_token(msg):
-    # anitomy-ng's season/episode matching is case-sensitive and misses a
-    # bare lowercase 's01e02' entirely (confirmed against real upstream
-    # Anitomy too). The wrapper upcases the token before parsing.
+    # anitomy-ng >= 1.0.8 matches the season/episode token case-insensitively;
+    # before that the wrapper had to upcase it first.
     w = parse(msg, "[HiCost] Paranoia Agent - s01e02 - The Golden Shoes.mkv")
     assert w.getName() == "Paranoia Agent"
     assert w.getEpisode() == 2
 
 
 def test_parent_directory_duplicate_title_is_stripped(msg):
+    # parse_path strips the directory prefix. 'USBD' is classified as a
+    # release/source tag rather than part of the title, which is what a
+    # tracker's database expects to match against.
     w = parse(msg, "Bleach USBD Remux AB/Bleach S05 USBD Remux/"
                    "Bleach S05E14 2004 1080p Bluray REMUX AVC DTS-HD MA "
                    "2.0 Dual Audio -ZR-.mkv")
-    assert w.getName() == "Bleach USBD Season 05 (2004)"
+    assert w.getName() == "Bleach Season 05 (2004)"
     assert w.getEpisode() == 14
 
 
@@ -48,11 +50,9 @@ def test_no_credit_opening_is_excluded(msg):
 
 
 def test_checksum_starting_with_ed_is_not_mistaken_for_ending_type(msg):
-    # An 8-hex-digit checksum starting with "ED" (both valid hex digits)
-    # can be misread as the ED (ending) type keyword, silently swallowing
-    # the rest of the checksum and wrongly excluding a real episode. Only
-    # trust a bare ED/OP type when a separate file_checksum element was
-    # also found, confirming it wasn't a checksum fragment.
+    # An 8-hex-digit checksum starting with "ED" (both valid hex digits) used
+    # to be misread as the ED (ending) type keyword, swallowing the checksum
+    # and wrongly excluding a real episode. Fixed in anitomy-ng 1.0.8.
     w = parse(msg, "[SubsPlease] Yoru no Kurage wa Oyogenai - 12 (1080p) "
                    "[ED8648EA].mkv")
     assert w.getName() == "Yoru no Kurage wa Oyogenai"
@@ -70,10 +70,10 @@ def test_real_ending_clip_with_genuine_checksum_is_still_excluded(msg):
 
 
 def test_episode_before_episode_title_without_a_dash(msg):
-    # From a real MPRIS tracker log. anitomy-ng folds both the episode
-    # number and the episode title into the title when the number has no
-    # dash in front of it, and emits no episode element -- so getEpisode()
-    # fell back to 1 and the file was recorded as episode 1 of Beyblade X.
+    # From a real MPRIS tracker log. Before anitomy-ng 1.0.8 both the episode
+    # number and the episode title were folded into the title when the number
+    # had no dash in front of it, so getEpisode() fell back to 1 and the file
+    # was recorded as episode 1 of Beyblade X.
     w = parse(msg, "[HnY] Beyblade X 11 - Kadovar's Test (1080p) v2.mkv")
     assert w.getName() == "Beyblade X"
     assert w.getEpisode() == 11
@@ -81,16 +81,16 @@ def test_episode_before_episode_title_without_a_dash(msg):
 
 
 def test_episode_before_a_single_word_episode_title(msg):
-    # The failure isn't about how many words the episode title has; it only
-    # ever looked intermittent because anitomy-ng recognizes some episode
-    # titles by keyword ("Episode ...") and recovers on those by accident.
+    # The old failure was not about how many words the episode title has; it
+    # only looked intermittent because some episode titles are recognised by
+    # keyword ("Episode ...") and recovered by accident.
     w = parse(msg, "[HnY] Beyblade X 11 - Test (1080p) v2.mkv")
     assert w.getName() == "Beyblade X"
     assert w.getEpisode() == 11
 
 
 def test_dashed_episode_number_still_parses(msg):
-    # The shape anitomy-ng already handles must not regress.
+    # The shape that always worked must not regress.
     w = parse(msg, "[HnY] Beyblade X - 11 - Kadovar's Test (1080p).mkv")
     assert w.getName() == "Beyblade X"
     assert w.getEpisode() == 11
@@ -108,19 +108,16 @@ def test_year_before_a_title_is_not_taken_as_an_episode(msg):
     assert w.getEpisode() == 1
 
 
-def test_path_dedup_prefilter_skips_paths_with_no_shared_text(msg):
-    # A necessary-condition prefilter guards the parent-folder-dedup
-    # search (dominates real scan time on large libraries otherwise) --
-    # confirm the episode/title still parse normally when the folder and
-    # filename share no text, so there's genuinely nothing to strip.
+def test_path_with_no_shared_text_between_folder_and_file(msg):
+    # parse_path: the folder and filename share no text, so there is nothing
+    # to strip and the file's own episode/title still parse normally.
     w = parse(msg, "Random Folder Name/[SubsPlease] Frieren - 05 (1080p).mkv")
     assert w.getEpisode() == 5
 
 
-def test_path_dedup_prefilter_still_strips_real_duplicates(msg):
+def test_path_duplicate_folder_title_is_stripped(msg):
     # Contrast with the above: the parent folder's title is genuinely
-    # duplicated in the filename, so the prefilter must let the search
-    # run and the duplicate must still be stripped.
+    # duplicated in the filename, and must not survive into the title.
     w = parse(msg, "Beyblade X/Beyblade X - 11 - Kadovar's Test (1080p).mkv")
     assert w.getName() == "Beyblade X"
     assert w.getEpisode() == 11
