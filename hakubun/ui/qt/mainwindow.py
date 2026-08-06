@@ -901,7 +901,11 @@ class MainWindow(QMainWindow):
             self._add_taiga_page('stats', 'Statistics', 'view-statistics', self.stats_widget)
             self._add_taiga_separator()
             self._add_taiga_page('search', 'Search', 'edit-find', self.search_widget)
-            self._add_taiga_page('seasons', 'Seasons', 'view-calendar', self.seasons_widget)
+            # 'view-calendar' is already used by the Airing Schedule action
+            # below and there's no calendar icon in Taiga's own set to give
+            # this row instead -- 'view-grid' matches the Seasons page's
+            # actual card-grid layout and has a real Taiga equivalent.
+            self._add_taiga_page('seasons', 'Seasons', 'view-grid', self.seasons_widget)
 
             # Only the Anime List page has a "currently selected show" to
             # show quick info/actions for -- Now Playing already shows a
@@ -1636,8 +1640,10 @@ class MainWindow(QMainWindow):
         action_play_next = QAction(
             getIcon('media-skip-forward'), 'Play &Next Episode', self)
         action_play_next.triggered.connect(lambda: self.s_play(True))
+        # Was 'view-refresh' (a sync/refresh icon, unrelated to replaying
+        # an episode) -- 'history' actually matches what this action does.
         action_play_last = QAction(
-            getIcon('view-refresh'), 'Play Last Watched Ep (#%d)' % watched_eps, self)
+            getIcon('history'), 'Play Last Watched Ep (#%d)' % watched_eps, self)
         action_play_last.triggered.connect(lambda: self.s_play(False))
         action_play_dialog = QAction('Play Episode...', self)
         action_play_dialog.setStatusTip('Select an episode to play.')

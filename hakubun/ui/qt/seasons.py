@@ -61,9 +61,18 @@ class SeasonsWidget(QWidget):
         r_engine_loaded(), which already re-runs this on account and
         mediatype reloads. Builds the search UI on first call if the
         account supports season search, and keeps mylist/statuses
-        current afterward."""
+        current afterward.
+
+        The nav row itself stays clickable regardless (MainWindow builds
+        it once, unconditionally) -- an account/mediatype switch that
+        drops SEASON support (e.g. a Kitsu account moving from anime to
+        manga) must revert this page back to the placeholder rather than
+        leaving a stale, still-searchable UI pointed at a mediatype that
+        no longer supports it."""
         search_methods = mediainfo.get('search_methods', [])
         if utils.SearchMethod.SEASON not in search_methods:
+            if self.card_view is not None:
+                self._teardown_search_ui()
             return
 
         self.statuses = mediainfo['statuses']
@@ -109,12 +118,33 @@ class SeasonsWidget(QWidget):
         self.card_view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.card_view.customContextMenuRequested.connect(self.s_context_menu)
 
+        self._filters_layout = filters_layout
         self._layout.addLayout(filters_layout)
         self._layout.addWidget(self.card_view, 1)
 
         self.worker.changed_list.connect(self._refresh_mylist)
 
         self.s_search()
+
+    def _teardown_search_ui(self):
+        """Reverses _build_search_ui() -- see set_context()'s docstring."""
+        self.worker.changed_list.disconnect(self._refresh_mylist)
+
+        self._layout.removeWidget(self.card_view)
+        self.card_view.deleteLater()
+        self.card_view = None
+
+        self._layout.removeItem(self._filters_layout)
+        while self._filters_layout.count():
+            # addStretch(1) added a spacer item with no widget() -- only
+            # season_combo/year_spin/search_btn need explicit cleanup.
+            widget = self._filters_layout.takeAt(0).widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._filters_layout = None
+
+        self._unavailable_label.show()
+        self._layout.addWidget(self._unavailable_label)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
         self.worker.set_function(function, ret_function, *args, **kwargs)
