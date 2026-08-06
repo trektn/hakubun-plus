@@ -305,8 +305,12 @@ fragment mediaListEntry on MediaList {
                     'aliases': self._get_aliases(media),
                     'type': self._translate_type(media['format']),
                     'status': self._translate_status(media['status']),
+                    # AniList's averageScore is already a whole-number
+                    # percentage (0-100), unlike Kitsu's averageRating
+                    # (a genuine float, e.g. 78.32) -- showing ".00"
+                    # after it would be fake precision.
                     'platform_score': (
-                        '%.2f%%' % media['averageScore'] if media.get('averageScore') else None),
+                        '%d%%' % media['averageScore'] if media.get('averageScore') else None),
                     'mal_id': media.get('idMal'),
                     'my_progress': self._c(item['progress']),
                     'my_status': my_status,
@@ -510,8 +514,11 @@ fragment mediaListEntry on MediaList {
             # Search/season results went through _parse_info(), never the
             # library-list path above that already sets this -- Seasons
             # page cards had nothing to show for Score without it.
+            # AniList's averageScore is already a whole-number percentage
+            # (0-100), unlike Kitsu's averageRating (a genuine float) --
+            # no decimals to show.
             'platform_score': (
-                '%.2f%%' % item['averageScore'] if item.get('averageScore') else None),
+                '%d%%' % item['averageScore'] if item.get('averageScore') else None),
             'score_raw': item.get('averageScore'),
             # Unlike MAL's/Kitsu's 'popularity' (a rank -- lower is more
             # popular), AniList's is a raw favorites/list count -- higher
