@@ -317,6 +317,15 @@ class AddCardView(QListView):
         self.setItemDelegate(AddListDelegate(mylist=mylist, statuses_dict=statuses_dict))
         self.setFlow(QListView.Flow.LeftToRight)
         self.setWrapping(True)
+        # Default ResizeMode is Fixed -- the grid only re-lays-out on a
+        # model reset, not on the view actually resizing, so the wrap
+        # didn't follow the window until something (e.g. a new search)
+        # forced a reset. AddListDelegate.sizeHint() is constant across
+        # items, so uniform sizing is safe and turns the relayout this
+        # now triggers on every resize into arithmetic instead of an
+        # O(n) sizeHint() walk.
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setUniformItemSizes(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
