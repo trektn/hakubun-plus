@@ -46,6 +46,7 @@ import urllib.request
 
 from hakubun import utils
 from hakubun.lib.lib import lib
+from hakubun.lib.libkitsu import libkitsu
 
 
 class libkitsu_graphql(lib):
@@ -96,12 +97,13 @@ class libkitsu_graphql(lib):
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
         'score_step': 0.25,
-        # Unlike the REST client (libkitsu.py), Kitsu's GraphQL schema has
-        # no season/year argument anywhere on Query.anime or
-        # Query.searchAnimeByTitle (checked against kitsu-server's
-        # app/graphql/types/query_type.rb) -- season search genuinely isn't
-        # possible over this API, so GraphQL-backend accounts don't get it.
-        'search_methods': [utils.SearchMethod.KW],
+        # Kitsu's GraphQL schema has no season/year argument anywhere on
+        # Query.anime or Query.searchAnimeByTitle (checked against
+        # kitsu-server's app/graphql/types/query_type.rb) -- season
+        # search genuinely isn't possible over this API. search()
+        # delegates SEASON to the REST client instead of leaving it
+        # unsupported here -- see search()'s SEASON branch.
+        'search_methods': [utils.SearchMethod.KW, utils.SearchMethod.SEASON],
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -234,6 +236,13 @@ class libkitsu_graphql(lib):
 
         self.username = account['username']
         self.password = account['password']
+
+        # Kept only to lazily build a REST libkitsu fallback for season
+        # search (see search()'s SEASON branch) -- the base class doesn't
+        # store these itself.
+        self._messenger = messenger
+        self._account = account
+        self._rest_fallback = None
 
         self.opener = urllib.request.build_opener()
         self.opener.addheaders = [
@@ -490,6 +499,21 @@ class libkitsu_graphql(lib):
 
     def search(self, query_text, method):
         self.check_credentials()
+
+        if method == utils.SearchMethod.SEASON:
+            # Kitsu's GraphQL schema has no season/year argument anywhere
+            # (see mediatypes['anime']'s comment) -- the REST API does,
+            # so delegate rather than leaving Seasons unusable for
+            # GraphQL-backend accounts. Shares this instance's
+            # messenger/account/userconfig, so the REST client picks up
+            # the access token already on hand (same OAuth client_id/
+            # secret/token endpoint as this class -- one Kitsu login,
+            # not two) instead of re-authenticating from scratch.
+            if self._rest_fallback is None:
+                self._rest_fallback = libkitsu(
+                    self._messenger, self._account, self.userconfig)
+            return self._rest_fallback.search(query_text, method)
+
         self.msg.info("Searching for %s..." % query_text)
 
         search_field = 'searchMangaByTitle' if self.mediatype == 'manga' else 'searchAnimeByTitle'
