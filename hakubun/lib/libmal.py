@@ -441,6 +441,10 @@ class libmal(lib):
             'start_date': self._str2date(item.get('start_date')),
             'end_date': self._str2date(item.get('end_date')),
             'platform_score': score,
+            'score_raw': item.get('mean'),
+            # MAL's own popularity rank -- lower is more popular. Used
+            # for the Seasons page's Sort by: Popularity.
+            'popularity': item.get('popularity'),
             'airing_time': airing_time,
             'extra': [
                 ('English',         item['alternative_titles'].get('en')),

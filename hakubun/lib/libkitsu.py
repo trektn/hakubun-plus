@@ -631,6 +631,11 @@ class libkitsu(lib):
             'status':      self.status_translate.get(attr['status'], utils.Status.UNKNOWN),
             'platform_score': (
                 '%.2f%%' % float(attr['averageRating']) if attr.get('averageRating') else None),
+            'score_raw': float(attr['averageRating']) if attr.get('averageRating') else None,
+            # Kitsu's own "rank by popularity" -- lower is more popular,
+            # same convention MAL's 'popularity' field uses. Used for the
+            # Seasons page's Sort by: Popularity.
+            'popularity': attr.get('popularityRank'),
             'duration': attr.get('episodeLength'),
             'url': "https://kitsu.app/{}/{}".format(self.mediatype, attr['slug']),
             'aliases':     list(filter(None, attr['titles'].values())),

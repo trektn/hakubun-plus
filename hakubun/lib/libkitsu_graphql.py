@@ -167,6 +167,10 @@ class libkitsu_graphql(lib):
       id
       slug
       averageRating
+      # Kitsu's own "rank by popularity" -- lower is more popular, same
+      # convention as MAL's and the REST client's popularityRank. Used
+      # for the Seasons page's Sort by: Popularity.
+      userCountRank
       startDate
       endDate
       status
@@ -725,6 +729,8 @@ class libkitsu_graphql(lib):
                 (subtype or '').upper(), utils.Type.UNKNOWN),
             'status':      status,
             'platform_score': platform_score,
+            'score_raw':   float(average) if average else None,
+            'popularity':  media.get('userCountRank'),
             'duration':    media.get('episodeLength'),
             'mal_id':      self._mal_id_from_mappings(media.get('mappings')),
             'url': "https://kitsu.app/{}/{}".format(
