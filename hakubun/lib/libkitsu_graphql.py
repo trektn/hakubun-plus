@@ -46,6 +46,7 @@ import urllib.request
 
 from hakubun import utils
 from hakubun.lib.lib import lib
+from hakubun.lib.libkitsu import libkitsu
 
 
 class libkitsu_graphql(lib):
@@ -96,6 +97,13 @@ class libkitsu_graphql(lib):
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
         'score_step': 0.5,
+        # Kitsu's GraphQL schema has no season/year argument anywhere on
+        # Query.anime or Query.searchAnimeByTitle (checked against
+        # kitsu-server's app/graphql/types/query_type.rb) -- season
+        # search genuinely isn't possible over this API. search()
+        # delegates SEASON to the REST client instead of leaving it
+        # unsupported here -- see search()'s SEASON branch.
+        'search_methods': [utils.SearchMethod.KW, utils.SearchMethod.SEASON],
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -118,6 +126,7 @@ class libkitsu_graphql(lib):
         },
         'score_max': 5,
         'score_step': 0.5,
+        'search_methods': [utils.SearchMethod.KW],
     }
 
     oauth_url = 'https://kitsu.app/api/oauth/token'
@@ -160,6 +169,10 @@ class libkitsu_graphql(lib):
       id
       slug
       averageRating
+      # Kitsu's own "rank by popularity" -- lower is more popular, same
+      # convention as MAL's and the REST client's popularityRank. Used
+      # for the Seasons page's Sort by: Popularity.
+      userCountRank
       startDate
       endDate
       status
@@ -210,11 +223,11 @@ class libkitsu_graphql(lib):
         if include_description:
             fields += self._MEDIA_DETAIL_FIELDS
         if concrete == 'anime':
-            return fields + '\n      subtype\n      episodeCount\n'
+            return fields + '\n      subtype\n      episodeCount\n      episodeLength\n'
         if concrete == 'manga':
             return fields + '\n      subtype\n      chapterCount\n'
         return fields + '''
-      ... on Anime { subtype episodeCount }
+      ... on Anime { subtype episodeCount episodeLength }
       ... on Manga { subtype chapterCount }
     '''
 
@@ -223,6 +236,13 @@ class libkitsu_graphql(lib):
 
         self.username = account['username']
         self.password = account['password']
+
+        # Kept only to lazily build a REST libkitsu fallback for season
+        # search (see search()'s SEASON branch) -- the base class doesn't
+        # store these itself.
+        self._messenger = messenger
+        self._account = account
+        self._rest_fallback = None
 
         self.opener = urllib.request.build_opener()
         self.opener.addheaders = [
@@ -481,6 +501,21 @@ class libkitsu_graphql(lib):
 
     def search(self, query_text, method):
         self.check_credentials()
+
+        if method == utils.SearchMethod.SEASON:
+            # Kitsu's GraphQL schema has no season/year argument anywhere
+            # (see mediatypes['anime']'s comment) -- the REST API does,
+            # so delegate rather than leaving Seasons unusable for
+            # GraphQL-backend accounts. Shares this instance's
+            # messenger/account/userconfig, so the REST client picks up
+            # the access token already on hand (same OAuth client_id/
+            # secret/token endpoint as this class -- one Kitsu login,
+            # not two) instead of re-authenticating from scratch.
+            if self._rest_fallback is None:
+                self._rest_fallback = libkitsu(
+                    self._messenger, self._account, self.userconfig)
+            return self._rest_fallback.search(query_text, method)
+
         self.msg.info("Searching for %s..." % query_text)
 
         search_field = 'searchMangaByTitle' if self.mediatype == 'manga' else 'searchAnimeByTitle'
@@ -623,6 +658,7 @@ class libkitsu_graphql(lib):
         show['status'] = info['status']
         show['type'] = info['type']
         show['platform_score'] = info['platform_score']
+        show['duration'] = info.get('duration')
         # Carry the cross-referenced MAL id through so the engine's MAL
         # score feature works for Kitsu accounts too.
         show['mal_id'] = info.get('mal_id')
@@ -726,7 +762,7 @@ class libkitsu_graphql(lib):
         genres = self._category_titles(media.get('categories'))
         studios = self._production_studios(media.get('productions'))
         season = self._season_from_date(media.get('startDate'))
-        platform_score = '%.0f%%' % float(average) if average else None
+        platform_score = '%.2f%%' % float(average) if average else None
 
         age_rating = None
         if media.get('ageRating'):
@@ -746,6 +782,11 @@ class libkitsu_graphql(lib):
                 (subtype or '').upper(), utils.Type.UNKNOWN),
             'status':      status,
             'platform_score': platform_score,
+            'score_raw':   float(average) if average else None,
+            'popularity':  media.get('userCountRank'),
+            'popularity_label': (
+                '#%d' % media['userCountRank'] if media.get('userCountRank') else None),
+            'duration':    media.get('episodeLength'),
             'mal_id':      self._mal_id_from_mappings(media.get('mappings')),
             'url': "https://kitsu.app/{}/{}".format(
                 self.mediatype, media.get('slug')),

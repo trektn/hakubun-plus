@@ -16,13 +16,15 @@
 
 import base64
 import os
+import urllib.parse
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtGui import QAction, QActionGroup
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox,
-                             QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-                             QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
+                             QDateEdit, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                             QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                             QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar,
+                             QPushButton, QSizePolicy, QSpinBox, QStackedWidget, QStyle,
                              QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
                              QWidget)
 
@@ -33,12 +35,23 @@ from hakubun.sync import present
 from hakubun.ui.qt.accounts import AccountDialog
 from hakubun.ui.qt.add import AddDialog
 from hakubun.ui.qt.airing import AiringScheduleDialog
+from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.details import DetailsDialog
+from hakubun.ui.qt.models import ShowListModel
 from hakubun.ui.qt.nowplaying import NowPlayingWidget
+from hakubun.ui.qt.search import SearchWidget
+from hakubun.ui.qt.seasons import SeasonsWidget
 from hakubun.ui.qt.settings import SettingsDialog
+from hakubun.ui.qt.stats import StatisticsWidget
 from hakubun.ui.qt.util import FilterBar, getIcon
 from hakubun.ui.qt.widgets import HoverProgressBar, PlaybackBar, ScoreSlider, ShowsTableView
 from hakubun.ui.qt.workers import EngineWorker, ImageWorker
+
+# Not a real version bump -- just a build identifier for this working
+# branch, so it's obvious at a glance (in About) whether you're running
+# this in-progress Taiga-mode revamp or an actual release build.
+DEV_BUILD_ID = 'retaiga'
+
 
 class MainWindow(QMainWindow):
     """
@@ -58,6 +71,22 @@ class MainWindow(QMainWindow):
     show_lists = None
     finish = False
     was_maximized = False
+
+    # Taiga mode's row context menu "Search" submenu (res/menu.xml,
+    # "Search" -- ported minus the two torrent-search entries). {title}
+    # is URL-quoted before formatting, see s_search_online().
+    _SEARCH_ONLINE_SITES = (
+        ('AniDB', 'https://anidb.net/perl-bin/animedb.pl?show=animelist&adb.search={title}'
+                  '&noalias=1&do.update=update'),
+        ('AniList', 'https://anilist.co/search/anime?sort=SEARCH_MATCH&search={title}'),
+        ('Anime News Network', 'https://www.animenewsnetwork.com/search?q={title}'),
+        ('Kitsu', 'https://kitsu.io/anime?text={title}'),
+        ('MyAnimeList', 'https://myanimelist.net/anime.php?q={title}'),
+        ('Reddit', 'https://www.reddit.com/search?sort=new&q=subreddit%3Aanime+title%3A'
+                   '{title}+episode+discussion'),
+        ('Wikipedia', 'https://en.wikipedia.org/wiki/Special:Search?search={title}'),
+        ('YouTube', 'https://www.youtube.com/results?search_query={title}'),
+    )
 
     # Multi-sync owner-score editing state. When the selected show's
     # Score is owned by another provider (and the entry is shared), the
@@ -282,9 +311,9 @@ class MainWindow(QMainWindow):
             # Hakubun+'s -- File/Services/Tools/Help instead of
             # Show/List/Mediatype/Options/Help. Actions that don't have
             # a natural home in that structure (undo/redo, rescan,
-            # mediatype switch, switch account) stay reachable via
-            # File > Library folders or their existing shortcuts rather
-            # than disappearing outright.
+            # mediatype switch) stay reachable via File > Library folders
+            # or their existing shortcuts rather than disappearing
+            # outright.
             self.menu_library_folders = QMenu('Library folders', self)
             self.menu_mediatype = QMenu('Mediatype', self)
             self.mediatype_actiongroup = QActionGroup(self)
@@ -296,12 +325,13 @@ class MainWindow(QMainWindow):
             menu_file.addMenu(self.menu_mediatype)
             menu_file.addAction(action_play_random)
             menu_file.addSeparator()
-            menu_file.addAction(self.action_reload)
-            menu_file.addSeparator()
             menu_file.addAction(action_quit)
 
             self.menu_services = menubar.addMenu('&Services')
             self.menu_services.addAction(self.action_sync)
+            # Switch Account lives here rather than File -- it's account
+            # management, same as everything else in this menu.
+            self.menu_services.addAction(self.action_reload)
             self.menu_services.addSeparator()
             # The per-service section (profile/stats/history links) is
             # built in _rebuild_services_menu() once the active
@@ -324,7 +354,7 @@ class MainWindow(QMainWindow):
                           action_scan_library, action_rescan_library):
                 self.addAction(action)
 
-            toolbar = self.addToolBar('Main')
+            self.taiga_toolbar = toolbar = self.addToolBar('Main')
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             toolbar.addAction(self.action_sync)
@@ -374,6 +404,44 @@ class MainWindow(QMainWindow):
         self.menu_show_context = QMenu()
         self.menu_show_context.addMenu(self.menu_play)
         self.menu_show_context.addAction(self.action_details)
+        if self._taiga_mode:
+            # Real Taiga's row context menu (res/menu.xml, "RightClick")
+            # has a "Search" submenu of external sites here, using the
+            # show's title -- ported the non-torrent entries (skips
+            # "Custom RSS feed"/"Nyaa.si", out of scope). Pure URL-
+            # opening, no engine dependency.
+            self.menu_search_online = QMenu('Search', self)
+            for site_name, url_template in self._SEARCH_ONLINE_SITES:
+                action = self.menu_search_online.addAction(site_name)
+                action.triggered.connect(
+                    lambda checked=False, u=url_template: self.s_search_online(u))
+            self.menu_show_context.addMenu(self.menu_search_online)
+
+            # Real Taiga's Edit submenu has a quick-pick "Set score"
+            # radio list (res/menu.xml, "EditScore") -- fixed 0-10
+            # there since Taiga is MAL/Kitsu-centric, but hakubun also
+            # has AniList's 100-point scale, so this is populated (and
+            # re-populated on reload) in _rebuild_statuses() once
+            # mediainfo['score_max'/'score_step'] are known, rather
+            # than hardcoded here.
+            self.menu_quick_score = QMenu('Set score', self)
+            self.menu_show_context.addMenu(self.menu_quick_score)
+
+            # Real Taiga's Edit submenu also has "Set date started"/"Set
+            # date completed" quick submenus (res/menu.xml,
+            # "EditDateStarted"/"EditDateCompleted") offering shortcuts
+            # like "Set to date started airing" -- skips "Clear" (the
+            # engine's set_dates() has no clear capability, same
+            # limitation already noted on the Details tab's date
+            # checkboxes). Content is per-show, so it's rebuilt just
+            # before the menu is shown rather than once here.
+            self.menu_quick_date_started = QMenu('Set date started', self)
+            self.action_quick_date_started = self.menu_show_context.addMenu(
+                self.menu_quick_date_started)
+            self.menu_quick_date_completed = QMenu('Set date completed', self)
+            self.action_quick_date_completed = self.menu_show_context.addMenu(
+                self.menu_quick_date_completed)
+            self.menu_show_context.aboutToShow.connect(self._rebuild_quick_date_menus)
         self.menu_show_context.addMenu(self.menu_move_to)
         self.menu_show_context.addAction(action_open_folder)
         self.menu_show_context.addAction(self.action_set_folder)
@@ -460,8 +528,23 @@ class MainWindow(QMainWindow):
             self.s_show_menu_columns)
         self.view.horizontalHeader().sortIndicatorChanged.connect(self.s_update_sort)
         self.view.selectionModel().currentRowChanged.connect(self.s_show_selected)
-        self.view.itemDelegate().setBarStyle(
-            self.config['episodebar_style'], self.config['episodebar_text'])
+        if self._taiga_mode:
+            # Real Taiga always shows the episode count (e.g. "7/12",
+            # not a percentage) directly on its progress bars, with
+            # markers for downloaded episodes -- not a user preference
+            # there the way episodebar_style/episodebar_text are here.
+            # BarStyle04 (the usual default) never draws text at all
+            # regardless of show_text, so this needs BarStyleHybrid
+            # specifically to get both the episode markers and text.
+            self.view.itemDelegate().setBarStyle(
+                ShowsTableDelegate.BarStyleHybrid, True, text_fraction=True)
+            # Hover +/- episode buttons, ported from the win32 1.4
+            # codebase's AnimeListDialog::ListView (dlg_anime_list.cpp)
+            # -- the current Qt rewrite doesn't have these at all.
+            self.view.itemDelegate().setShowButtons(True)
+        else:
+            self.view.itemDelegate().setBarStyle(
+                self.config['episodebar_style'], self.config['episodebar_text'])
         self.view.middleClicked.connect(lambda: self.s_play(True))
         self.view.doubleClicked.connect(self.s_show_details)
         self._apply_view()
@@ -489,7 +572,20 @@ class MainWindow(QMainWindow):
                             'mal_score': 16}
 
         for i, column_name in enumerate(self.view.model().sourceModel().columns):
-            action = QAction(column_name, self, checkable=True)
+            if self._taiga_mode and i == ShowListModel.COL_MY_PROGRESS:
+                # Hidden by default in Taiga mode (redundant with
+                # Percent, itself renamed to "Progress" -- see
+                # _init_view()) -- leaving this in the menu would offer
+                # two same-named, easy-to-confuse "Progress" entries.
+                continue
+
+            # This menu is built before _init_view() renames Percent to
+            # "Progress" for Taiga mode -- match that name here too, or
+            # this entry would read "Percent" while the header (and the
+            # column it toggles) actually says "Progress".
+            label = 'Progress' if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
+                else column_name
+            action = QAction(label, self, checkable=True)
             action.setData(i)
             if column_name in self.api_config['visible_columns']:
                 action.setChecked(True)
@@ -601,6 +697,61 @@ class MainWindow(QMainWindow):
         self.show_status.setToolTip('Change your watching status of this show')
         self.show_status.currentIndexChanged.connect(self.s_set_status)
 
+        if self._taiga_mode:
+            # Never wired into any UI before Taiga mode's Edit tab --
+            # the engine's set_dates() already supports this, it just
+            # had nowhere to live. Unlike Rewatching/Times rewatched/
+            # Notes (also on real Taiga's equivalent screen), there's no
+            # engine support for those at all, so they're left out
+            # rather than faked. Folder *is* now backed by the engine
+            # (set_show_folder/unset_show_folder) -- see below.
+            #
+            # A checkbox gates each date, matching real Taiga's own
+            # dialog -- QDateEdit has no "empty" state, so without this
+            # an unset date (e.g. "Date completed" on a show still being
+            # watched) would otherwise always show *some* date and look
+            # like it was actually recorded. Unchecked = disabled/unset,
+            # checked = editable and committed via set_dates(). Note the
+            # engine only supports setting a date, not clearing one (see
+            # set_dates()'s docstring), so unchecking never tries to
+            # clear it server-side -- it just stops implying a date
+            # exists locally.
+            self.show_start_date_check = QCheckBox()
+            self.show_start_date_check.setToolTip('Whether a start date is recorded')
+            self.show_start_date = QDateEdit()
+            self.show_start_date.setCalendarPopup(True)
+            self.show_start_date.setDisplayFormat('yyyy-MM-dd')
+            self.show_start_date.setToolTip('Date you started watching this show')
+            self.show_start_date_check.toggled.connect(self.s_toggle_start_date)
+            self.show_start_date.dateChanged.connect(self.s_set_start_date)
+
+            self.show_finish_date_check = QCheckBox()
+            self.show_finish_date_check.setToolTip('Whether a completion date is recorded')
+            self.show_finish_date = QDateEdit()
+            self.show_finish_date.setCalendarPopup(True)
+            self.show_finish_date.setDisplayFormat('yyyy-MM-dd')
+            self.show_finish_date.setToolTip('Date you finished watching this show')
+            self.show_finish_date_check.toggled.connect(self.s_toggle_finish_date)
+            self.show_finish_date.dateChanged.connect(self.s_set_finish_date)
+
+            # Manually pin this show to a local folder, bypassing
+            # filename-based guessing entirely -- the escape hatch for a
+            # folder whose naming the parser/guesser can't match. Real
+            # Taiga's own Anime Information dialog has this as an
+            # editable path field; ours is read-only (set only via the
+            # folder picker) since typing a path needs to actually
+            # trigger a scan (set_show_folder), not just change text.
+            self.show_folder_edit = QLineEdit()
+            self.show_folder_edit.setReadOnly(True)
+            self.show_folder_edit.setPlaceholderText('Not set')
+            self.show_folder_edit.setToolTip(
+                "Local folder manually pinned to this show, bypassing "
+                "filename guessing -- for folders the parser can't match.")
+            self.show_folder_browse_btn = QPushButton('Browse...')
+            self.show_folder_browse_btn.clicked.connect(self.s_set_folder)
+            self.show_folder_clear_btn = QPushButton('Clear')
+            self.show_folder_clear_btn.clicked.connect(self.s_clear_folder)
+
         # Hidden entirely until something's actually playing -- see
         # _update_now_playing_sidebar().
         self.now_playing_group = QGroupBox('Now Playing')
@@ -643,15 +794,12 @@ class MainWindow(QMainWindow):
         left_box.addRow(self.show_image)
 
         if self._taiga_mode:
-            # Taiga's sidebar only shows the picture, the mode caption,
-            # and whatever's playing (progress + play controls). Every
+            # Taiga's sidebar only shows the picture and whatever's
+            # playing (progress + play controls). Page navigation lives
+            # in the nav column (self.taiga_nav) instead of here. Every
             # other editing control (progress spinbox, score, status,
             # tags) moves into a second "Edit" tab in the Details
             # dialog instead -- see s_show_details().
-            self.taiga_mode_label = QLabel('Taiga Mode')
-            self.taiga_mode_label.setAlignment(
-                QtCore.Qt.AlignmentFlag.AlignCenter)
-            left_box.addRow(self.taiga_mode_label)
 
             # show_dec_btn/show_inc_btn are already overlaid on the bar
             # itself (see HoverProgressBar) -- just add the bar.
@@ -661,49 +809,81 @@ class MainWindow(QMainWindow):
             small_btns_hbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             left_box.addRow(small_btns_hbox)
 
-            # Switches the main content area between the show list and
-            # the dedicated Now Playing screen -- see _on_view_mode.
-            self.action_view_anime_list = QPushButton('Anime List')
-            self.action_view_anime_list.setCheckable(True)
-            self.action_view_anime_list.setChecked(True)
-            self.action_view_now_playing = QPushButton('Now Playing')
-            self.action_view_now_playing.setCheckable(True)
-            self.view_mode_group = QButtonGroup(self)
-            self.view_mode_group.setExclusive(True)
-            self.view_mode_group.addButton(self.action_view_anime_list)
-            self.view_mode_group.addButton(self.action_view_now_playing)
-            self.view_mode_group.buttonClicked.connect(self._on_view_mode_changed)
+            # Single-column label+field form, matching real Taiga's own
+            # Anime Information dialog (win32 1.4's dlg_anime_info_page
+            # and the unreleased Qt rewrite's media_dialog are both
+            # plain top-down forms, not a side-by-side field grid) --
+            # a QGridLayout here previously let one row's expanding
+            # widget (e.g. the Status combo) stretch its column and
+            # drag unrelated fields in other rows out of place.
+            # Skips Times rewatched/Rewatching/Notes -- real Taiga has
+            # these too, but hakubun's engine has no equivalent data for
+            # them, and faking fields with nothing behind them would be
+            # worse than not having them. Folder *is* backed by the
+            # engine (set_show_folder/unset_show_folder).
+            section_label = QLabel('<b>Anime list</b>')
 
-            view_mode_hbox = QHBoxLayout()
-            view_mode_hbox.addWidget(self.action_view_now_playing)
-            view_mode_hbox.addWidget(self.action_view_anime_list)
-            left_box.addRow(view_mode_hbox)
+            form = QFormLayout()
+            form.setContentsMargins(0, 8, 0, 0)
+            form.setHorizontalSpacing(12)
+            form.setVerticalSpacing(8)
 
-            # In Taiga mode the show list has no sidebar to hang this
-            # off, and the right-click Set/Clear folder actions give no
-            # feedback about what's currently pinned -- so the Edit tab
-            # is the one place a pinned folder is visible next to the
-            # controls that change it.
-            self.taiga_folder_label = QLabel()
-            self.taiga_folder_label.setWordWrap(True)
-            self.taiga_folder_label.setTextFormat(
-                QtCore.Qt.TextFormat.PlainText)
-            self.taiga_folder_label.setTextInteractionFlags(
-                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.taiga_folder_label.setStyleSheet(
-                'color: palette(placeholder-text);')
+            # Each row ends in addStretch(1) -- QAbstractSpinBox/
+            # QPushButton/QComboBox default to a Preferred horizontal
+            # size policy (not Fixed), so without something to soak up
+            # the field column's leftover width, QFormLayout stretches
+            # them individually across the row instead of leaving them
+            # at their natural size.
+            progress_row = QHBoxLayout()
+            progress_row.addWidget(self.show_progress)
+            progress_row.addWidget(self.show_progress_btn)
+            progress_row.addStretch(1)
+            form.addRow(show_progress_label, progress_row)
 
-            edit_form = QFormLayout()
-            edit_form.addRow(show_progress_label)
-            edit_form.addRow(self.show_progress, self.show_progress_btn)
-            edit_form.addRow(show_score_label)
-            edit_form.addRow(self.show_score)
-            edit_form.addRow(self.show_score_system)
-            edit_form.addRow(self.show_status)
-            edit_form.addRow(self.show_tags_btn)
-            edit_form.addRow('Folder:', self.taiga_folder_label)
+            score_row = QHBoxLayout()
+            score_row.addWidget(self.show_score)
+            score_row.addWidget(self.show_score_btn)
+            score_row.addStretch(1)
+            form.addRow(show_score_label, score_row)
+            # Hidden until _set_score_editor finds a shared entry whose
+            # Score is owned by another provider -- same widget the
+            # classic-mode sidebar uses (left_box.addRow below), just
+            # not previously reachable from Taiga mode's Edit tab at all.
+            form.addRow(self.show_score_system)
+
+            self.show_status.setMinimumWidth(150)
+            status_row = QHBoxLayout()
+            status_row.addWidget(self.show_status)
+            status_row.addStretch(1)
+            form.addRow(QLabel('Status:'), status_row)
+
+            start_date_row = QHBoxLayout()
+            start_date_row.addWidget(self.show_start_date_check)
+            start_date_row.addWidget(self.show_start_date)
+            start_date_row.addStretch(1)
+            form.addRow(QLabel('Date started:'), start_date_row)
+
+            finish_date_row = QHBoxLayout()
+            finish_date_row.addWidget(self.show_finish_date_check)
+            finish_date_row.addWidget(self.show_finish_date)
+            finish_date_row.addStretch(1)
+            form.addRow(QLabel('Date completed:'), finish_date_row)
+
+            folder_row = QHBoxLayout()
+            folder_row.addWidget(self.show_folder_edit, 1)
+            folder_row.addWidget(self.show_folder_browse_btn)
+            folder_row.addWidget(self.show_folder_clear_btn)
+            form.addRow(QLabel('Folder:'), folder_row)
+
+            edit_layout = QVBoxLayout()
+            edit_layout.addWidget(section_label)
+            edit_layout.addLayout(form)
+            edit_layout.addSpacing(8)
+            edit_layout.addWidget(self.show_tags_btn)
+            edit_layout.addStretch(1)
+
             self.taiga_edit_widget = QWidget()
-            self.taiga_edit_widget.setLayout(edit_form)
+            self.taiga_edit_widget.setLayout(edit_layout)
         else:
             small_btns_hbox.addWidget(self.show_dec_btn)
             small_btns_hbox.addWidget(self.show_play_btn)
@@ -722,29 +902,43 @@ class MainWindow(QMainWindow):
             left_box.addRow(self.show_status)
             left_box.addRow(self.show_tags_btn)
 
-        filter_bar_box_layout.addWidget(
-            QLabel('Search:' if self._taiga_mode else 'Filter:'))
-        filter_bar_box_layout.addWidget(self.show_filter)
-        filter_bar_box_layout.addWidget(QLabel('Invert'))
-        filter_bar_box_layout.addWidget(self.show_filter_invert)
-        filter_bar_box_layout.addWidget(QLabel('Case Sensitive'))
-        filter_bar_box_layout.addWidget(self.show_filter_casesens)
-        self.filter_bar_box.setLayout(filter_bar_box_layout)
+        if self._taiga_mode:
+            # Real Taiga's search box lives in the toolbar, top-right --
+            # not a separate row above/below the list, and with no
+            # Invert/Case Sensitive toggles (not part of Taiga's UI at
+            # all). The underlying proxy model still defaults to
+            # non-inverted, case-insensitive filtering; show_filter_invert/
+            # show_filter_casesens are simply never shown or checked in
+            # this mode, so they stay at that default.
+            self.show_filter.setFixedWidth(200)
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            self.taiga_toolbar.addWidget(spacer)
+            self.taiga_toolbar.addWidget(self.show_filter)
 
-        if self.config['filter_bar_position'] is FilterBar.PositionHidden:
             self.list_box.addWidget(self.notebook)
             self.list_box.addWidget(self.view)
-            self.filter_bar_box.hide()
-        elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
-            self.list_box.addWidget(self.filter_bar_box)
-            self.list_box.addWidget(self.notebook)
-            self.list_box.addWidget(self.view)
-        elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
-            self.list_box.addWidget(self.notebook)
-            self.list_box.addWidget(self.view)
-            self.list_box.addWidget(self.filter_bar_box)
+        else:
+            filter_bar_box_layout.addWidget(QLabel('Filter:'))
+            filter_bar_box_layout.addWidget(self.show_filter)
+            filter_bar_box_layout.addWidget(QLabel('Invert'))
+            filter_bar_box_layout.addWidget(self.show_filter_invert)
+            filter_bar_box_layout.addWidget(QLabel('Case Sensitive'))
+            filter_bar_box_layout.addWidget(self.show_filter_casesens)
+            self.filter_bar_box.setLayout(filter_bar_box_layout)
 
-        main_hbox.addLayout(left_box)
+            if self.config['filter_bar_position'] is FilterBar.PositionHidden:
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+                self.filter_bar_box.hide()
+            elif self.config['filter_bar_position'] is FilterBar.PositionAboveLists:
+                self.list_box.addWidget(self.filter_bar_box)
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+            elif self.config['filter_bar_position'] is FilterBar.PositionBelowLists:
+                self.list_box.addWidget(self.notebook)
+                self.list_box.addWidget(self.view)
+                self.list_box.addWidget(self.filter_bar_box)
 
         if self._taiga_mode:
             list_page = QWidget()
@@ -756,11 +950,57 @@ class MainWindow(QMainWindow):
             self.now_playing_widget.playRandomRequested.connect(self.s_play_random)
 
             self.content_stack = QStackedWidget()
-            self.content_stack.addWidget(list_page)
-            self.content_stack.addWidget(self.now_playing_widget)
+            self._taiga_pages = {}
 
+            # Persistent page-navigation column, separate from the
+            # per-show info panel in left_box -- mirrors real Taiga's
+            # sidebar (Anime List / Now Playing / ... as destinations,
+            # not editing controls).
+            self.taiga_nav = QListWidget()
+            self.taiga_nav.setObjectName('taiga_nav')
+            self.taiga_nav.setFrameShape(QFrame.Shape.NoFrame)
+            self.taiga_nav.setFixedWidth(160)
+            self.taiga_nav.currentItemChanged.connect(self._on_taiga_nav_changed)
+
+            self.seasons_widget = SeasonsWidget(self, self.worker)
+            self.search_widget = SearchWidget(self, self.worker)
+            self.stats_widget = StatisticsWidget(
+                self, self.worker, bar_color=self.config['colors']['progress_fg'])
+
+            # Grouping matches real Taiga's sidebar: Now Playing on its
+            # own, then list-management pages, then discovery pages
+            # (History/Torrents omitted -- no data model for the
+            # former, the latter out of scope entirely).
+            self._add_taiga_page('now_playing', 'Now Playing', 'media-playback-start',
+                                  self.now_playing_widget)
+            self._add_taiga_separator()
+            self._add_taiga_page('list', 'Anime List', 'view-list-details', list_page)
+            self._add_taiga_page('stats', 'Statistics', 'view-statistics', self.stats_widget)
+            self._add_taiga_separator()
+            self._add_taiga_page('search', 'Search', 'edit-find', self.search_widget)
+            # 'view-calendar' is already used by the Airing Schedule action
+            # below and there's no calendar icon in Taiga's own set to give
+            # this row instead -- 'view-grid' matches the Seasons page's
+            # actual card-grid layout and has a real Taiga equivalent.
+            self._add_taiga_page('seasons', 'Seasons', 'view-grid', self.seasons_widget)
+
+            # Only the Anime List page has a "currently selected show" to
+            # show quick info/actions for -- Now Playing already shows a
+            # full-size version of the same thing via now_playing_widget,
+            # and Seasons has no selected-show relationship at all. Kept
+            # as a widget (not added straight as a layout) so it can be
+            # hidden per-page without the empty-poster "double sidebar"
+            # look on pages it's irrelevant to.
+            self.taiga_info_panel = QWidget()
+            self.taiga_info_panel.setLayout(left_box)
+
+            main_hbox.addWidget(self.taiga_nav)
+            main_hbox.addWidget(self.taiga_info_panel)
             main_hbox.addWidget(self.content_stack, 1)
+
+            self._set_taiga_page('list')
         else:
+            main_hbox.addLayout(left_box)
             main_hbox.addLayout(self.list_box, 1)
 
         main_layout.addLayout(top_hbox)
@@ -784,6 +1024,19 @@ class MainWindow(QMainWindow):
         action_hide = QAction('Show/Hide', self)
         action_hide.triggered.connect(self.s_hide)
         tray_menu.addAction(action_hide)
+        if self._taiga_mode:
+            # Real Taiga's tray menu (res/menu.xml, "Tray") also carries
+            # Folders/Services/Settings -- reuses the same menu objects
+            # already built and kept live for the menu bar (a QMenu can
+            # be referenced as a submenu from more than one parent),
+            # rather than building a second copy that would need its
+            # own separate refresh calls.
+            tray_menu.addSeparator()
+            tray_menu.addMenu(self.menu_library_folders)
+            tray_menu.addMenu(self.menu_services)
+            tray_menu.addSeparator()
+            tray_menu.addAction(action_settings)
+            tray_menu.addSeparator()
         tray_menu.addAction(action_quit)
 
         self.tray = QSystemTrayIcon(self.windowIcon())
@@ -933,6 +1186,18 @@ class MainWindow(QMainWindow):
         self.show_dec_btn.setEnabled(enable)
         self.show_play_btn.setEnabled(enable)
         self.show_status.setEnabled(enable)
+        if self._taiga_mode:
+            date_enabled = bool(self.mediainfo and self.mediainfo.get('can_date') and enable)
+            self.show_start_date_check.setEnabled(date_enabled)
+            self.show_finish_date_check.setEnabled(date_enabled)
+            # The date picker itself only unlocks once its checkbox says
+            # a date actually exists -- see _select_show/s_toggle_*_date.
+            self.show_start_date.setEnabled(date_enabled and self.show_start_date_check.isChecked())
+            self.show_finish_date.setEnabled(date_enabled and self.show_finish_date_check.isChecked())
+            folder_enabled = bool(self.mediainfo and self.mediainfo.get('can_play') and enable)
+            self.show_folder_browse_btn.setEnabled(folder_enabled)
+            self.show_folder_clear_btn.setEnabled(
+                folder_enabled and bool(self.show_folder_edit.text()))
         self.action_play_next.setEnabled(enable)
         self.action_play_dialog.setEnabled(enable)
         self.action_altname.setEnabled(enable)
@@ -1013,6 +1278,11 @@ class MainWindow(QMainWindow):
                 self.tray.setIcon(self.windowIcon())
 
     def _apply_filter_bar(self):
+        if self._taiga_mode:
+            # Taiga mode's search box lives permanently in the toolbar,
+            # not the classic filter_bar_box -- filter_bar_position
+            # isn't applicable here.
+            return
         self.list_box.removeWidget(self.filter_bar_box)
         self.list_box.removeWidget(self.notebook)
         self.list_box.removeWidget(self.view)
@@ -1069,6 +1339,9 @@ class MainWindow(QMainWindow):
 
         self.notebook.addTab("All")
 
+        if self._taiga_mode:
+            self._rebuild_quick_score_menu()
+
         self.show_status.blockSignals(False)
         self.notebook.blockSignals(False)
 
@@ -1090,10 +1363,10 @@ class MainWindow(QMainWindow):
                 lambda checked=False, f=folder: utils.open_folder(f))
 
     def _rebuild_services_menu(self):
-        # Trim back to the "Sync lists" action + separator built in
-        # start(); everything after that is the per-service section,
+        # Trim back to the Sync/Switch Account actions + separator built
+        # in start(); everything after that is the per-service section,
         # rebuilt here once the active account's API/username are known.
-        for action in self.menu_services.actions()[2:]:
+        for action in self.menu_services.actions()[3:]:
             self.menu_services.removeAction(action)
 
         api = self.account['api']
@@ -1128,6 +1401,84 @@ class MainWindow(QMainWindow):
     def _set_show_status_from_menu(self, status):
         if self.selected_show_id:
             self._set_show_status(self.selected_show_id, status)
+
+    def _rebuild_quick_score_menu(self):
+        self.menu_quick_score.clear()
+
+        display_max, _step, decimals = utils.score_display_range(self.mediainfo)
+        if not display_max:
+            return
+
+        # 11 evenly-spaced picks (0 through display_max) regardless of
+        # scale, rather than Taiga's fixed 0-10 -- that assumes a
+        # 10-point scale, which doesn't hold for e.g. AniList's 0-100.
+        for i in range(11):
+            display_value = display_max * i / 10
+            label = ('No Score' if i == 0 else '(%s)' % (
+                ('%.*f' % (decimals, display_value)).rstrip('0').rstrip('.')
+                if decimals else str(int(display_value))))
+            raw_value = utils.score_to_raw(display_value, self.mediainfo)
+            action = self.menu_quick_score.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, v=raw_value: self.s_set_quick_score(v))
+
+    def s_set_quick_score(self, raw_value):
+        if self.selected_show_id:
+            self.s_set_score(self.selected_show_id, raw_value)
+
+    def _rebuild_quick_date_menus(self):
+        self.menu_quick_date_started.clear()
+        self.menu_quick_date_completed.clear()
+
+        date_enabled = bool(
+            self.selected_show_id and self.mediainfo and self.mediainfo.get('can_date'))
+        self.action_quick_date_started.setEnabled(date_enabled)
+        self.action_quick_date_completed.setEnabled(date_enabled)
+        if not date_enabled:
+            return
+
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+
+        if show.get('start_date'):
+            action = self.menu_quick_date_started.addAction('Set to date started airing')
+            action.triggered.connect(
+                lambda checked=False, d=show['start_date']: self._quick_set_start_date(d))
+        self.action_quick_date_started.setEnabled(bool(self.menu_quick_date_started.actions()))
+
+        if show.get('end_date'):
+            action = self.menu_quick_date_completed.addAction('Set to date finished airing')
+            action.triggered.connect(
+                lambda checked=False, d=show['end_date']: self._quick_set_finish_date(d))
+        if show.get('my_last_update'):
+            action = self.menu_quick_date_completed.addAction('Set to last updated')
+            action.triggered.connect(
+                lambda checked=False, d=show['my_last_update']: self._quick_set_finish_date(d))
+        self.action_quick_date_completed.setEnabled(bool(self.menu_quick_date_completed.actions()))
+
+    def _quick_set_start_date(self, date):
+        # Drives the same checkbox+QDateEdit pair the Details tab uses,
+        # so both stay in sync regardless of which one changed the
+        # date -- blockSignals to commit once with the real target date
+        # instead of twice (once for the checkbox's own "just checked"
+        # commit, once for the date itself).
+        self.show_start_date_check.blockSignals(True)
+        self.show_start_date.blockSignals(True)
+        self.show_start_date_check.setChecked(True)
+        self.show_start_date.setEnabled(True)
+        self.show_start_date.setDate(QtCore.QDate(date.year, date.month, date.day))
+        self.show_start_date_check.blockSignals(False)
+        self.show_start_date.blockSignals(False)
+        self.s_set_start_date(self.show_start_date.date())
+
+    def _quick_set_finish_date(self, date):
+        self.show_finish_date_check.blockSignals(True)
+        self.show_finish_date.blockSignals(True)
+        self.show_finish_date_check.setChecked(True)
+        self.show_finish_date.setEnabled(True)
+        self.show_finish_date.setDate(QtCore.QDate(date.year, date.month, date.day))
+        self.show_finish_date_check.blockSignals(False)
+        self.show_finish_date.blockSignals(False)
+        self.s_set_finish_date(self.show_finish_date.date())
 
     def _recalculate_counts(self):
         showlist = self.worker.engine.get_list()
@@ -1266,6 +1617,56 @@ class MainWindow(QMainWindow):
             self.view.horizontalHeader().resizeSection(3, 70)
             self.view.horizontalHeader().resizeSection(4, 100)
 
+        if self._taiga_mode:
+            # Taiga mode's own column set/order, overriding whatever the
+            # classic api_config['visible_columns']-driven loop above
+            # did: status dot, Title, Progress (renamed from Percent --
+            # the plain-text "Progress" column duplicates it now that
+            # the bar shows the count as centered text), Score,
+            # Platform Score, Type, Season. Everything else (ID, the
+            # old Progress column, Next Episode, Start/End date, My
+            # start/finish, Tags, Status, Last updated, MAL Score) is
+            # hidden -- real Taiga doesn't show any of these (status is
+            # already conveyed by the nav/tabs, not a text column).
+            model = self.view.model().sourceModel()
+            model.columns = list(model.columns)
+            model.columns[ShowListModel.COL_PERCENT] = 'Progress'
+
+            header = self.view.horizontalHeader()
+            shown_columns = [
+                ShowListModel.COL_RELEASE_STATUS,
+                ShowListModel.COL_TITLE,
+                ShowListModel.COL_PERCENT,
+                ShowListModel.COL_MY_SCORE,
+                ShowListModel.COL_PLATFORM_SCORE,
+                ShowListModel.COL_TYPE,
+                ShowListModel.COL_SEASON,
+            ]
+            hidden_columns = [
+                ShowListModel.COL_ID,
+                ShowListModel.COL_MY_PROGRESS,
+                ShowListModel.COL_NEXT_EP,
+                ShowListModel.COL_START_DATE,
+                ShowListModel.COL_END_DATE,
+                ShowListModel.COL_MY_START,
+                ShowListModel.COL_MY_FINISH,
+                ShowListModel.COL_MY_TAGS,
+                ShowListModel.COL_MY_STATUS,
+                ShowListModel.COL_LAST_UPDATED,
+                ShowListModel.COL_MAL_SCORE,
+            ]
+            for col in hidden_columns:
+                self.view.setColumnHidden(col, True)
+            for target_index, col in enumerate(shown_columns):
+                self.view.setColumnHidden(col, False)
+                header.moveSection(header.visualIndex(col), target_index)
+
+            header.setSectionResizeMode(
+                ShowListModel.COL_RELEASE_STATUS, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(ShowListModel.COL_RELEASE_STATUS, 20)
+            # COL_TITLE (1) is already set to Stretch unconditionally
+            # above, which happens to match its Taiga-mode position too.
+
     def _set_default_poster(self):
         # With no show selected, fill the poster box with a placeholder
         # logo rather than bare "<app name>" text: the hanko mark for
@@ -1292,6 +1693,8 @@ class MainWindow(QMainWindow):
             self._score_owner_mode = None
             self.show_progress_bar.setValue(0)
             self.show_progress_bar.setFormat('?/?')
+            if self._taiga_mode:
+                self.show_folder_edit.setText('')
             self._enable_show_widgets(False)
             self._update_folder_label()
 
@@ -1327,6 +1730,38 @@ class MainWindow(QMainWindow):
         self.show_status.setCurrentIndex(
             self.mediainfo['statuses'].index(show['my_status']))
         self._set_score_editor(show)
+
+        if self._taiga_mode:
+            # blockSignals so populating these from the selected show
+            # doesn't itself trigger s_set_start_date/s_set_finish_date
+            # (dateChanged fires on programmatic setDate() too, not
+            # just user interaction).
+            for check, widget, key in (
+                    (self.show_start_date_check, self.show_start_date, 'my_start_date'),
+                    (self.show_finish_date_check, self.show_finish_date, 'my_finish_date')):
+                check.blockSignals(True)
+                widget.blockSignals(True)
+                date = show.get(key)
+                if date:
+                    check.setChecked(True)
+                    widget.setDate(QtCore.QDate(date.year, date.month, date.day))
+                else:
+                    # No date recorded -- default the (disabled) picker
+                    # to today only as a starting point for if the user
+                    # checks the box, not as a claim this date is set.
+                    check.setChecked(False)
+                    widget.setDate(QtCore.QDate.currentDate())
+                widget.setEnabled(bool(date))
+                check.blockSignals(False)
+                widget.blockSignals(False)
+
+            # self.worker.engine can still be None here -- a show gets
+            # selected (e.g. a stale queued selection-changed signal)
+            # before the engine has finished loading, or after it's
+            # been torn down (account switch, fatal error unload).
+            engine = self.worker.engine
+            self.show_folder_edit.setText(
+                (engine and engine.get_show_folder(show['id'])) or '')
 
         # Enable relevant buttons
         self._enable_show_widgets(True)
@@ -1415,8 +1850,10 @@ class MainWindow(QMainWindow):
         action_play_next = QAction(
             getIcon('media-skip-forward'), 'Play &Next Episode', self)
         action_play_next.triggered.connect(lambda: self.s_play(True))
+        # Was 'view-refresh' (a sync/refresh icon, unrelated to replaying
+        # an episode) -- 'history' actually matches what this action does.
         action_play_last = QAction(
-            getIcon('view-refresh'), 'Play Last Watched Ep (#%d)' % watched_eps, self)
+            getIcon('history'), 'Play Last Watched Ep (#%d)' % watched_eps, self)
         action_play_last.triggered.connect(lambda: self.s_play(False))
         action_play_dialog = QAction('Play Episode...', self)
         action_play_dialog.setStatusTip('Select an episode to play.')
@@ -1713,6 +2150,68 @@ class MainWindow(QMainWindow):
         self._busy(True)
         self.worker_call('set_status', self.r_generic, showid, status)
 
+    def s_set_start_date(self, qdate):
+        if self.selected_show_id:
+            self._busy(True)
+            self.worker_call(
+                'set_dates', self.r_generic, self.selected_show_id,
+                start_date=qdate.toPyDate())
+
+    def s_set_finish_date(self, qdate):
+        if self.selected_show_id:
+            self._busy(True)
+            self.worker_call(
+                'set_dates', self.r_generic, self.selected_show_id,
+                finish_date=qdate.toPyDate())
+
+    def s_toggle_start_date(self, checked):
+        self.show_start_date.setEnabled(checked)
+        # Checking it on records whatever date is currently showing
+        # (defaults to today -- see _select_show) as the start date.
+        # Unchecking never clears it server-side (the engine can't --
+        # see set_dates()), it just stops showing a date that was never
+        # actually confirmed.
+        if checked:
+            self.s_set_start_date(self.show_start_date.date())
+
+    def s_toggle_finish_date(self, checked):
+        self.show_finish_date.setEnabled(checked)
+        if checked:
+            self.s_set_finish_date(self.show_finish_date.date())
+
+    def s_set_folder(self):
+        if not self.selected_show_id:
+            return
+        current = self.worker.engine.get_show_folder(self.selected_show_id)
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Select folder', current or os.path.expanduser('~'))
+        if not folder:
+            return
+        self._busy(True)
+        self.worker_call('set_show_folder', self.r_folder_set,
+                         self.selected_show_id, folder)
+
+    def r_folder_set(self, result):
+        if result['success']:
+            self._update_folder_display()
+            self._rebuild_view()
+            self.status('Ready.')
+        self._unbusy()
+
+    def s_clear_folder(self):
+        if not self.selected_show_id:
+            return
+        self.worker.engine.unset_show_folder(self.selected_show_id)
+        self._update_folder_display()
+        self.status('Folder cleared.')
+
+    def _update_folder_display(self):
+        engine = self.worker.engine
+        folder = self.selected_show_id and engine and engine.get_show_folder(
+            self.selected_show_id)
+        self.show_folder_edit.setText(folder or '')
+        self.show_folder_clear_btn.setEnabled(bool(folder))
+
     def s_undo(self):
         self._busy(True)
         self.worker_call('undo', self.r_generic)
@@ -1760,10 +2259,57 @@ class MainWindow(QMainWindow):
         self._busy(True)
         self.worker_call('play_episode', self.r_play_episode, show, episode)
 
-    def _on_view_mode_changed(self, button):
-        self.content_stack.setCurrentWidget(
-            self.now_playing_widget if button is self.action_view_now_playing
-            else self.content_stack.widget(0))
+    def _add_taiga_page(self, key, label, icon_name, widget):
+        """Register a Taiga-mode nav destination backed by a page in
+        self.content_stack. Later phases (Seasons, Statistics) add more
+        pages through this same method."""
+        self.content_stack.addWidget(widget)
+        self._taiga_pages[key] = widget
+        item = QListWidgetItem(getIcon(icon_name), label)
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+        self.taiga_nav.addItem(item)
+
+    def _add_taiga_separator(self):
+        """A non-selectable spacer row, matching real Taiga's grouping
+        of its sidebar into Now Playing / list-management / discovery
+        sections."""
+        item = QListWidgetItem()
+        item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
+        item.setSizeHint(QtCore.QSize(0, 8))
+        self.taiga_nav.addItem(item)
+
+    # Pages where the "currently selected show" info panel makes sense.
+    # Real Taiga's Anime List is a full-width table with no such panel
+    # at all -- that quick-info sidebar is a trackma/hakubun-only
+    # concept, not something Taiga mode should keep just because
+    # classic mode has it. Now Playing already shows a full-size version
+    # of the same info via now_playing_widget, and pages like Seasons
+    # have no selected-show relationship at all. taiga_info_panel is
+    # still built (its child widgets, e.g. taiga_edit_widget, are reused
+    # by the Details dialog's Edit tab) -- it's just never shown.
+    _TAIGA_INFO_PANEL_PAGES = frozenset()
+
+    def _set_taiga_page(self, key):
+        """Single entry point for switching Taiga-mode pages, so the
+        nav column's selection and the content stack's current widget
+        never desync as more pages get added."""
+        widget = self._taiga_pages.get(key)
+        if widget is None:
+            return
+        self.content_stack.setCurrentWidget(widget)
+        self.taiga_info_panel.setVisible(key in self._TAIGA_INFO_PANEL_PAGES)
+        for i in range(self.taiga_nav.count()):
+            item = self.taiga_nav.item(i)
+            if item.data(QtCore.Qt.ItemDataRole.UserRole) == key:
+                self.taiga_nav.blockSignals(True)
+                self.taiga_nav.setCurrentItem(item)
+                self.taiga_nav.blockSignals(False)
+                break
+
+    def _on_taiga_nav_changed(self, current, previous):
+        if current is None:
+            return
+        self._set_taiga_page(current.data(QtCore.Qt.ItemDataRole.UserRole))
 
     def s_play_number(self):
         if self.selected_show_id:
@@ -1813,6 +2359,13 @@ class MainWindow(QMainWindow):
         if ok:
             self.worker.engine.altname(self.selected_show_id, str(new_altname))
             self.ws_changed_show(show, altname=new_altname)
+
+    def s_search_online(self, url_template):
+        if not self.selected_show_id:
+            return
+        show = self.worker.engine.get_show_info(self.selected_show_id)
+        title = urllib.parse.quote(show['title'])
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(url_template.format(title=title)))
 
     def s_open_folder(self):
         try:
@@ -2145,7 +2698,8 @@ class MainWindow(QMainWindow):
         # QIcon set on QApplication near the top of __init__) -- About
         # gets the fuller "Hakubun+" wordmark instead, since it has the
         # room to show it.
-        QMessageBox.about(self, 'About %s %s' % (self.app_name, utils.VERSION),
+        version = '%s-%s' % (utils.VERSION, DEV_BUILD_ID)
+        QMessageBox.about(self, 'About %s %s' % (self.app_name, version),
                           ('<p align="center"><img src="%s" width="128" height="128"></p>'
                           '<p><b>About %s %s</b></p><p>Hakubun+ is an open source client for media tracking websites, an independent fork of Trackma.</p>'
                           '<p>This program is licensed under the GPLv3, for more information read COPYING file.</p>'
@@ -2158,7 +2712,7 @@ class MainWindow(QMainWindow):
                           'licensed under the MIT license.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
-                              utils.DATADIR + '/about_logo.png', self.app_name, utils.VERSION))
+                              utils.DATADIR + '/about_logo.png', self.app_name, version))
 
     def s_about_qt(self):
         QMessageBox.aboutQt(self, 'About Qt')
@@ -2380,6 +2934,11 @@ class MainWindow(QMainWindow):
             if self._taiga_mode:
                 self._rebuild_services_menu()
                 self._rebuild_library_folders_menu()
+                self.seasons_widget.set_context(self.api_info, self.mediainfo)
+                self.search_widget.set_context(self.api_info, self.mediainfo)
+                self.stats_widget.refresh()
+                self.show_filter.setPlaceholderText(
+                    'Filter list or search %s' % self.api_info['name'])
 
             self._apply_subminer_state()
 

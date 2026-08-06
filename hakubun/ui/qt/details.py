@@ -36,9 +36,12 @@ class DetailsDialog(QDialog):
         details = DetailsWidget(self, worker)
 
         if edit_widget is not None:
+            # edit_widget is only ever passed in Taiga mode (see
+            # MainWindow.s_show_details) -- these labels match real
+            # Taiga's own Anime Information dialog tabs.
             tabs = QTabWidget()
-            tabs.addTab(details, 'Details')
-            tabs.addTab(edit_widget, 'Edit')
+            tabs.addTab(details, 'Main information')
+            tabs.addTab(edit_widget, 'My list and settings')
             main_layout.addWidget(tabs)
         else:
             main_layout.addWidget(details)

@@ -288,6 +288,7 @@ fragment mediaListEntry on MediaList {
     format
     status
     chapters episodes
+    duration
     nextAiringEpisode { airingAt episode }
     startDate { year month day }
     endDate { year month day }
@@ -329,6 +330,10 @@ fragment mediaListEntry on MediaList {
                     'aliases': self._get_aliases(media),
                     'type': self._translate_type(media['format']),
                     'status': self._translate_status(media['status']),
+                    # AniList's averageScore is already a whole-number
+                    # percentage (0-100), unlike Kitsu's averageRating
+                    # (a genuine float, e.g. 78.32) -- showing ".00"
+                    # after it would be fake precision.
                     'platform_score': (
                         '%d%%' % media['averageScore'] if media.get('averageScore') else None),
                     'mal_id': media.get('idMal'),
@@ -345,6 +350,11 @@ fragment mediaListEntry on MediaList {
                     'my_start_date': self._dict2date(item['startedAt']),
                     'my_finish_date': self._dict2date(item['completedAt']),
                     'my_last_update': self._int2datetime(item['updatedAt']),
+                    # Minutes per episode -- AniList's own field, used
+                    # only for the Statistics page's "Time spent
+                    # watching"/"Time to complete" (no per-episode
+                    # duration is shown anywhere else).
+                    'duration': media.get('duration'),
                 }
                 if media['nextAiringEpisode']:
                     showdata['next_ep_number'] = media['nextAiringEpisode']['episode']
@@ -436,6 +446,7 @@ fragment mediaListEntry on MediaList {
       format
       averageScore
       meanScore
+      popularity
       chapters episodes
       status
       startDate { year month day }
@@ -447,6 +458,7 @@ fragment mediaListEntry on MediaList {
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
       season
+      nextAiringEpisode { airingAt }
     }
   }
 }'''
@@ -496,6 +508,7 @@ fragment mediaListEntry on MediaList {
       format
       averageScore
       meanScore
+      popularity
       chapters episodes
       status
       startDate { year month day }
@@ -507,6 +520,7 @@ fragment mediaListEntry on MediaList {
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
       season
+      nextAiringEpisode { airingAt }
   }
 }'''
 
@@ -548,6 +562,28 @@ fragment mediaListEntry on MediaList {
             'url': item['siteUrl'],
             'start_date': self._dict2date(item.get('startDate')),
             'end_date': self._dict2date(item.get('endDate')),
+            'airing_time': self._airing_time(item.get('nextAiringEpisode')),
+            # Search/season results went through _parse_info(), never the
+            # library-list path above that already sets this -- Seasons
+            # page cards had nothing to show for Score without it.
+            # AniList's averageScore is already a whole-number percentage
+            # (0-100), unlike Kitsu's averageRating (a genuine float) --
+            # no decimals to show.
+            'platform_score': (
+                '%d%%' % item['averageScore'] if item.get('averageScore') else None),
+            'score_raw': item.get('averageScore'),
+            # Unlike MAL's/Kitsu's 'popularity' (a rank -- lower is more
+            # popular), AniList's is a raw favorites/list count -- higher
+            # is more popular. Negated here so the Seasons page's Sort
+            # by: Popularity can use one ascending-numeric convention
+            # ("most popular first") across every backend without having
+            # to know which one it's talking to. popularity_label keeps
+            # the original, un-negated count for display.
+            'popularity': (
+                -item['popularity'] if item.get('popularity') is not None else None),
+            'popularity_label': (
+                '{:,} users'.format(item['popularity'])
+                if item.get('popularity') is not None else None),
             'extra': [
                 ('English',         item['title'].get('english')),
                 ('Romaji',          item['title'].get('romaji')),
@@ -625,6 +661,20 @@ fragment mediaListEntry on MediaList {
             return datetime.datetime.fromtimestamp(item, tz=datetime.timezone.utc)
         except ValueError:
             return None
+
+    def _airing_time(self, next_airing_episode):
+        """Weekday+time label for the next episode's airing slot, e.g.
+        "Mondays at 23:00 JST" -- converted to JST since that's the
+        show's actual broadcast timezone, matching how MAL's own
+        'broadcast' field is already expressed (libmal._parse_info)."""
+        if not next_airing_episode or not next_airing_episode.get('airingAt'):
+            return None
+        try:
+            jst = datetime.timezone(datetime.timedelta(hours=9))
+            dt = datetime.datetime.fromtimestamp(next_airing_episode['airingAt'], tz=jst)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return '%ss at %s JST' % (dt.strftime('%A'), dt.strftime('%H:%M'))
 
     def _c(self, s):
         if s is None:

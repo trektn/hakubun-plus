@@ -33,6 +33,24 @@ text is also reproduced at the URL above.
 - License: Mozilla Public License 2.0
 - A Python port of Anitomy (see above).
 
+## Taiga mode icons
+
+- Most of `hakubun/data/qtui/*.svg` are vendored, unmodified, from
+  https://github.com/erengy/taiga (`src/resources/icons/`), Copyright (c)
+  2010-2024, Eren Okka, licensed GPL-3.0-or-later -- the same license as
+  this project (see `COPYING`), so no relicensing is needed.
+- `pause.svg` isn't part of that set (Taiga's own UI has no use for one)
+  and comes directly from Google's
+  [Material Symbols](https://github.com/google/material-design-icons)
+  instead (`symbols/web/pause/materialsymbolsoutlined/pause_24px.svg`),
+  licensed Apache License 2.0 -- the same icon family/style Taiga's own
+  set is drawn from, so it matches visually.
+- The rest of `hakubun/data/qtui/*.svg` are themselves Material Symbols,
+  licensed Apache License 2.0.
+- Used by `hakubun/ui/qt/util.py`'s `getIcon()` to give Taiga mode Taiga's
+  actual iconography (tinted at runtime to the active Qt palette) instead
+  of relying on the user's desktop icon theme.
+
 ## RapidFuzz (optional, `fuzzy` extra)
 
 - Project: https://github.com/rapidfuzz/RapidFuzz
@@ -61,3 +79,4 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+>>>>>>> hakubun-plus/master

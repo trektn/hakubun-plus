@@ -733,6 +733,22 @@ def show():
         'image':        '',
         'image_thumb':  '',
         'queued':       False,
+        # Minutes per episode, where the API provides it (MAL/AniList/
+        # Kitsu all do). Used only for the Statistics page's "Time
+        # spent watching"/"Time to complete".
+        'duration':     None,
+        # Raw numeric score (backend's own scale -- 0-10 for MAL, 0-100
+        # for AniList/Kitsu) and popularity rank (lower = more popular,
+        # uniformly across backends -- see each lib's _parse_info for how
+        # AniList's raw favorites count gets negated into this
+        # convention). Used only for the Seasons page's Sort by.
+        'score_raw':    None,
+        'popularity':   None,
+        # Display-ready popularity string ("#42" for rank-based backends,
+        # "15,234 users" for AniList's count) -- 'popularity' itself may
+        # be negated for sorting (see each lib's _parse_info) and isn't
+        # meant to be shown as-is.
+        'popularity_label': None,
         # Was 'my_last-update' (dash typo) for a long time, so shows
         # where the API didn't set this explicitly were missing the
         # underscore key entirely, causing KeyErrors wherever it's read.

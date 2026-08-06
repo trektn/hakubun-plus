@@ -188,12 +188,14 @@ class DetailsWidget(QWidget):
             self.facts_layout.removeRow(0)
 
     def load(self, show):
-        metrics = QtGui.QFontMetrics(self.show_title.font())
-        title = metrics.elidedText(
-            show['title'], QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
-
+        # show_title already wraps (setWordWrap(True), see __init__) --
+        # eliding here too was actively wrong: load() runs immediately
+        # after construction, before the widget has been laid out, so
+        # self.show_title.width() read whatever placeholder width Qt
+        # hands out pre-layout (often near-zero), truncating titles far
+        # more aggressively than the dialog's real width ever required.
         self.show_title.setText("<a href=\"%s\">%s</a>" % (
-            html.escape(show['url']), html.escape(title)))
+            html.escape(show['url']), html.escape(show['title'])))
         self.show_title.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.show_title.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -304,6 +306,10 @@ class ShowsTableView(QTableView):
         self.horizontalHeader().setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.verticalHeader().hide()
         self.setGridStyle(QtCore.Qt.PenStyle.NoPen)
+        # Needed for State_MouseOver to reach the delegate's paint option
+        # for whichever row is under the cursor -- used by Taiga mode's
+        # hover +/- episode buttons (see ShowsTableDelegate).
+        self.setMouseTracking(True)
 
     def contextMenuEvent(self, event):
         action = self.context_menu.exec(event.globalPos())
@@ -324,11 +330,21 @@ class AddCardView(QListView):
         m = AddListModel(api_info=api_info)
         proxy = AddListProxy()
         proxy.setSourceModel(m)
+        proxy.set_mylist(mylist)
         proxy.sort(0, QtCore.Qt.SortOrder.AscendingOrder)
 
         self.setItemDelegate(AddListDelegate(mylist=mylist, statuses_dict=statuses_dict))
         self.setFlow(QListView.Flow.LeftToRight)
         self.setWrapping(True)
+        # Default ResizeMode is Fixed -- the grid only re-lays-out on a
+        # model reset, not on the view actually resizing, so the wrap
+        # didn't follow the window until something (e.g. a new search)
+        # forced a reset. AddListDelegate.sizeHint() is constant across
+        # items, so uniform sizing is safe and turns the relayout this
+        # now triggers on every resize into arithmetic instead of an
+        # O(n) sizeHint() walk.
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setUniformItemSizes(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -350,6 +366,24 @@ class AddCardView(QListView):
 
     def getModel(self):
         return self.model().sourceModel()
+
+    def set_mylist(self, mylist):
+        """See AddListDelegate.set_mylist -- refreshes in-list tinting
+        for a view that outlives a single search (Taiga mode's Seasons
+        page), instead of the one-shot snapshot a modal takes. Also
+        feeds the proxy, since Group by: List Status depends on it."""
+        self.itemDelegate().set_mylist(mylist)
+        self.model().set_mylist(mylist)
+        self.viewport().update()
+
+    def set_statuses(self, statuses):
+        self.model().set_statuses(statuses)
+
+    def set_group_key(self, key):
+        self.model().set_group_key(key)
+
+    def set_sort_key(self, key):
+        self.model().set_sort_key(key)
 
 
 class AddTableDetailsView(QSplitter):
@@ -404,6 +438,10 @@ class AddTableDetailsView(QSplitter):
 
     def clearSelection(self):
         return self.table.clearSelection()
+
+    def set_mylist(self, mylist):
+        """See AddListDelegate.set_mylist / AddTableModel.set_mylist."""
+        self.getModel().set_mylist(mylist)
 
 
 class HoverProgressBar(QWidget):

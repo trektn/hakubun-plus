@@ -269,7 +269,8 @@ class libmal(lib):
         self.check_credentials()
         shows = {}
 
-        fields = 'id,alternative_titles,title,start_date,end_date,main_picture,status,media_type,mean,' + self.total_str
+        fields = ('id,alternative_titles,title,start_date,end_date,main_picture,status,'
+                 'media_type,mean,average_episode_duration,' + self.total_str)
         listfields = 'score,status,start_date,finish_date,updated_at,%s,%s' \
             % (self.rewatched_str, self.watched_str)
         params = {
@@ -308,6 +309,12 @@ class libmal(lib):
                     'my_start_date': self._str2date(item['list_status'].get('start_date')),
                     'my_finish_date': self._str2date(item['list_status'].get('finish_date')),
                     'my_last_update': self._iso2datetime(item['list_status'].get('updated_at')),
+                    # MAL reports this in seconds -- minutes matches
+                    # AniList/Kitsu's own duration fields, used only for
+                    # the Statistics page's "Time spent watching"/"Time
+                    # to complete".
+                    'duration': (item['node']['average_episode_duration'] // 60
+                                if item['node'].get('average_episode_duration') else None),
                 })
 
             url = data['paging'].get('next')
@@ -334,7 +341,7 @@ class libmal(lib):
         self.check_credentials()
         self.msg.info("Searching for {}...".format(criteria))
 
-        fields = 'alternative_titles,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
+        fields = 'alternative_titles,broadcast,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
         params = {'fields': fields, 'nsfw': 'true'}
 
         if method == utils.SearchMethod.KW:
@@ -361,7 +368,7 @@ class libmal(lib):
         self.check_credentials()
         infolist = []
 
-        fields = 'alternative_titles,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
+        fields = 'alternative_titles,broadcast,end_date,genres,id,main_picture,mean,media_type,' + self.total_str + ',popularity,rating,start_date,start_season,status,studios,synopsis,title'
         params = {'fields': fields, 'nsfw': 'true'}
         for item in itemlist:
             data = self._request('GET', self.query_url + '/%s/%d' % (self.mediatype, item['id']), get=params, auth=True)
@@ -420,18 +427,38 @@ class libmal(lib):
         genres = [g['name'] for g in item.get('genres', [])]
         studios = [s['name'] for s in item.get('studios', [])]
 
+        # MAL's broadcast field is already expressed in JST, day name
+        # lowercase (e.g. "monday") + "HH:MM" -- no timezone math needed,
+        # unlike AniList's raw airingAt timestamp.
+        broadcast = item.get('broadcast') or {}
+        airing_time = None
+        if broadcast.get('day_of_the_week') and broadcast.get('start_time'):
+            airing_time = '%ss at %s JST' % (
+                broadcast['day_of_the_week'].capitalize(), broadcast['start_time'])
+
         info.update({
             'id': showid,
             'title': item['title'],
             'url': "https://myanimelist.net/%s/%d" % (self.mediatype, showid),
             'aliases': self._get_aliases(item),
             'type': type_,
-            'total': item[self.total_str],
+            # Season listings routinely include not-yet-aired entries where
+            # MAL omits num_episodes entirely (unlike library/search results,
+            # which always report it, even if 0) -- a bare index here throws
+            # a KeyError that silently kills the whole season search.
+            'total': item.get(self.total_str),
             'status': status,
             'image': item.get('main_picture', {}).get('large'),
             'start_date': self._str2date(item.get('start_date')),
             'end_date': self._str2date(item.get('end_date')),
             'platform_score': score,
+            'score_raw': item.get('mean'),
+            # MAL's own popularity rank -- lower is more popular. Used
+            # for the Seasons page's Sort by: Popularity.
+            'popularity': item.get('popularity'),
+            'popularity_label': (
+                '#%d' % item['popularity'] if item.get('popularity') else None),
+            'airing_time': airing_time,
             'extra': [
                 ('English',         item['alternative_titles'].get('en')),
                 ('Japanese',        item['alternative_titles'].get('ja')),
