@@ -16,6 +16,7 @@
 
 import contextlib
 import datetime
+import hashlib
 import json
 import os
 import random
@@ -1288,22 +1289,62 @@ class Engine:
                 entries += len(filenames)
         return latest, entries
 
+    def _scan_status_scope(self):
+        """The list statuses a library scan covers, shared by
+        _scan_library_if_changed and scan_library's own default so the two
+        can never disagree about what's in scope."""
+        if self.config['scan_whole_list']:
+            return self.mediainfo['statuses']
+        return self.mediainfo.get(
+            'statuses_library', self.mediainfo['statuses_start'])
+
+    def _tracker_list_signature(self, tracker_list):
+        """Fingerprint of the tracker list content a scan matched against
+        (every in-scope show's id and titles/aliases), so that adding,
+        removing, or retitling a show is detected the same way a changed
+        file on disk is -- not just "did the directory mtimes move".
+        Uses a stable hash (not Python's randomized hash()) since this is
+        persisted across process restarts and compared against on the
+        next run.
+        """
+        showlist = tracker_list[0]
+        parts = []
+        for show_id in sorted(showlist):
+            show = showlist[show_id]
+            parts.append(str(show_id))
+            parts.extend(sorted(show['titles']))
+        return hashlib.sha256(
+            '\x1f'.join(parts).encode('utf-8', 'surrogatepass')).hexdigest()
+
     def _scan_library_if_changed(self):
         """
-        Runs scan_library() only if the search directories look like they
-        may have changed since the last scan (new/removed/renamed files),
+        Runs scan_library() only if the search directories or the tracker
+        list itself look like they may have changed since the last scan,
         instead of unconditionally re-walking and re-matching the whole
         library every time the engine starts -- e.g. on every account or
         mediatype switch, which previously re-did this even when nothing
         on disk had changed at all.
+
+        A pure filesystem change (new/removed/renamed files) still uses
+        the incremental per-file cache. But a tracker list change (a show
+        added/removed, retitled, or an alias/redirection edited) can
+        invalidate an already-cached guess for a file whose own mtime
+        never moved -- e.g. a file that didn't match anything before the
+        show was added to the list would otherwise stay "unmatched"
+        forever -- so that case forces every file to be re-guessed from
+        scratch (rescan=True), not just files under a changed directory.
         """
         show_folders = self.data_handler.show_folders_get()
         if not self.mediainfo.get('can_play') \
                 or not (self.config['searchdir'] or show_folders):
             return
 
-        signature = self._library_dirs_signature(
+        my_status = self._scan_status_scope()
+        tracker_list = self._get_tracker_list(my_status)
+        dirs_signature = self._library_dirs_signature(
             self.searchdirs + list(show_folders.values()))
+        list_signature = self._tracker_list_signature(tracker_list)
+        signature = (dirs_signature, list_signature)
         cached_signature = self.data_handler.library_scan_signature_get()
 
         if cached_signature is not None \
@@ -1312,15 +1353,18 @@ class Engine:
             self.msg.info("Local library unchanged, skipping scan.")
             return
 
-        self.scan_library(signature=signature)
+        list_changed = cached_signature is not None \
+            and tuple(cached_signature)[1:] != signature[1:]
+        self.scan_library(my_status=my_status, signature=signature,
+                           rescan=list_changed)
 
     def scan_library(self, my_status=None, rescan=False, path=None,
                      signature=None):
         """`signature`, when given, is a precomputed
-        _library_dirs_signature() the caller already has (see
-        _scan_library_if_changed) -- reusing it skips a second,
-        redundant directory-tree walk to compute the same value again
-        after the scan completes."""
+        (_library_dirs_signature(), _tracker_list_signature()) pair the
+        caller already has (see _scan_library_if_changed) -- reusing it
+        skips redundantly recomputing the same values again after the
+        scan completes."""
         # Check if operation is supported by the API
         if not self.mediainfo.get('can_play'):
             raise utils.EngineError(
@@ -1334,11 +1378,7 @@ class Engine:
         library_cache = self.data_handler.library_cache_get()
 
         if not my_status:
-            if self.config['scan_whole_list']:
-                my_status = self.mediainfo['statuses']
-            else:
-                my_status = self.mediainfo.get(
-                    'statuses_library', self.mediainfo['statuses_start'])
+            my_status = self._scan_status_scope()
 
         if rescan:
             self.msg.info("Scanning local library (overriding cache)...")
@@ -1391,8 +1431,11 @@ class Engine:
             # directory scan wouldn't reflect the true state of the
             # others. Must match _scan_library_if_changed's own inputs.
             if signature is None:
-                signature = self._library_dirs_signature(
-                    self.searchdirs + list(show_folders.values()))
+                signature = (
+                    self._library_dirs_signature(
+                        self.searchdirs + list(show_folders.values())),
+                    self._tracker_list_signature(tracker_list),
+                )
             self.data_handler.library_scan_signature_save(signature)
 
         return library
