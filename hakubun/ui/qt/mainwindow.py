@@ -266,9 +266,9 @@ class MainWindow(QMainWindow):
             # Hakubun+'s -- File/Services/Tools/Help instead of
             # Show/List/Mediatype/Options/Help. Actions that don't have
             # a natural home in that structure (undo/redo, rescan,
-            # mediatype switch, switch account) stay reachable via
-            # File > Library folders or their existing shortcuts rather
-            # than disappearing outright.
+            # mediatype switch) stay reachable via File > Library folders
+            # or their existing shortcuts rather than disappearing
+            # outright.
             self.menu_library_folders = QMenu('Library folders', self)
             self.menu_mediatype = QMenu('Mediatype', self)
             self.mediatype_actiongroup = QActionGroup(self)
@@ -280,12 +280,13 @@ class MainWindow(QMainWindow):
             menu_file.addMenu(self.menu_mediatype)
             menu_file.addAction(action_play_random)
             menu_file.addSeparator()
-            menu_file.addAction(self.action_reload)
-            menu_file.addSeparator()
             menu_file.addAction(action_quit)
 
             self.menu_services = menubar.addMenu('&Services')
             self.menu_services.addAction(self.action_sync)
+            # Switch Account lives here rather than File -- it's account
+            # management, same as everything else in this menu.
+            self.menu_services.addAction(self.action_reload)
             self.menu_services.addSeparator()
             # The per-service section (profile/stats/history links) is
             # built in _rebuild_services_menu() once the active
@@ -1265,10 +1266,10 @@ class MainWindow(QMainWindow):
                 lambda checked=False, f=folder: utils.open_folder(f))
 
     def _rebuild_services_menu(self):
-        # Trim back to the "Sync lists" action + separator built in
-        # start(); everything after that is the per-service section,
+        # Trim back to the Sync/Switch Account actions + separator built
+        # in start(); everything after that is the per-service section,
         # rebuilt here once the active account's API/username are known.
-        for action in self.menu_services.actions()[2:]:
+        for action in self.menu_services.actions()[3:]:
             self.menu_services.removeAction(action)
 
         api = self.account['api']
