@@ -373,7 +373,7 @@ class AddTableModel(QtCore.QAbstractTableModel):
             elif column == 2:
                 return utils.get_season_label(item)
             elif column == 3:
-                return item.get('total', '?')
+                return item.get('total') or '?'
             elif column == 4:
                 entry = self._mylist_entry(item)
                 if entry:

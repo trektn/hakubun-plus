@@ -93,6 +93,11 @@ class libkitsu(lib):
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
         'score_step': 0.25,
+        # Kitsu's AnimeResource is the only one of the three with a
+        # `season`/`season_year` filter (confirmed against kitsu-server's
+        # app/resources/*.rb) -- manga and drama have no season concept
+        # server-side, so they only get keyword search.
+        'search_methods': [utils.SearchMethod.KW, utils.SearchMethod.SEASON],
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -114,6 +119,7 @@ class libkitsu(lib):
         },
         'score_max': 5,
         'score_step': 0.25,
+        'search_methods': [utils.SearchMethod.KW],
     }
     mediatypes['drama'] = {
         'has_progress': True,
@@ -129,6 +135,14 @@ class libkitsu(lib):
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
         'score_step': 0.25,
+        'search_methods': [utils.SearchMethod.KW],
+    }
+
+    season_translate = {
+        utils.Season.WINTER: 'winter',
+        utils.Season.SPRING: 'spring',
+        utils.Season.SUMMER: 'summer',
+        utils.Season.FALL: 'fall',
     }
 
     url = 'https://kitsu.app/api'
@@ -470,13 +484,22 @@ class libkitsu(lib):
         except urllib.error.URLError as e:
             raise utils.APIError('Error deleting: ' + str(e.reason))
 
-    def search(self, query, method):
-        self.msg.info("Searching for %s..." % query)
-
-        values = {
-            "filter[text]": query,
-            "page[limit]": 20,
-        }
+    def search(self, criteria, method):
+        if method == utils.SearchMethod.SEASON:
+            season, season_year = criteria
+            self.msg.info("Searching for %s %d..." % (season.value, season_year))
+            values = {
+                "filter[season]": self.season_translate[season],
+                "filter[seasonYear]": season_year,
+                "page[limit]": 20,
+            }
+        else:
+            query = criteria
+            self.msg.info("Searching for %s..." % query)
+            values = {
+                "filter[text]": query,
+                "page[limit]": 20,
+            }
 
         try:
             data = self._request('GET', self.prefix +

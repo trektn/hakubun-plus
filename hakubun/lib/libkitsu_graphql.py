@@ -96,6 +96,12 @@ class libkitsu_graphql(lib):
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
         'score_step': 0.25,
+        # Unlike the REST client (libkitsu.py), Kitsu's GraphQL schema has
+        # no season/year argument anywhere on Query.anime or
+        # Query.searchAnimeByTitle (checked against kitsu-server's
+        # app/graphql/types/query_type.rb) -- season search genuinely isn't
+        # possible over this API, so GraphQL-backend accounts don't get it.
+        'search_methods': [utils.SearchMethod.KW],
     }
     mediatypes['manga'] = {
         'has_progress': True,
@@ -118,6 +124,7 @@ class libkitsu_graphql(lib):
         },
         'score_max': 5,
         'score_step': 0.25,
+        'search_methods': [utils.SearchMethod.KW],
     }
 
     oauth_url = 'https://kitsu.app/api/oauth/token'

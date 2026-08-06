@@ -431,7 +431,11 @@ class libmal(lib):
             'url': "https://myanimelist.net/%s/%d" % (self.mediatype, showid),
             'aliases': self._get_aliases(item),
             'type': type_,
-            'total': item[self.total_str],
+            # Season listings routinely include not-yet-aired entries where
+            # MAL omits num_episodes entirely (unlike library/search results,
+            # which always report it, even if 0) -- a bare index here throws
+            # a KeyError that silently kills the whole season search.
+            'total': item.get(self.total_str),
             'status': status,
             'image': item.get('main_picture', {}).get('large'),
             'start_date': self._str2date(item.get('start_date')),
