@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMenu, QMe
 from hakubun import utils
 from hakubun.ui.qt.add import AddStatusDialog
 from hakubun.ui.qt.details import DetailsDialog
+from hakubun.ui.qt.models import AddListProxy
 from hakubun.ui.qt.widgets import AddCardView
 
 
@@ -83,6 +84,10 @@ class SeasonsWidget(QWidget):
             self._build_search_ui(api_info)
         else:
             self.card_view.set_mylist(self.mylist)
+            # statuses/statuses_dict can differ across accounts even when
+            # both support season search (e.g. switching MAL -> AniList)
+            # -- Group by: List Status depends on this staying current.
+            self.card_view.set_statuses(self.statuses)
 
     def _build_search_ui(self, api_info):
         self._unavailable_label.hide()
@@ -105,11 +110,30 @@ class SeasonsWidget(QWidget):
         self.search_btn = QPushButton('Refresh')
         self.search_btn.clicked.connect(self.s_search)
 
+        self.group_combo = QComboBox()
+        self.group_combo.addItem('No grouping', AddListProxy.GROUP_NONE)
+        self.group_combo.addItem('Airing status', AddListProxy.GROUP_AIRING_STATUS)
+        self.group_combo.addItem('List status', AddListProxy.GROUP_LIST_STATUS)
+        self.group_combo.addItem('Type', AddListProxy.GROUP_TYPE)
+        self.group_combo.currentIndexChanged.connect(self.s_group_changed)
+
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItem('Airing date', AddListProxy.SORT_AIRING_DATE)
+        self.sort_combo.addItem('Episodes', AddListProxy.SORT_EPISODES)
+        self.sort_combo.addItem('Popularity', AddListProxy.SORT_POPULARITY)
+        self.sort_combo.addItem('Score', AddListProxy.SORT_SCORE)
+        self.sort_combo.addItem('Type', AddListProxy.SORT_TYPE)
+        self.sort_combo.currentIndexChanged.connect(self.s_sort_changed)
+
         filters_layout = QHBoxLayout()
         filters_layout.addWidget(self.season_combo)
         filters_layout.addWidget(self.year_spin)
         filters_layout.addWidget(self.search_btn)
         filters_layout.addStretch(1)
+        filters_layout.addWidget(QLabel('Group by:'))
+        filters_layout.addWidget(self.group_combo)
+        filters_layout.addWidget(QLabel('Sort by:'))
+        filters_layout.addWidget(self.sort_combo)
 
         self.card_view = AddCardView(
             api_info=api_info, mylist=self.mylist, statuses_dict=self.statuses_dict)
@@ -117,6 +141,9 @@ class SeasonsWidget(QWidget):
         self.card_view.doubleClicked.connect(self.s_show_details)
         self.card_view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.card_view.customContextMenuRequested.connect(self.s_context_menu)
+        self.card_view.set_statuses(self.statuses)
+        self.card_view.set_group_key(self.group_combo.currentData())
+        self.card_view.set_sort_key(self.sort_combo.currentData())
 
         self._filters_layout = filters_layout
         self._layout.addLayout(filters_layout)
@@ -136,8 +163,8 @@ class SeasonsWidget(QWidget):
 
         self._layout.removeItem(self._filters_layout)
         while self._filters_layout.count():
-            # addStretch(1) added a spacer item with no widget() -- only
-            # season_combo/year_spin/search_btn need explicit cleanup.
+            # addStretch(1) added a spacer item with no widget() -- every
+            # other item in this layout is a real widget needing cleanup.
             widget = self._filters_layout.takeAt(0).widget()
             if widget is not None:
                 widget.deleteLater()
@@ -158,6 +185,12 @@ class SeasonsWidget(QWidget):
         self.search_btn.setEnabled(False)
 
         self.worker_call('search', self.r_searched, criteria, utils.SearchMethod.SEASON)
+
+    def s_group_changed(self, _index):
+        self.card_view.set_group_key(self.group_combo.currentData())
+
+    def s_sort_changed(self, _index):
+        self.card_view.set_sort_key(self.sort_combo.currentData())
 
     def s_selected(self, show):
         self.selected_show = show

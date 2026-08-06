@@ -312,6 +312,7 @@ class AddCardView(QListView):
         m = AddListModel(api_info=api_info)
         proxy = AddListProxy()
         proxy.setSourceModel(m)
+        proxy.set_mylist(mylist)
         proxy.sort(0, QtCore.Qt.SortOrder.AscendingOrder)
 
         self.setItemDelegate(AddListDelegate(mylist=mylist, statuses_dict=statuses_dict))
@@ -351,9 +352,20 @@ class AddCardView(QListView):
     def set_mylist(self, mylist):
         """See AddListDelegate.set_mylist -- refreshes in-list tinting
         for a view that outlives a single search (Taiga mode's Seasons
-        page), instead of the one-shot snapshot a modal takes."""
+        page), instead of the one-shot snapshot a modal takes. Also
+        feeds the proxy, since Group by: List Status depends on it."""
         self.itemDelegate().set_mylist(mylist)
+        self.model().set_mylist(mylist)
         self.viewport().update()
+
+    def set_statuses(self, statuses):
+        self.model().set_statuses(statuses)
+
+    def set_group_key(self, key):
+        self.model().set_group_key(key)
+
+    def set_sort_key(self, key):
+        self.model().set_sort_key(key)
 
 
 class AddTableDetailsView(QSplitter):

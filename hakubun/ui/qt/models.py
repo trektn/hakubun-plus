@@ -464,11 +464,100 @@ class AddListModel(QtCore.QAbstractListModel):
 
 
 class AddListProxy(QtCore.QSortFilterProxyModel):
+    """Sorts (and optionally groups) AddCardView's results.
+
+    Grouping isn't a real section/header feature -- QListView's flow
+    grid has no clean way to render one without becoming its own project
+    (see Seasons page groundwork notes). Instead "group by" is a primary
+    sort tier: same-group shows cluster together, in group order, then
+    within a group by whatever "sort by" key is active.
+
+    Sort values are computed so plain AscendingOrder always yields
+    "most relevant first" per key (e.g. Score is stored negated, since
+    higher is better but ascending order should still put it first) --
+    keeps callers from needing a separate direction toggle per key.
+    """
+
+    GROUP_NONE = 'none'
+    GROUP_AIRING_STATUS = 'airing_status'
+    GROUP_LIST_STATUS = 'list_status'
+    GROUP_TYPE = 'type'
+
+    SORT_TYPE = 'type'
+    SORT_AIRING_DATE = 'airing_date'
+    SORT_EPISODES = 'episodes'
+    SORT_POPULARITY = 'popularity'
+    SORT_SCORE = 'score'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._group_key = self.GROUP_NONE
+        self._sort_key = self.SORT_TYPE
+        self._mylist = {}
+        self._statuses = []
+
+    def set_mylist(self, mylist):
+        self._mylist = mylist or {}
+        self.invalidate()
+
+    def set_statuses(self, statuses):
+        """Ordered list-status values (mediainfo['statuses']) -- needed
+        to group by list status, since the raw value's type/ordering
+        differs per backend (ints for MAL/AniList, strings for Kitsu)
+        and isn't comparable across accounts on its own."""
+        self._statuses = statuses or []
+        self.invalidate()
+
+    def set_group_key(self, key):
+        self._group_key = key
+        self.invalidate()
+
+    def set_sort_key(self, key):
+        self._sort_key = key
+        self.invalidate()
+
+    def _group_value(self, show):
+        if self._group_key == self.GROUP_AIRING_STATUS:
+            return int(show.get('status') or utils.Status.UNKNOWN)
+        if self._group_key == self.GROUP_TYPE:
+            return int(show.get('type') or utils.Type.UNKNOWN)
+        if self._group_key == self.GROUP_LIST_STATUS:
+            entry = self._mylist.get(show.get('id'))
+            if not entry or entry.get('my_status') not in self._statuses:
+                # Not-in-list sorts first -- discovering what's new is
+                # the main reason to browse a season in the first place.
+                return -1
+            return self._statuses.index(entry['my_status'])
+        return 0
+
+    def _sort_value(self, show):
+        if self._sort_key == self.SORT_AIRING_DATE:
+            return show.get('start_date') or datetime.date.max
+        if self._sort_key == self.SORT_EPISODES:
+            total = show.get('total')
+            return total if total is not None else -1
+        if self._sort_key == self.SORT_POPULARITY:
+            popularity = show.get('popularity')
+            # Already normalized ascending-is-more-popular at parse time
+            # (see each lib's _parse_info) -- missing data sorts last.
+            return popularity if popularity is not None else float('inf')
+        if self._sort_key == self.SORT_SCORE:
+            score = show.get('score_raw')
+            # Negated so ascending order still puts the best score
+            # first; missing data sorts last either way.
+            return -score if score is not None else float('inf')
+        return int(show.get('type') or utils.Type.UNKNOWN)
+
     def lessThan(self, left, right):
         leftData = self.sourceModel().data(left, QtCore.Qt.ItemDataRole.DisplayRole)
         rightData = self.sourceModel().data(right, QtCore.Qt.ItemDataRole.DisplayRole)
 
-        return leftData['type'] < rightData['type']
+        leftGroup = self._group_value(leftData)
+        rightGroup = self._group_value(rightData)
+        if leftGroup != rightGroup:
+            return leftGroup < rightGroup
+
+        return self._sort_value(leftData) < self._sort_value(rightData)
 
 
 class ShowListProxy(QtCore.QSortFilterProxyModel):
