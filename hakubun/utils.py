@@ -600,6 +600,11 @@ def show():
         # convention). Used only for the Seasons page's Sort by.
         'score_raw':    None,
         'popularity':   None,
+        # Display-ready popularity string ("#42" for rank-based backends,
+        # "15,234 users" for AniList's count) -- 'popularity' itself may
+        # be negated for sorting (see each lib's _parse_info) and isn't
+        # meant to be shown as-is.
+        'popularity_label': None,
         # Was 'my_last-update' (dash typo) for a long time, so shows
         # where the API didn't set this explicitly were missing the
         # underscore key entirely, causing KeyErrors wherever it's read.

@@ -445,6 +445,8 @@ class libmal(lib):
             # MAL's own popularity rank -- lower is more popular. Used
             # for the Seasons page's Sort by: Popularity.
             'popularity': item.get('popularity'),
+            'popularity_label': (
+                '#%d' % item['popularity'] if item.get('popularity') else None),
             'airing_time': airing_time,
             'extra': [
                 ('English',         item['alternative_titles'].get('en')),

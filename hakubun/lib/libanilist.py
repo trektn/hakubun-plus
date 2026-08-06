@@ -507,15 +507,24 @@ fragment mediaListEntry on MediaList {
             'start_date': self._dict2date(item.get('startDate')),
             'end_date': self._dict2date(item.get('endDate')),
             'airing_time': self._airing_time(item.get('nextAiringEpisode')),
+            # Search/season results went through _parse_info(), never the
+            # library-list path above that already sets this -- Seasons
+            # page cards had nothing to show for Score without it.
+            'platform_score': (
+                '%.2f%%' % item['averageScore'] if item.get('averageScore') else None),
             'score_raw': item.get('averageScore'),
             # Unlike MAL's/Kitsu's 'popularity' (a rank -- lower is more
             # popular), AniList's is a raw favorites/list count -- higher
             # is more popular. Negated here so the Seasons page's Sort
             # by: Popularity can use one ascending-numeric convention
             # ("most popular first") across every backend without having
-            # to know which one it's talking to.
+            # to know which one it's talking to. popularity_label keeps
+            # the original, un-negated count for display.
             'popularity': (
                 -item['popularity'] if item.get('popularity') is not None else None),
+            'popularity_label': (
+                '{:,} users'.format(item['popularity'])
+                if item.get('popularity') is not None else None),
             'extra': [
                 ('English',         item['title'].get('english')),
                 ('Romaji',          item['title'].get('romaji')),

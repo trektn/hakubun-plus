@@ -8,7 +8,11 @@ from hakubun.ui.qt.util import IN_LIST_COLOR, getColor
 MARGIN = 5
 PADDING = 5
 WIDTH = 450
-MIN_HEIGHT = 200
+# Actually a cap (see sizeHint's min()), not a floor -- raised from 200 so
+# a card showing every optional row at once (Score, Popularity, Airs, In
+# List, on top of the always-present Season/Type/Episodes) has room
+# before the synopsis text below it starts getting squeezed out.
+MIN_HEIGHT = 250
 COLUMN_A = 100
 COLUMN_B = 290
 
@@ -58,6 +62,8 @@ class AddListDelegate(QStyledItemDelegate):
         in_list_label = self.statuses_dict.get(
             mylist_entry['my_status'], '?') if mylist_entry else None
         airing_time = data.get('airing_time')
+        score_label = data.get('platform_score')
+        popularity_label = data.get('popularity_label')
 
         painter.save()
 
@@ -114,6 +120,12 @@ class AddListDelegate(QStyledItemDelegate):
         painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Type")
         textRect.translate(0, self.fh + 5)
         painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Episodes")
+        if score_label:
+            textRect.translate(0, self.fh + 5)
+            painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Score")
+        if popularity_label:
+            textRect.translate(0, self.fh + 5)
+            painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Popularity")
         if airing_time:
             textRect.translate(0, self.fh + 5)
             painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop, "Airs")
@@ -133,6 +145,12 @@ class AddListDelegate(QStyledItemDelegate):
         dataRect.translate(0, self.fh + 5)
         painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop,
                          str(data.get('total') or '?'))
+        if score_label:
+            dataRect.translate(0, self.fh + 5)
+            painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop, score_label)
+        if popularity_label:
+            dataRect.translate(0, self.fh + 5)
+            painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop, popularity_label)
         if airing_time:
             dataRect.translate(0, self.fh + 5)
             painter.drawText(dataRect, QtCore.Qt.AlignmentFlag.AlignTop, airing_time)

@@ -636,6 +636,8 @@ class libkitsu(lib):
             # same convention MAL's 'popularity' field uses. Used for the
             # Seasons page's Sort by: Popularity.
             'popularity': attr.get('popularityRank'),
+            'popularity_label': (
+                '#%d' % attr['popularityRank'] if attr.get('popularityRank') else None),
             'duration': attr.get('episodeLength'),
             'url': "https://kitsu.app/{}/{}".format(self.mediatype, attr['slug']),
             'aliases':     list(filter(None, attr['titles'].values())),

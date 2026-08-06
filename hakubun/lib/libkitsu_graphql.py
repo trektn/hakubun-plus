@@ -731,6 +731,8 @@ class libkitsu_graphql(lib):
             'platform_score': platform_score,
             'score_raw':   float(average) if average else None,
             'popularity':  media.get('userCountRank'),
+            'popularity_label': (
+                '#%d' % media['userCountRank'] if media.get('userCountRank') else None),
             'duration':    media.get('episodeLength'),
             'mal_id':      self._mal_id_from_mappings(media.get('mappings')),
             'url': "https://kitsu.app/{}/{}".format(
