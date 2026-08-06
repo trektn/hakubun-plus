@@ -170,6 +170,12 @@ class ShowListModel(QtCore.QAbstractTableModel):
     def update(self, showid, is_playing=None):
         if not self.showlist:
             return
+        if showid not in self.id_map:
+            # A stale async tracker callback for a show from the
+            # account we've since switched away from (setShowList
+            # already rebuilt id_map for the new account) -- nothing
+            # to update, not a crash.
+            return
 
         # Recalculate color and emit the changed signal
         row = self.id_map[showid]
