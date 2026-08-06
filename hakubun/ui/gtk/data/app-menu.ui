@@ -38,6 +38,10 @@
         <attribute name="label" translatable="yes">Synchronize</attribute>
       </item>
       <item>
+        <attribute name="action">win.multisync</attribute>
+        <attribute name="label" translatable="yes">Multi-provider Sync...</attribute>
+      </item>
+      <item>
         <attribute name="action">win.upload</attribute>
         <attribute name="label" translatable="yes">Upload</attribute>
       </item>
@@ -116,6 +120,10 @@
         <item>
           <attribute name="action">win.synchronize</attribute>
           <attribute name="label" translatable="yes">_Synchronize</attribute>
+        </item>
+        <item>
+          <attribute name="action">win.multisync</attribute>
+          <attribute name="label" translatable="yes">_Multi-provider Sync...</attribute>
         </item>
         <item>
           <attribute name="action">win.upload</attribute>

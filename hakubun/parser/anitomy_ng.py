@@ -41,6 +41,20 @@ class AnitomyNgWrapper():
     _LOWERCASE_SEASON_EPISODE = re.compile(
         r'(?<![A-Za-z0-9])s(?P<season>[0-9]+)e(?P<episode>[0-9]+)(?![A-Za-z0-9])')
 
+    # anitomy-ng gives up on 'Title 11 - Episode Name' -- an episode number
+    # that is neither preceded by a dash nor followed by the end of the
+    # name -- and folds the number AND the episode title into the title,
+    # emitting no episode element at all. That is the silent-corruption
+    # direction: getEpisode() then falls back to 1, so the file matches the
+    # right show but records the wrong episode. 'Title - 11 - Episode Name'
+    # and a bare 'Title 11' both parse correctly, which is why this only
+    # shows up on some release groups.
+    _EPISODE_IN_TITLE = re.compile(
+        r'^(?P<title>.*\S)[\s_.]+'
+        r'(?P<episode>[0-9]{1,4})(?:[vV][0-9]+)?'
+        r'[\s_.]*-[\s_.]+'
+        r'(?P<episode_title>\S.*)$')
+
     def __init__(self, msg, file_name):
         self.msg = msg.with_classname('Parser')
         self.original_file_name = file_name
@@ -87,6 +101,12 @@ class AnitomyNgWrapper():
         # was a real, standalone token, not a checksum fragment.
         if not has_checksum:
             types = [t for t in types if t.upper() not in ('ED', 'OP')]
+
+        if not episodes and title:
+            recovered = self.__recoverEpisodeFromTitle(title)
+            if recovered:
+                (title, episode) = recovered
+                episodes.append(episode)
 
         self.episode_number = episodes if len(episodes) > 1 else (
             episodes[0] if episodes else None)
@@ -136,6 +156,33 @@ class AnitomyNgWrapper():
         return (ep_start, ep_end)
 
     @staticmethod
+    def _dedupe_regex_can_match(temp, sep):
+        """Necessary (not sufficient) precondition for _DEDUPE_RE to find
+        anything in `temp`, cheap enough to run on every file so the
+        actual backtracking regex only runs on real candidates.
+
+        Any match's group 1 ends at or before some separator, and its
+        backreferenced duplicate starts strictly after that SAME
+        separator (the lookahead is `.*?SEP.*?DUP`) -- so a match is
+        possible only if, for at least one separator position p, the
+        (case-folded) text before p and the text after p share some
+        3-character run at all. Checking every separator therefore
+        can't rule out a real match; if none of them share so much as a
+        3-gram, the regex is guaranteed to fail and can be skipped.
+        """
+        folded = temp.lower()
+        positions = [i for i, c in enumerate(temp) if c == sep]
+        for p in positions:
+            before, after = folded[:p], folded[p + 1:]
+            if len(before) < 3 or len(after) < 3:
+                continue
+            before_grams = {before[i:i + 3] for i in range(len(before) - 2)}
+            after_grams = {after[i:i + 3] for i in range(len(after) - 2)}
+            if before_grams & after_grams:
+                return True
+        return False
+
+    @staticmethod
     def __dedupePathTitle(file_name):
         # When library_full_path feeds a path like "Show S01/Show
         # S01E05.mkv", anitomy-ng (like upstream Anitomy, and unlike
@@ -148,13 +195,22 @@ class AnitomyNgWrapper():
         try:
             temp = re.sub(r'[^\w\s{0}\(\)\{{\}}\[\]]'.format(re.escape(os.path.sep)),
                           r' ', file_name, flags=re.ASCII)
-            m = max(
-                (x for x in re.finditer(
-                    r'(\b.{{3,}}\b)(?=.*?{0}.*?(?P<DUP>\1))'.format(re.escape(os.path.sep)),
-                    temp, flags=re.IGNORECASE)),
-                key=lambda y: y.end() - y.start(),
-                default=None,
-            )
+            # The backtracking search below is what dominated real
+            # library-scan time once fuzzy title matching stopped being
+            # the bottleneck (rapidfuzz) -- most files have no duplicated
+            # parent-folder title at all, so a cheap necessary-condition
+            # check first (see _dedupe_regex_can_match) skips it for
+            # those without changing what a real candidate ever matches.
+            m = None
+            if AnitomyNgWrapper._dedupe_regex_can_match(temp, os.path.sep):
+                m = max(
+                    (x for x in re.finditer(
+                        r'(\b.{{3,}}\b)(?=.*?{0}.*?(?P<DUP>\1))'.format(
+                            re.escape(os.path.sep)),
+                        temp, flags=re.IGNORECASE)),
+                    key=lambda y: y.end() - y.start(),
+                    default=None,
+                )
             if m:
                 file_name = file_name[:m.start('DUP')] + ' ' + file_name[m.end('DUP'):]
         except ValueError:
@@ -163,6 +219,28 @@ class AnitomyNgWrapper():
         parts = file_name.split(os.path.sep)
         file_name = ' '.join(parts).strip()
         return re.sub(r'\s{2,}', r' ', file_name)
+
+    @classmethod
+    def __recoverEpisodeFromTitle(cls, title):
+        """ Split a 'Title 11 - Episode Name' title anitomy-ng left whole.
+
+        Only called when no episode element came back at all, so a title that
+        legitimately ends in a number ('Beyblade X 11' with nothing after it)
+        is never touched -- anitomy-ng handles that shape correctly and gives
+        us the episode. Returns (title, episode) or None.
+        """
+        match = cls._EPISODE_IN_TITLE.match(title)
+        if not match:
+            return None
+
+        episode = match.group('episode')
+
+        # A four-digit number reads as a year, not an episode -- 'Show 2011 -
+        # Something' is a title, and no release numbers episodes that high.
+        if len(episode) == 4 and 1900 <= int(episode) <= 2099:
+            return None
+
+        return (match.group('title'), episode)
 
     @staticmethod
     def __buildTitle(title, season, year, types):

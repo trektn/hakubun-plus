@@ -61,7 +61,16 @@ class NowPlayingView(Gtk.Box):
         self.status_label = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
         self.pack_start(self.status_label, False, False, 0)
 
+        # A GtkBox's non-packing-direction size (width, here, since this
+        # box is VERTICAL) isn't governed by pack_start's expand/fill --
+        # those only affect height -- so a bare ProgressBar defaults to
+        # halign=FILL and stretches to the box's full width. That's fine
+        # in a normal-width window but turns into an absurdly long, thin
+        # sliver if the window is very wide, so it's capped and centered
+        # instead of left to fill.
         self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_halign(Gtk.Align.CENTER)
+        self.progress_bar.set_size_request(400, -1)
         self.pack_start(self.progress_bar, False, False, 0)
 
         self.position_label = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
@@ -86,6 +95,14 @@ class NowPlayingView(Gtk.Box):
         # stop (that only affects show_all()), so a 'show' handler that
         # immediately re-hides it is needed to make this actually stick.
         self.details_box = ShowInfoBox(engine, orientation=Gtk.Orientation.VERTICAL)
+        # Needs the same no_show_all treatment as its children below: the
+        # container window calls show_all() on its whole widget tree once
+        # at startup, right after show_nothing_playing() below has
+        # already hidden this box -- without no_show_all, that show_all()
+        # un-hides it again, leaving both this and empty_box visible and
+        # fighting for space in an unscrolled box (and pushing the "Watch
+        # a Random Episode" button out of reach).
+        self.details_box.set_no_show_all(True)
         for widget in (self.details_box.label_title, self.details_box.image_container):
             widget.set_no_show_all(True)
             widget.hide()

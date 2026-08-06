@@ -129,7 +129,12 @@ class DetailsWidget(QWidget):
         content_layout.setContentsMargins(14, 14, 14, 14)
         content_layout.setSpacing(16)
 
-        top_row = QHBoxLayout()
+        # Exposed as an attribute (not just a local) so a caller that
+        # reparents show_image elsewhere (see NowPlayingWidget) can
+        # remove it from here first -- addWidget() alone moves a
+        # widget's QObject parent to the new layout's, but leaves the
+        # old layout's QLayoutItem for it dangling.
+        self.top_row = top_row = QHBoxLayout()
         top_row.setSpacing(18)
 
         self.show_image = QLabel()
@@ -174,9 +179,9 @@ class DetailsWidget(QWidget):
         self.setLayout(main_layout)
 
     def worker_call(self, function, ret_function, *args, **kwargs):
-        # Run worker in a thread
+        # Run worker in a thread. set_function owns starting/queueing;
+        # don't call worker.start() here (see EngineWorker.set_function).
         self.worker.set_function(function, ret_function, *args, **kwargs)
-        self.worker.start()
 
     def _clear_facts(self):
         while self.facts_layout.rowCount() > 0:
@@ -200,6 +205,7 @@ class DetailsWidget(QWidget):
         self._clear_facts()
         self.facts_layout.addRow(QLabel('Loading details...'))
         self.show_description.setText('')
+        self._loaded_show_id = show.get('id')
         self.worker_call('get_show_details', self.r_details_loaded, show)
         api_info = self.worker.engine.api_info
 
@@ -235,6 +241,18 @@ class DetailsWidget(QWidget):
 
         details = result['result']
         prose_blocks = []
+
+        # The platform's own id first -- selectable so it can be copied
+        # straight into the multisync Inspector or a browser URL.
+        if getattr(self, '_loaded_show_id', None) is not None:
+            api_info = self.worker.engine.api_info
+            platform = api_info.get('name') \
+                or (api_info.get('shortname') or 'Platform').capitalize()
+            id_label = QLabel(str(self._loaded_show_id))
+            id_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            id_label.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.facts_layout.addRow('<b>%s ID:</b>' % platform, id_label)
 
         for key, value in details['extra']:
             if not key or not value:

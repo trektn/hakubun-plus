@@ -242,6 +242,12 @@ by z411 <z411@omaera.org>. For other contributors see AUTHORS file.
 Acknowledgments
 ---------------
 
+Filename parsing uses [anitomy-ng](https://github.com/tylergibbs2/anitomy-ng),
+a pure-Rust port of [Anitomy](https://github.com/erengy/anitomy) (MPL 2.0).
+
 The optional `anitopy` title parser uses the
-[anitopy](https://github.com/igorcafe/anitopy) library, a Python port of
-[Anitomy](https://github.com/erengy/anitomy).
+[anitopy](https://github.com/igorcafe/anitopy) library, also a Python port of
+Anitomy (MPL 2.0).
+
+Optional fuzzy title matching uses
+[RapidFuzz](https://github.com/rapidfuzz/RapidFuzz) (MIT license).

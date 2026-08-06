@@ -92,7 +92,7 @@ class libkitsu(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
         # Kitsu's AnimeResource is the only one of the three with a
         # `season`/`season_year` filter (confirmed against kitsu-server's
         # app/resources/*.rb) -- manga and drama have no season concept
@@ -118,7 +118,7 @@ class libkitsu(lib):
             'planned': 'Plan to Read'
         },
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
         'search_methods': [utils.SearchMethod.KW],
     }
     mediatypes['drama'] = {
@@ -134,7 +134,7 @@ class libkitsu(lib):
         'statuses': default_statuses,
         'statuses_dict': default_statuses_dict,
         'score_max': 5,
-        'score_step': 0.25,
+        'score_step': 0.5,
         'search_methods': [utils.SearchMethod.KW],
     }
 
@@ -316,6 +316,7 @@ class libkitsu(lib):
                 'my_id': entry['id'],
                 'my_progress': entry['attributes']['progress'],
                 'my_score': float(rating)/4.00 if rating is not None else 0.0,
+                'my_rewatched_times': entry['attributes'].get('reconsumeCount', 0),
                 'my_status': entry['attributes']['status'],
                 'my_start_date': self._iso2date(entry['attributes']['startedAt']),
                 'my_finish_date': self._iso2date(entry['attributes']['finishedAt']),
@@ -323,8 +324,36 @@ class libkitsu(lib):
             })
 
         if 'included' in data_json:
-            for media in data_json['included']:
-                infolist.append(self._parse_info(media))
+            # 'included' mixes media and mapping resources; classify
+            # each item once, then attach each media's MAL id -- a
+            # mapping can appear anywhere in the list relative to the
+            # media that references it, so mappings must be fully
+            # indexed before any media is processed (two passes, but
+            # over disjoint items instead of the same list twice).
+            mappings = {}
+            media_items = []
+            for res in data_json['included']:
+                if res['type'] == 'mappings':
+                    attrs = res.get('attributes') or {}
+                    mappings[res['id']] = (attrs.get('externalSite'),
+                                           attrs.get('externalId'))
+                else:
+                    media_items.append(res)
+            wanted_site = 'myanimelist/' + (
+                'manga' if self.mediatype == 'manga' else 'anime')
+            for media in media_items:
+                mal_id = None
+                refs = ((media.get('relationships') or {})
+                        .get('mappings', {}).get('data') or [])
+                for ref in refs:
+                    site, ext_id = mappings.get(ref['id'], (None, None))
+                    if site == wanted_site and ext_id:
+                        try:
+                            mal_id = int(ext_id)
+                        except (TypeError, ValueError):
+                            pass
+                        break
+                infolist.append(self._parse_info(media, mal_id=mal_id))
 
     def fetch_list(self):
         """Queries the full list from the remote server.
@@ -341,7 +370,13 @@ class libkitsu(lib):
                 "filter[user_id]": self._get_userconfig('userid'),
                 "filter[kind]": self.mediatype,
                 # "include": self.mediatype, # TODO : This returns a 500 for some reason.
-                "include": "media",
+                # media.mappings carries Kitsu's external-site id links
+                # (notably MyAnimeList) -- the same community mapping
+                # data mal-sync style tools use. Multisync identity
+                # resolution depends on it; without it every legacy
+                # Kitsu entry falls back to title matching.
+                "include": "media,media.mappings",
+                "fields[mappings]": "externalSite,externalId",
                 # TODO : List for manga should be different
                 f"fields[{self.mediatype}]": ','.join([
                     'id',
@@ -418,6 +453,7 @@ class libkitsu(lib):
     def merge(self, show, info):
         show['title'] = info['title']
         show['aliases'] = info['aliases']
+        show['mal_id'] = info.get('mal_id')
         show['url'] = info['url']
         show['total'] = info['total']
         show['image'] = info['image']
@@ -548,11 +584,14 @@ class libkitsu(lib):
             values['data']['id'] = str(item['my_id'])
         if 'my_progress' in item:
             values['data']['attributes']['progress'] = item['my_progress']
+        if 'my_rewatched_times' in item:
+            values['data']['attributes']['reconsumeCount'] = \
+                item['my_rewatched_times']
         if 'my_status' in item:
             values['data']['attributes']['status'] = item['my_status']
         if 'my_score' in item:
-            values['data']['attributes']['ratingTwenty'] = int(
-                item['my_score']*4) or None
+            values['data']['attributes']['ratingTwenty'] = \
+                utils.kitsu_rating_twenty(item['my_score'])
 
         return json.dumps(values)
 
@@ -562,7 +601,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%d")
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
@@ -572,7 +611,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%dT%H:%M:%S.%fZ").date()
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
@@ -582,7 +621,7 @@ class libkitsu(lib):
 
         try:
             return datetime.datetime.strptime(string, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc)
-        except Exception:
+        except (ValueError, TypeError):
             self.msg.debug('Invalid date {}'.format(string))
             return None  # Ignore date if it's invalid
 
@@ -602,8 +641,9 @@ class libkitsu(lib):
         # Safe to assume dates haven't even been announced yet
         return utils.Status.NOTYET
 
-    def _parse_info(self, media):
+    def _parse_info(self, media, mal_id=None):
         info = utils.show()
+        info['mal_id'] = mal_id
         attr = media['attributes']
 
         if media['type'] == 'anime':

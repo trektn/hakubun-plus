@@ -24,14 +24,16 @@ from hakubun.ui.qt.widgets import DetailsWidget, PlaybackBar
 class NowPlayingWidget(QWidget):
     """
     Taiga mode's dedicated "Now Playing" screen: what the tracker
-    currently sees playing, at the top -- title, episode, a play/pause
-    + progress bar row, Last/Next Episode buttons -- followed by that
-    show's normal details view (facts + synopsis), reused as-is (minus
-    its own title/poster, which would just duplicate the ones above).
+    currently sees playing, at the top -- poster, title, episode, a
+    play/pause + progress bar row, Last/Next Episode buttons --
+    followed by that show's normal details view (facts + synopsis),
+    reused as-is (minus its own title/poster, which would just
+    duplicate the ones above).
 
     When nothing is recognized as playing, the details view is hidden
     entirely (it used to just keep showing whatever was last loaded)
-    and replaced with a "play something at random" recommendation.
+    and replaced with a "play something at random" recommendation. The
+    poster stays visible either way (blank until something's playing).
     """
 
     playRequested = QtCore.pyqtSignal(int, int)  # show_id, episode
@@ -44,6 +46,31 @@ class NowPlayingWidget(QWidget):
         self._episode = None
 
         layout = QVBoxLayout()
+
+        # Built before the rest of the layout so its poster (image_on_right
+        # keeps it out of the way of the facts table below, which reads
+        # more naturally flush left) can be pulled out and shown up here,
+        # above the title -- same position GTK's NowPlayingView shows its
+        # own image_box in. Reusing this QLabel instead of loading a
+        # second, independent one avoids two ImageWorker threads racing
+        # to download and write the same cache file for the same show.
+        self.details = DetailsWidget(self, worker, image_on_right=True)
+        # The title label below already covers this -- showing it again
+        # here just duplicates (and, since this label measures its own
+        # not-yet-laid-out width to elide against, truncates) what's
+        # already on screen.
+        self.details.show_title.hide()
+
+        self.image_label = self.details.show_image
+        # addWidget() alone would move image_label's QObject parent to
+        # this layout but leave a stale QLayoutItem for it in details'
+        # own top_row -- remove it there first.
+        self.details.top_row.removeWidget(self.image_label)
+        image_row = QHBoxLayout()
+        image_row.addStretch(1)
+        image_row.addWidget(self.image_label)
+        image_row.addStretch(1)
+        layout.addLayout(image_row)
 
         self.title_label = QLabel('Nothing playing')
         title_font = QtGui.QFont()
@@ -80,15 +107,6 @@ class NowPlayingWidget(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        # image_on_right: keeps the cover image visible (unlike show_title,
-        # it isn't shown anywhere else on this screen) but out of the way
-        # of the facts table, which reads more naturally flush left.
-        self.details = DetailsWidget(self, worker, image_on_right=True)
-        # The title label above already covers this -- showing it again
-        # here just duplicates (and, since this label measures its own
-        # not-yet-laid-out width to elide against, truncates) what's
-        # already on screen.
-        self.details.show_title.hide()
         layout.addWidget(self.details, 1)
 
         # Shown instead of self.details when nothing is recognized.
@@ -140,6 +158,7 @@ class NowPlayingWidget(QWidget):
             self.watch_next_btn.setEnabled(False)
             self.playback_bar.clear()
             self.time_label.setText('')
+            self.image_label.clear()
             self._show_empty_state()
             if state == utils.Tracker.UNRECOGNIZED:
                 self.title_label.setText('Unrecognized video')
@@ -182,6 +201,9 @@ class NowPlayingWidget(QWidget):
         self._show_details_state()
 
         if is_new_show:
+            # Loads facts + poster together -- see the comment in
+            # __init__ on why the poster ends up shown above the title
+            # instead of where DetailsWidget itself puts it.
             self.details.load(show)
 
     def _on_watch_last(self):

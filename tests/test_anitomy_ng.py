@@ -67,3 +67,60 @@ def test_real_ending_clip_with_genuine_checksum_is_still_excluded(msg):
                    "[Coalgirls]_Yuru_Yuri_OP_(1920x1080_Blu-Ray_FLAC)_"
                    "[F94F020D].mkv")
     assert w.getName() is None
+
+
+def test_episode_before_episode_title_without_a_dash(msg):
+    # From a real MPRIS tracker log. anitomy-ng folds both the episode
+    # number and the episode title into the title when the number has no
+    # dash in front of it, and emits no episode element -- so getEpisode()
+    # fell back to 1 and the file was recorded as episode 1 of Beyblade X.
+    w = parse(msg, "[HnY] Beyblade X 11 - Kadovar's Test (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+    assert w.getEpisodeNumbers(True) == (11, 11)
+
+
+def test_episode_before_a_single_word_episode_title(msg):
+    # The failure isn't about how many words the episode title has; it only
+    # ever looked intermittent because anitomy-ng recognizes some episode
+    # titles by keyword ("Episode ...") and recovers on those by accident.
+    w = parse(msg, "[HnY] Beyblade X 11 - Test (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_dashed_episode_number_still_parses(msg):
+    # The shape anitomy-ng already handles must not regress.
+    w = parse(msg, "[HnY] Beyblade X - 11 - Kadovar's Test (1080p).mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_bare_trailing_episode_number_still_parses(msg):
+    w = parse(msg, "[HnY] Beyblade X 11 (1080p) v2.mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11
+
+
+def test_year_before_a_title_is_not_taken_as_an_episode(msg):
+    # A four-digit year must not be salvaged as an episode number.
+    w = parse(msg, "[Grp] Show 2011 - Movie Title (1080p).mkv")
+    assert w.getEpisode() == 1
+
+
+def test_path_dedup_prefilter_skips_paths_with_no_shared_text(msg):
+    # A necessary-condition prefilter guards the parent-folder-dedup
+    # search (dominates real scan time on large libraries otherwise) --
+    # confirm the episode/title still parse normally when the folder and
+    # filename share no text, so there's genuinely nothing to strip.
+    w = parse(msg, "Random Folder Name/[SubsPlease] Frieren - 05 (1080p).mkv")
+    assert w.getEpisode() == 5
+
+
+def test_path_dedup_prefilter_still_strips_real_duplicates(msg):
+    # Contrast with the above: the parent folder's title is genuinely
+    # duplicated in the filename, so the prefilter must let the search
+    # run and the duplicate must still be stripped.
+    w = parse(msg, "Beyblade X/Beyblade X - 11 - Kadovar's Test (1080p).mkv")
+    assert w.getName() == "Beyblade X"
+    assert w.getEpisode() == 11

@@ -14,7 +14,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import contextlib
 import datetime
+import hashlib
 import json
 import os
 import random
@@ -100,6 +102,11 @@ class Engine:
     ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co'
     AIRING_SCHEDULE_BATCH = 50
 
+    # How long a cached next-airing answer stays good. An episode airs
+    # once a week, so an hour is nowhere near stale enough to mislead,
+    # and it keeps repeated details opens off the network.
+    NEXT_AIRING_CACHE_SECONDS = 3600
+
     def __init__(self, account=None, message_handler=None, accountnum=None):
         self.msg = messenger.Messenger(message_handler, self.name)
 
@@ -109,6 +116,14 @@ class Engine:
         # somewhere more durable than a status-bar message that's about
         # to be overwritten by "Ready.".
         self.parser_fallback_warning = None
+
+        # mal id -> (fetched_at, episode, aware UTC airing time), or
+        # (fetched_at, None, None) for a show AniList has no schedule
+        # for. Shared by get_airing_schedule and the per-show lookup the
+        # details view does, so opening details for a show right after
+        # viewing the schedule costs nothing -- and so a "no schedule"
+        # answer isn't re-asked on every single open.
+        self._next_airing_cache = {}
 
         # Utility parameter to get the account from the account manager
         if accountnum:
@@ -173,6 +188,11 @@ class Engine:
         self._undo_stack = deque(maxlen=self.UNDO_LIMIT)
         self._redo_stack = deque(maxlen=self.UNDO_LIMIT)
         self._replaying_undo = False
+        # While not None, _record_undo() appends to this list instead of
+        # pushing straight to _undo_stack, so a user action that triggers
+        # several field changes (e.g. set_episode's auto status/date
+        # change) is recorded and undone/redone as one compound entry.
+        self._undo_group = None
 
         # Bumped on every fetch_mal_scores() call so an in-flight fetch
         # batch from a previous sync can tell it's been superseded and
@@ -195,14 +215,44 @@ class Engine:
         single field of a single show) onto the undo stack, so it can
         later be undone (and redone) via undo()/redo(). Does nothing while
         an undo/redo is itself being replayed, to avoid the replay being
-        recorded as a new action.
+        recorded as a new action. If called while inside a
+        _grouped_undo() block, the entry is added to that group instead
+        of being pushed directly.
         """
         if self._replaying_undo:
             return
-        self._undo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        entry = (method, showid, title, old_value, new_value, description)
+        if self._undo_group is not None:
+            self._undo_group.append(entry)
+            return
+        self._undo_stack.append(entry)
         self._redo_stack.clear()
         self._emit_signal('undo_stack_changed')
+
+    @contextlib.contextmanager
+    def _grouped_undo(self):
+        """
+        Wrap a user-facing action that may internally call more than one
+        _record_undo()-ing method (e.g. set_episode's auto status/date
+        change) so the whole thing is recorded and undone/redone as a
+        single compound entry instead of separate ones the user would
+        have to undo one at a time. Nested calls join the outermost
+        group rather than starting a new one.
+        """
+        if self._undo_group is not None:
+            yield
+            return
+        self._undo_group = []
+        try:
+            yield
+        finally:
+            group = self._undo_group
+            self._undo_group = None
+            if not group:
+                return
+            self._undo_stack.append(group[0] if len(group) == 1 else group)
+            self._redo_stack.clear()
+            self._emit_signal('undo_stack_changed')
 
     def can_undo(self):
         return len(self._undo_stack) > 0
@@ -218,51 +268,56 @@ class Engine:
     def undo(self):
         """
         Reverts the last undoable user action (episode, score, status or
-        tags change) by re-applying its old value. The reversal is itself
-        queued for the next sync, same as any other change.
+        tags change, possibly a compound of several fields changed
+        together) by re-applying its old value(s). The reversal is
+        itself queued for the next sync, same as any other change.
         """
         if not self._undo_stack:
             raise utils.EngineError('Nothing to undo.')
 
-        method, showid, title, old_value, new_value, description = self._undo_stack.pop()
-        self.msg.info("Undoing: %s" % description)
+        entry = self._undo_stack.pop()
+        actions = entry if isinstance(entry, list) else [entry]
         self._replaying_undo = True
         try:
-            getattr(self, method)(showid, old_value)
-        except utils.EngineError as e:
-            # The show may no longer be in a state where the old value
-            # applies (e.g. it was deleted). Don't leave the stacks
-            # inconsistent.
-            self.msg.warn("Couldn't undo '%s': %s" % (description, e))
-            raise
+            for method, showid, title, old_value, new_value, description in reversed(actions):
+                self.msg.info("Undoing: %s" % description)
+                try:
+                    getattr(self, method)(showid, old_value)
+                except utils.EngineError as e:
+                    # The show may no longer be in a state where the old
+                    # value applies (e.g. it was deleted). Don't leave the
+                    # stacks inconsistent.
+                    self.msg.warn("Couldn't undo '%s': %s" % (description, e))
+                    raise
         finally:
             self._replaying_undo = False
 
-        self._redo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        self._redo_stack.append(entry)
         self._emit_signal('undo_stack_changed')
-        return description
+        return actions[0][5]
 
     def redo(self):
-        """Re-applies the last user action undone via undo()."""
+        """Re-applies the last user action (or compound of actions) undone via undo()."""
         if not self._redo_stack:
             raise utils.EngineError('Nothing to redo.')
 
-        method, showid, title, old_value, new_value, description = self._redo_stack.pop()
-        self.msg.info("Redoing: %s" % description)
+        entry = self._redo_stack.pop()
+        actions = entry if isinstance(entry, list) else [entry]
         self._replaying_undo = True
         try:
-            getattr(self, method)(showid, new_value)
-        except utils.EngineError as e:
-            self.msg.warn("Couldn't redo '%s': %s" % (description, e))
-            raise
+            for method, showid, title, old_value, new_value, description in actions:
+                self.msg.info("Redoing: %s" % description)
+                try:
+                    getattr(self, method)(showid, new_value)
+                except utils.EngineError as e:
+                    self.msg.warn("Couldn't redo '%s': %s" % (description, e))
+                    raise
         finally:
             self._replaying_undo = False
 
-        self._undo_stack.append(
-            (method, showid, title, old_value, new_value, description))
+        self._undo_stack.append(entry)
         self._emit_signal('undo_stack_changed')
-        return description
+        return actions[0][5]
 
     def _tracker_detected(self, path, filename):
         self.add_to_library(path, filename)
@@ -649,11 +704,111 @@ class Engine:
             except Exception as e:
                 self.msg.debug("Couldn't fetch MAL score for details: %s" % e)
 
+        # Everything below is appended to 'extra', which both UIs (and
+        # the CLI) render generically as label/value rows -- so a row
+        # added here shows up in all of them without UI-side work.
+        rows = []
+
         if show.get('mal_score'):
+            rows.append(('MAL Score', show['mal_score']))
+
+        # Phrased as a full sentence-fragment label because the value is
+        # a duration, not a fact about the show: "Next episode will air
+        # in: 3 days (Sat Aug 02, 2026)".
+        try:
+            next_airing = self.get_next_airing(show)
+        except Exception as e:
+            self.msg.debug("Couldn't resolve next airing for details: %s" % e)
+            next_airing = None
+        if next_airing:
+            (episode, airing_at) = next_airing
+            when = utils.format_next_airing(airing_at)
+            if when:
+                rows.append(('Next episode will air in', when))
+                if episode:
+                    rows.append(('Next episode', str(episode)))
+
+        # A manually pinned folder (set_show_folder) is otherwise
+        # invisible once set -- nothing in the list marks a show as
+        # pinned, so the details view is where you find out.
+        folder = self.get_show_folder(show['id'])
+        if folder:
+            rows.append(('Folder', folder))
+
+        if rows:
             details = dict(details)
-            details['extra'] = list(details.get('extra') or []) + \
-                [('MAL Score', show['mal_score'])]
+            details['extra'] = list(details.get('extra') or []) + rows
         return details
+
+    def _mal_id_of(self, show):
+        """The show's MAL id, which is what AniList's public API is
+        queried by.
+
+        'mal_id' is only ever populated by the MAL-score cross-reference
+        feature (see fetch_mal_scores), which exists for accounts on a
+        *different* backend -- it's never set for an actual MAL account,
+        since there was never anything to cross-reference against. For
+        MAL accounts, 'id' already *is* the MAL id, so use that instead
+        of treating every show as unresolvable.
+        """
+        if self.api_info.get('shortname') == 'mal':
+            return show.get('id')
+        return show.get('mal_id')
+
+    def _cache_next_airing(self, mal_id, episode, airing_at):
+        self._next_airing_cache[mal_id] = (
+            time.time(), episode, airing_at)
+
+    def get_next_airing(self, show):
+        """When **show**'s next episode airs, as (episode, aware UTC
+        datetime), or None if it isn't airing / nothing knows.
+
+        Three sources, cheapest first: the show dict itself (AniList
+        accounts get 'next_ep_time' with the list, for free), this
+        session's cache (populated by get_airing_schedule and by earlier
+        calls here), and finally a single-show query against AniList's
+        public API by MAL id -- the same cross-reference the airing
+        schedule uses, so it works on every backend.
+        """
+        if show.get('status') != utils.Status.AIRING:
+            return None
+
+        if show.get('next_ep_time'):
+            return (show.get('next_ep_number'),
+                    utils.as_utc(show['next_ep_time']))
+
+        mal_id = self._mal_id_of(show)
+        if not mal_id:
+            return None
+
+        cached = self._next_airing_cache.get(mal_id)
+        if cached and time.time() - cached[0] < self.NEXT_AIRING_CACHE_SECONDS:
+            return (cached[1], cached[2]) if cached[2] else None
+
+        query = '''
+        query ($id: Int) {
+          Media(idMal: $id, type: ANIME) {
+            nextAiringEpisode { airingAt episode }
+          }
+        }'''
+        try:
+            data = self._anilist_public_query(query, {'id': mal_id})
+        except utils.HakubunError as e:
+            # A details view is not worth failing over a schedule
+            # lookup; the row is simply omitted.
+            self.msg.debug("Couldn't fetch airing time for details: %s" % e)
+            return None
+
+        media = (data.get('data') or {}).get('Media') or {}
+        next_ep = media.get('nextAiringEpisode')
+        if not next_ep:
+            self._cache_next_airing(mal_id, None, None)
+            return None
+
+        airing_at = datetime.datetime.fromtimestamp(
+            next_ep['airingAt'], tz=datetime.timezone.utc)
+        self._cache_next_airing(mal_id, next_ep['episode'], airing_at)
+        return (next_ep['episode'], airing_at)
 
     def get_airing_schedule(self):
         """
@@ -665,17 +820,7 @@ class Engine:
         without a resolvable mal_id, or that AniList doesn't have a
         schedule for, are silently skipped.
         """
-        # 'mal_id' is only ever populated by the MAL-score cross-reference
-        # feature (see fetch_mal_scores), which exists for accounts on a
-        # *different* backend -- it's never set for an actual MAL account,
-        # since there was never anything to cross-reference against. For
-        # MAL accounts, 'id' already *is* the MAL id, so use that instead
-        # of leaving every show filtered out below.
-        is_mal_account = self.api_info.get('shortname') == 'mal'
-
-        def mal_id_of(show):
-            return show['id'] if is_mal_account else show.get('mal_id')
-
+        mal_id_of = self._mal_id_of
         shows = [s for s in self.data_handler.get().values()
                 if mal_id_of(s) and s.get('status') == utils.Status.AIRING]
         if not shows:
@@ -717,15 +862,21 @@ class Engine:
             for media in page.get('media') or []:
                 next_ep = media.get('nextAiringEpisode')
                 if not next_ep:
+                    # Remember the negative answer too, so the details
+                    # view doesn't go ask again one show at a time.
+                    self._cache_next_airing(media['idMal'], None, None)
                     continue
                 show = by_mal_id.get(media['idMal'])
                 if not show:
                     continue
+                airing_at = datetime.datetime.fromtimestamp(
+                    next_ep['airingAt'], tz=datetime.timezone.utc)
+                self._cache_next_airing(
+                    media['idMal'], next_ep['episode'], airing_at)
                 schedule.append({
                     'show': show,
                     'episode': next_ep['episode'],
-                    'airing_at': datetime.datetime.fromtimestamp(
-                        next_ep['airingAt'], tz=datetime.timezone.utc),
+                    'airing_at': airing_at,
                 })
 
         schedule.sort(key=lambda entry: entry['airing_at'])
@@ -888,56 +1039,59 @@ class Engine:
         if show['my_progress'] == newep:
             raise utils.EngineError("Show already at episode %d" % newep)
 
-        # Change episode
-        old_progress = show['my_progress']
-        self.msg.info("Updating show %s to episode %d..." %
-                      (show['title'], newep))
-        self.data_handler.queue_update(show, 'my_progress', newep)
-        self._record_undo(
-            'set_episode', show['id'], show['title'], old_progress, newep,
-            "Episode change for %s (%d -> %d)" % (show['title'], old_progress, newep))
+        # Change episode. Grouped so that an auto status change triggered
+        # below is undone/redone together with the episode change as one
+        # user-facing action, instead of requiring two separate undos.
+        with self._grouped_undo():
+            old_progress = show['my_progress']
+            self.msg.info("Updating show %s to episode %d..." %
+                          (show['title'], newep))
+            self.data_handler.queue_update(show, 'my_progress', newep)
+            self._record_undo(
+                'set_episode', show['id'], show['title'], old_progress, newep,
+                "Episode change for %s (%d -> %d)" % (show['title'], old_progress, newep))
 
-        # Emit signal
-        self._emit_signal('episode_changed', show)
+            # Emit signal
+            self._emit_signal('episode_changed', show)
 
-        # Change status if required
-        oldstatus = show['my_status']
-        if self.config['auto_status_change'] and self.mediainfo.get('can_status'):
-            try:
-                if show['total'] and newep == show['total'] and self.mediainfo.get('statuses_finish'):
-                    if (
-                            not self.config['auto_status_change_if_scored'] or
-                            not self.mediainfo.get('can_score') or
-                            show['my_score']
-                    ):
-                        # Change to finished status
-                        self.set_status(
-                            show['id'], self._guess_new_finish(show))
-                    else:
-                        self.msg.warn("Updated episode but status won't be changed until a score is set.")
-                elif newep == 1 and self.mediainfo.get('statuses_start'):
-                    # Change to start status
-                    self.set_status(show['id'], self._guess_new_start(show))
-            except utils.EngineError as e:
-                # Only warn about engine errors since status change here is not critical
-                self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
+            # Change status if required
+            oldstatus = show['my_status']
+            if self.config['auto_status_change'] and self.mediainfo.get('can_status'):
+                try:
+                    if show['total'] and newep == show['total'] and self.mediainfo.get('statuses_finish'):
+                        if (
+                                not self.config['auto_status_change_if_scored'] or
+                                not self.mediainfo.get('can_score') or
+                                show['my_score']
+                        ):
+                            # Change to finished status
+                            self.set_status(
+                                show['id'], self._guess_new_finish(show))
+                        else:
+                            self.msg.warn("Updated episode but status won't be changed until a score is set.")
+                    elif newep == 1 and self.mediainfo.get('statuses_start'):
+                        # Change to start status
+                        self.set_status(show['id'], self._guess_new_start(show))
+                except utils.EngineError as e:
+                    # Only warn about engine errors since status change here is not critical
+                    self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
 
-        # Change dates if required
-        if self.config['auto_date_change'] and self.mediainfo.get('can_date'):
-            start_date = finish_date = None
+            # Change dates if required
+            if self.config['auto_date_change'] and self.mediainfo.get('can_date'):
+                start_date = finish_date = None
 
-            try:
-                initial_status = self.mediainfo.get('statuses_start')[0]
+                try:
+                    initial_status = self.mediainfo.get('statuses_start')[0]
 
-                if newep == 1 and show['my_status'] == initial_status:
-                    start_date = datetime.date.today()
-                if show['total'] and newep == show['total'] and oldstatus == initial_status:
-                    finish_date = datetime.date.today()
+                    if newep == 1 and show['my_status'] == initial_status:
+                        start_date = datetime.date.today()
+                    if show['total'] and newep == show['total'] and oldstatus == initial_status:
+                        finish_date = datetime.date.today()
 
-                self.set_dates(show['id'], start_date, finish_date)
-            except utils.EngineError as e:
-                # Only warn about engine errors since date change here is not critical
-                self.msg.warn('Updated episode but dates weren\'t changed: %s' % e)
+                    self.set_dates(show['id'], start_date, finish_date)
+                except utils.EngineError as e:
+                    # Only warn about engine errors since date change here is not critical
+                    self.msg.warn('Updated episode but dates weren\'t changed: %s' % e)
 
         # Update the tracker with the new information
         self._update_tracker()
@@ -996,33 +1150,36 @@ class Engine:
         if show['my_score'] == newscore:
             raise utils.EngineError("Score already at %s" % newscore)
 
-        # Change score
-        old_score = show['my_score']
-        self.msg.info("Updating show %s score to %s..." %
-                      (show['title'], newscore))
-        self.data_handler.queue_update(show, 'my_score', newscore)
-        self._record_undo(
-            'set_score', show['id'], show['title'], old_score, newscore,
-            "Score change for %s (%s -> %s)" % (show['title'], old_score, newscore))
+        # Change score. Grouped for the same reason as set_episode: an
+        # auto status change below should undo/redo together with the
+        # score change as one action.
+        with self._grouped_undo():
+            old_score = show['my_score']
+            self.msg.info("Updating show %s score to %s..." %
+                          (show['title'], newscore))
+            self.data_handler.queue_update(show, 'my_score', newscore)
+            self._record_undo(
+                'set_score', show['id'], show['title'], old_score, newscore,
+                "Score change for %s (%s -> %s)" % (show['title'], old_score, newscore))
 
-        # Emit signal
-        self._emit_signal('score_changed', show)
+            # Emit signal
+            self._emit_signal('score_changed', show)
 
-        # Change status if required
-        if (
-                show['total'] and
-                show['my_progress'] == show['total'] and
-                show['my_score'] and
-                self.mediainfo.get('can_status') and
-                self.config['auto_status_change'] and
-                self.config['auto_status_change_if_scored'] and
-                self.mediainfo.get('statuses_finish')
-        ):
-            try:
-                self.set_status(show['id'], self._guess_new_finish(show))
-            except utils.EngineError as e:
-                # Only warn about engine errors since status change here is not critical
-                self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
+            # Change status if required
+            if (
+                    show['total'] and
+                    show['my_progress'] == show['total'] and
+                    show['my_score'] and
+                    self.mediainfo.get('can_status') and
+                    self.config['auto_status_change'] and
+                    self.config['auto_status_change_if_scored'] and
+                    self.mediainfo.get('statuses_finish')
+            ):
+                try:
+                    self.set_status(show['id'], self._guess_new_finish(show))
+                except utils.EngineError as e:
+                    # Only warn about engine errors since status change here is not critical
+                    self.msg.warn('Updated episode but status wasn\'t changed: %s' % e)
 
         return show
 
@@ -1137,22 +1294,62 @@ class Engine:
                 entries += len(filenames)
         return latest, entries
 
+    def _scan_status_scope(self):
+        """The list statuses a library scan covers, shared by
+        _scan_library_if_changed and scan_library's own default so the two
+        can never disagree about what's in scope."""
+        if self.config['scan_whole_list']:
+            return self.mediainfo['statuses']
+        return self.mediainfo.get(
+            'statuses_library', self.mediainfo['statuses_start'])
+
+    def _tracker_list_signature(self, tracker_list):
+        """Fingerprint of the tracker list content a scan matched against
+        (every in-scope show's id and titles/aliases), so that adding,
+        removing, or retitling a show is detected the same way a changed
+        file on disk is -- not just "did the directory mtimes move".
+        Uses a stable hash (not Python's randomized hash()) since this is
+        persisted across process restarts and compared against on the
+        next run.
+        """
+        showlist = tracker_list[0]
+        parts = []
+        for show_id in sorted(showlist):
+            show = showlist[show_id]
+            parts.append(str(show_id))
+            parts.extend(sorted(show['titles']))
+        return hashlib.sha256(
+            '\x1f'.join(parts).encode('utf-8', 'surrogatepass')).hexdigest()
+
     def _scan_library_if_changed(self):
         """
-        Runs scan_library() only if the search directories look like they
-        may have changed since the last scan (new/removed/renamed files),
+        Runs scan_library() only if the search directories or the tracker
+        list itself look like they may have changed since the last scan,
         instead of unconditionally re-walking and re-matching the whole
         library every time the engine starts -- e.g. on every account or
         mediatype switch, which previously re-did this even when nothing
         on disk had changed at all.
+
+        A pure filesystem change (new/removed/renamed files) still uses
+        the incremental per-file cache. But a tracker list change (a show
+        added/removed, retitled, or an alias/redirection edited) can
+        invalidate an already-cached guess for a file whose own mtime
+        never moved -- e.g. a file that didn't match anything before the
+        show was added to the list would otherwise stay "unmatched"
+        forever -- so that case forces every file to be re-guessed from
+        scratch (rescan=True), not just files under a changed directory.
         """
         show_folders = self.data_handler.show_folders_get()
         if not self.mediainfo.get('can_play') \
                 or not (self.config['searchdir'] or show_folders):
             return
 
-        signature = self._library_dirs_signature(
+        my_status = self._scan_status_scope()
+        tracker_list = self._get_tracker_list(my_status)
+        dirs_signature = self._library_dirs_signature(
             self.searchdirs + list(show_folders.values()))
+        list_signature = self._tracker_list_signature(tracker_list)
+        signature = (dirs_signature, list_signature)
         cached_signature = self.data_handler.library_scan_signature_get()
 
         if cached_signature is not None \
@@ -1161,9 +1358,18 @@ class Engine:
             self.msg.info("Local library unchanged, skipping scan.")
             return
 
-        self.scan_library()
+        list_changed = cached_signature is not None \
+            and tuple(cached_signature)[1:] != signature[1:]
+        self.scan_library(my_status=my_status, signature=signature,
+                           rescan=list_changed)
 
-    def scan_library(self, my_status=None, rescan=False, path=None):
+    def scan_library(self, my_status=None, rescan=False, path=None,
+                     signature=None):
+        """`signature`, when given, is a precomputed
+        (_library_dirs_signature(), _tracker_list_signature()) pair the
+        caller already has (see _scan_library_if_changed) -- reusing it
+        skips redundantly recomputing the same values again after the
+        scan completes."""
         # Check if operation is supported by the API
         if not self.mediainfo.get('can_play'):
             raise utils.EngineError(
@@ -1177,11 +1383,7 @@ class Engine:
         library_cache = self.data_handler.library_cache_get()
 
         if not my_status:
-            if self.config['scan_whole_list']:
-                my_status = self.mediainfo['statuses']
-            else:
-                my_status = self.mediainfo.get(
-                    'statuses_library', self.mediainfo['statuses_start'])
+            my_status = self._scan_status_scope()
 
         if rescan:
             self.msg.info("Scanning local library (overriding cache)...")
@@ -1220,16 +1422,25 @@ class Engine:
                     guess_show, forced_show=forced_show)
 
             self.msg.debug(f"Time: {time.time() - t:.3}s")
-            self.data_handler.library_save(library)
-            self.data_handler.library_cache_save(library_cache)
+
+        # library/library_cache accumulate across every scan target, so
+        # only the final save reflects anything the earlier ones don't
+        # -- saving after each target (once per searchdir/pinned-folder)
+        # just re-pickles a growing superset of the same data.
+        self.data_handler.library_save(library)
+        self.data_handler.library_cache_save(library_cache)
 
         if path is None:
             # Only a full scan (all searchdirs + pinned show folders)
             # produces a signature that's safe to cache -- a single-
             # directory scan wouldn't reflect the true state of the
             # others. Must match _scan_library_if_changed's own inputs.
-            signature = self._library_dirs_signature(
-                self.searchdirs + list(show_folders.values()))
+            if signature is None:
+                signature = (
+                    self._library_dirs_signature(
+                        self.searchdirs + list(show_folders.values())),
+                    self._tracker_list_signature(tracker_list),
+                )
             self.data_handler.library_scan_signature_save(signature)
 
         return library
@@ -1459,6 +1670,26 @@ class Engine:
             return []
 
         self.msg.info('Found. Starting player...')
+
+        if self.config.get('use_subminer'):
+            subminer_bin = shutil.which('subminer')
+            if not subminer_bin:
+                raise utils.EngineError(
+                    'SubMiner not found. Install it or disable '
+                    '"Open episodes with SubMiner" in settings.')
+
+            if self.config['player_reuse_mpv_instance']:
+                # SubMiner manages its own single mpv+overlay instance
+                # under its own fixed socket (not our mpv_ipc_socket_path)
+                # -- ask it where that is and hand off the same way we do
+                # for a plain mpv player below.
+                subminer_socket = utils.subminer_mpv_socket_path(subminer_bin)
+                if subminer_socket and utils.mpv_ipc_loadfile(filename, subminer_socket):
+                    self.msg.info('Handed off to the running SubMiner instance.')
+                    return []
+
+            return [subminer_bin, filename]
+
         args = shlex.split(self.config['player'])
 
         if not args:
@@ -1692,6 +1923,12 @@ class Engine:
             if epoch != self._mal_fetch_epoch:
                 self.msg.debug(
                     'MAL score fetch superseded by a newer request, stopping.')
+                if unsaved_scores:
+                    # Persist what this batch already fetched -- the
+                    # scores are applied to the show dicts and emitted
+                    # to the UI, and the superseding task may fail
+                    # before reaching its own save.
+                    self.data_handler.save_cache()
                 return
 
             try:

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorD
                              QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.sync import present
 from hakubun.ui.qt.delegates import ShowsTableDelegate
 from hakubun.ui.qt.themedcolorpicker import ThemedColorPicker
 from hakubun.ui.qt.util import FilterBar, getColor, getIcon
@@ -430,6 +431,58 @@ class SettingsDialog(QDialog):
 
         page_behavior_layout.addWidget(g_apply)
 
+        # Group: Sync
+        g_sync = QGroupBox('Sync')
+        g_sync.setFlat(True)
+        self.multisync_enabled = QCheckBox(
+            'Enable multi-sync (BETA)')
+        self.multisync_enabled.setToolTip(
+            'BETA: Sync will now multi-sync across every configured '
+            'provider by default, reconciling them with your local '
+            'list instead of just uploading/downloading one account. '
+            'Turn this off to fall back to the classic single-account '
+            'sync.')
+        self.multisync_mode = QComboBox()
+        self.multisync_mode.addItem('Merge (reconcile every provider)',
+                                    'merge')
+        self.multisync_mode.addItem('Pull (providers update local)',
+                                    'pull')
+        self.multisync_mode.addItem('Push (local overwrites providers)',
+                                    'push')
+        self.multisync_plan_only = QCheckBox(
+            'Fetch && plan only (review before applying)')
+        self.multisync_plan_only.setToolTip(
+            'Sync fetches every provider and works out what would '
+            'change in the mode above, then always opens the sync '
+            'window so you can review and apply it yourself. Turn this '
+            'off to let Sync apply clean changes headlessly -- '
+            'conflicts and first-time syncs still always stop for '
+            'review either way.')
+        self.multisync_edit_owned_score = QCheckBox(
+            'Edit owned scores in the owner\'s rating system')
+        self.multisync_edit_owned_score.setToolTip(
+            'When a show\'s Score is owned by another tracker, let the '
+            'sidebar score editor rate it in that owner\'s own system '
+            '(e.g. AniList\'s 8.4 while signed into Kitsu), toggled live '
+            'via the Synced/Platform switch under the slider. Turn this '
+            'off to always edit in the signed-in account\'s own system.')
+        self.multisync_enabled.toggled.connect(
+            self.multisync_mode.setEnabled)
+        self.multisync_enabled.toggled.connect(
+            self.multisync_plan_only.setEnabled)
+        self.multisync_enabled.toggled.connect(
+            self.multisync_edit_owned_score.setEnabled)
+        g_sync_layout = QVBoxLayout()
+        g_sync_layout.addWidget(self.multisync_enabled)
+        mode_row = QFormLayout()
+        mode_row.addRow('Mode:', self.multisync_mode)
+        g_sync_layout.addLayout(mode_row)
+        g_sync_layout.addWidget(self.multisync_plan_only)
+        g_sync_layout.addWidget(self.multisync_edit_owned_score)
+        g_sync.setLayout(g_sync_layout)
+
+        page_behavior_layout.addWidget(g_sync)
+
         # Group: Taiga Mode
         g_taiga = QGroupBox('Taiga Mode')
         g_taiga.setFlat(True)
@@ -542,11 +595,25 @@ class SettingsDialog(QDialog):
             self.load_mal_scores_btn, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         g_mal_scores.setLayout(g_mal_scores_layout)
 
+        # Group: SubMiner
+        g_subminer = QGroupBox('SubMiner')
+        g_subminer.setFlat(True)
+        self.show_subminer_toggle = QCheckBox(
+            'Show the SubMiner toggle (toolbar / Tools menu)')
+        self.show_subminer_toggle.setToolTip(
+            'SubMiner itself is switched on and off from that toggle, not '
+            'here -- this only controls whether the toggle is shown at '
+            'all.')
+        g_subminer_layout = QVBoxLayout()
+        g_subminer_layout.addWidget(self.show_subminer_toggle)
+        g_subminer.setLayout(g_subminer_layout)
+
         # UI layout
         page_ui_layout.addWidget(g_icon)
         page_ui_layout.addWidget(g_window)
         page_ui_layout.addWidget(g_lists)
         page_ui_layout.addWidget(g_mal_scores)
+        page_ui_layout.addWidget(g_subminer)
         page_ui.setLayout(page_ui_layout)
 
         # Theming tab
@@ -760,8 +827,25 @@ class SettingsDialog(QDialog):
         self.columns_per_api.setChecked(self.config['columns_per_api'])
         self.filter_bar_position.setCurrentIndex(
             self.filter_bar_position.findData(self.config['filter_bar_position']))
+        self.show_subminer_toggle.setChecked(
+            self.config['show_subminer_toggle'])
         self.inline_edit.setChecked(self.config['inline_edit'])
         self.filter_global.setChecked(self.config['filter_global'])
+        self.multisync_enabled.setChecked(self.config['multisync_enabled'])
+        # A config still on the retired 'plan_only' mode resolves to
+        # merge + the review checkbox, which is what it always meant.
+        (mode, plan_only) = present.settings_sync_mode(self.config)
+        mode_key = next((k for k, v in present.SETTINGS_MODES.items()
+                         if v == mode), 'merge')
+        self.multisync_mode.setCurrentIndex(
+            max(0, self.multisync_mode.findData(mode_key)))
+        self.multisync_mode.setEnabled(self.config['multisync_enabled'])
+        self.multisync_plan_only.setChecked(plan_only)
+        self.multisync_plan_only.setEnabled(self.config['multisync_enabled'])
+        self.multisync_edit_owned_score.setChecked(
+            self.config['multisync_edit_owned_score'])
+        self.multisync_edit_owned_score.setEnabled(
+            self.config['multisync_enabled'])
         self.taiga_mode.setChecked(self.config['taiga_mode'])
 
         self.ep_bar_style.setCurrentIndex(
@@ -892,8 +976,17 @@ class SettingsDialog(QDialog):
         self.config['columns_per_api'] = self.columns_per_api.isChecked()
         self.config['filter_bar_position'] = self.filter_bar_position.itemData(
             self.filter_bar_position.currentIndex())
+        self.config['show_subminer_toggle'] = \
+            self.show_subminer_toggle.isChecked()
         self.config['inline_edit'] = self.inline_edit.isChecked()
         self.config['filter_global'] = self.filter_global.isChecked()
+        self.config['multisync_enabled'] = self.multisync_enabled.isChecked()
+        self.config['multisync_mode'] = self.multisync_mode.itemData(
+            self.multisync_mode.currentIndex())
+        self.config['multisync_plan_only'] = \
+            self.multisync_plan_only.isChecked()
+        self.config['multisync_edit_owned_score'] = \
+            self.multisync_edit_owned_score.isChecked()
 
         self.config['episodebar_style'] = self.ep_bar_style.itemData(
             self.ep_bar_style.currentIndex())

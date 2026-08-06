@@ -25,7 +25,8 @@ from hakubun import utils
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.imagebox import ImageBox
 from hakubun.ui.gtk.showeventtype import ShowEventType
-from hakubun.ui.gtk.showtreeview import DRAG_TARGETS, ShowListFilter, ShowListStore, ShowTreeView
+from hakubun.ui.gtk.showtreeview import (
+    DRAG_TARGETS, ShowListFilter, ShowListStore, ShowTreeView, sort_by_season)
 
 
 @Gtk.Template.from_file(os.path.join(gtk_dir, 'data/mainview.ui'))
@@ -61,6 +62,8 @@ class MainView(Gtk.Box):
     spinbtn_score = Gtk.Template.Child()
     scale_score = Gtk.Template.Child()
     btn_score_set = Gtk.Template.Child()
+    switch_score_system = Gtk.Template.Child()
+    label_score_system = Gtk.Template.Child()
     statusbox = Gtk.Template.Child()
     statusmodel = Gtk.Template.Child()
     notebook = Gtk.Template.Child()
@@ -78,6 +81,17 @@ class MainView(Gtk.Box):
 
         self._image_thread = None
         self._current_page = None
+        # Multi-sync: per-account mediainfo + media type for the display
+        # overlay and owner-system score editor, and the owner-score
+        # editing state (see _set_score_editor / _on_spinbtn_score_activate).
+        self._multisync_pmi = {}
+        self._multisync_media_type = None
+        self._score_owner_mode = None       # owning provider, or None
+        self._score_editor_provider = None  # provider the editor is set for
+        # GtkScale is continuous and only rounds to `digits` decimals, so
+        # on a non-decimal step (Kitsu's 0.5) it drags in 0.1s. The active
+        # system's display step is used to snap USER drags (change-value).
+        self._score_display_step = 1.0
         self.statusbox_handler = None
         self.notebook_switch_handler = None
         self._hovering_over_tabs = None
@@ -144,6 +158,17 @@ class MainView(Gtk.Box):
         self.spinbtn_score.connect("activate", self._on_spinbtn_score_activate)
         self.spinbtn_score.connect("output", self._on_spinbtn_score_output)
         self.btn_score_set.connect("clicked", self._on_spinbtn_score_activate)
+        # Snap the slider to the active system's step so e.g. Kitsu's
+        # slider moves in 0.5s, not 0.1s. change-value fires ONLY on user
+        # drag/scroll/keyboard -- never on programmatic set_value/set_range
+        # -- so it can't re-enter GTK during widget setup (which crashes).
+        self.scale_score.connect("change-value", self._on_scale_change_value)
+        # Synced/Platform score-system switch: re-seed the editor for the
+        # current show when flipped. notify::active (not state-set) so the
+        # handler reads the NEW state -- state-set fires before get_active
+        # updates.
+        self.switch_score_system.connect(
+            "notify::active", self._on_score_system_switched)
         self.statusbox_handler = self.statusbox.connect(
             "changed", self._on_statusbox_changed)
         self.notebook_switch_handler = self.notebook.connect(
@@ -312,6 +337,10 @@ class MainView(Gtk.Box):
             tree_view.freeze_child_notify()
 
         self._list.clear()
+        # Build the multi-sync display overlay before appending, so each
+        # row shows its reconciled per-field value (episodes from one
+        # provider, an owned Score in the owner's rating system).
+        self._refresh_multisync_overlay()
         library = self._engine.library()
         for show in self._engine.get_list():
             self._list.append(show,
@@ -323,6 +352,64 @@ class MainView(Gtk.Box):
             tree_view = self._pages[status].show_tree_view
             tree_view.thaw_child_notify()
             self._unblock_handlers_for_status(status)
+
+    def _refresh_multisync_overlay(self):
+        """Build the multi-sync display overlay for the active account's
+        list and install it on the shared store. Read-only and gated: a
+        no-op (list shows the account's own values) when multi-sync is
+        off, no account is loaded, or nothing has been synced yet. Also
+        caches the per-account mediainfo the owner-system score editor
+        needs. Never breaks the list -- any failure clears the overlay."""
+        self._multisync_pmi = {}
+        self._multisync_media_type = None
+        if not self._config.get('multisync_enabled') or not self._account \
+                or self._engine is None:
+            self._list.set_overlay({})
+            self._resync_score_editor()
+            return
+        try:
+            from hakubun.accounts import AccountManager
+            from hakubun.sync import uibridge
+            media_type = self._engine.api_info['mediatype']
+            self._multisync_media_type = media_type
+            msg = messenger.Messenger(None, 'Overlay')
+            overlay, pmi = uibridge.build_list_overlay(
+                AccountManager().get_accounts(), self._account['api'],
+                self._engine.mediainfo, media_type, msg)
+            self._multisync_pmi = pmi
+            self._list.set_overlay(overlay)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self._list.set_overlay({})
+        self._resync_score_editor()
+
+    def _resync_score_editor(self):
+        """Re-derive the sidebar score editor's owner-mode state from
+        the CURRENT overlay. Called after every overlay rebuild/clear so
+        the editor can never be left in a stale owner mode (owner scale
+        on the widgets, no owner mediainfo behind it) -- which would
+        silently discard the next Set, or worse, misroute an
+        owner-scale value to the active account."""
+        showid = self._current_page.selected_show if self._current_page \
+            else None
+        if showid and self._engine is not None:
+            try:
+                show = self._engine.get_show_info(showid)
+            except utils.HakubunError:
+                show = None
+            if show:
+                self._set_score_editor(show)
+                return
+        # Nothing (valid) selected: drop owner mode and restore the
+        # active account's own rating system.
+        if self._score_editor_provider is not None and \
+                self._engine is not None:
+            self._apply_score_widget_range(self._engine.mediainfo)
+        self._score_editor_provider = None
+        self._score_owner_mode = None
+        self.switch_score_system.set_visible(False)
+        self.label_score_system.set_visible(False)
 
     def _block_handlers_for_status(self, status):
         for handler_id in self._page_handler_ids[status]:
@@ -342,19 +429,40 @@ class MainView(Gtk.Box):
         self.statusbox.set_model(self.statusmodel)
         self.statusbox.show_all()
 
-    def _set_score_ranges(self):
-        mediainfo = self._engine.mediainfo
+    def _apply_score_widget_range(self, mediainfo):
+        """Configure the sidebar score spin/scale for a given rating
+        system. Shared by the active-account setup and the owner-system
+        score editor (which retargets these widgets to another provider's
+        scale for a shared, owned-elsewhere entry)."""
         display_max, display_step, decimals = utils.score_display_range(mediainfo)
-        factor = utils.score_display_factor(mediainfo)
-
         # scale_score and spinbtn_score share score_adjustment, so setting
         # it here keeps both widgets in sync automatically.
+        self._score_display_step = display_step or 1.0
         self.spinbtn_score.set_value(0)
         self.spinbtn_score.set_digits(decimals)
         self.spinbtn_score.set_range(0, display_max)
         self.spinbtn_score.get_adjustment().set_step_increment(display_step)
         self.scale_score.set_digits(decimals)
 
+    def _on_scale_change_value(self, scale, _scroll, value):
+        """Snap a USER drag/scroll of the slider to the active system's
+        display step (Kitsu 0.5, AniList 0.1, MAL 1), keeping the value
+        on-grid. Fires only on user interaction -- not on programmatic
+        set_value/set_range -- so it never re-enters GTK during setup."""
+        step = self._score_display_step or 1.0
+        upper = scale.get_adjustment().get_upper()
+        snapped = min(max(round(value / step) * step, 0.0), upper)
+        scale.set_value(snapped)
+        return True   # handled: don't also apply the raw continuous value
+
+    def _set_score_ranges(self):
+        mediainfo = self._engine.mediainfo
+        self._apply_score_widget_range(mediainfo)
+        # The score editor now reflects the active account's system.
+        self._score_editor_provider = None
+
+        _, _, decimals = utils.score_display_range(mediainfo)
+        factor = utils.score_display_factor(mediainfo)
         for view in self._pages.values():
             view.decimals = decimals
             view.factor = factor
@@ -434,12 +542,119 @@ class MainView(Gtk.Box):
         return False
 
     def _on_spinbtn_score_activate(self, widget):
-        display_score = round(self.spinbtn_score.get_value(), self.spinbtn_score.get_digits())
-        score = utils.score_to_raw(display_score, self._engine.mediainfo)
-        score = round(score, utils.decimal_places(self._engine.mediainfo['score_step']))
+        showid = self._current_page.selected_show if self._current_page else None
+        display_score = round(self.spinbtn_score.get_value(),
+                              self.spinbtn_score.get_digits())
+        # Owner mode: the editor adopted another provider's rating system
+        # for this shared entry, so the value is in THAT system. Write it
+        # to multisync local (propagated on the next sync); never send it
+        # to the active account, which would misread the owner-scale
+        # number. Abort on failure rather than fall through -- including
+        # when nothing is selected, since the widgets still hold the
+        # owner's scale.
+        if self._score_owner_mode:
+            if not showid:
+                return
+            owner_mi = self._multisync_pmi.get(self._score_owner_mode)
+            owner_raw = (utils.score_to_raw(display_score, owner_mi)
+                         if owner_mi else None)
+            if not self._set_owned_score(showid, owner_raw):
+                self.set_status_idle('Could not set the owned score '
+                                     'locally; nothing changed.')
+            return
+        # Snap to the active account's own grid before sending: the
+        # widget's increment can be left on another provider's finer
+        # scale (owner-mode editing) or a value typed in, and the backend
+        # forwards it verbatim -- an off-grid number (Kitsu 4.35 when its
+        # grid is quarter-stars) is an invalid rating at the API.
+        score = utils.snap_score_to_step(
+            utils.score_to_raw(display_score, self._engine.mediainfo),
+            self._engine.mediainfo)
         self.emit('show-action',
                   ShowEventType.SET_SCORE,
-                  (self._current_page.selected_show, score))
+                  (showid, score))
+
+    def _on_score_system_switched(self, _switch, _pspec):
+        """Synced/Platform switch flipped: re-seed the editor for the
+        selected show in the newly-chosen system."""
+        self._resync_score_editor()
+
+    def _set_score_editor(self, show):
+        """Configure the sidebar score editor for the selected show.
+
+        For a SHARED entry whose Score is owned by another provider, a
+        Synced/Platform switch appears beside the slider (only when
+        multisync's 'edit owned scores in the owner's system' setting is
+        on). In the SYNCED position the spin/scale adopt the OWNER's
+        rating system -- so you can rate in AniList's decimals (8.4) even
+        while signed into Kitsu -- seeded from local's reconciled score;
+        Set then writes to multisync local. In the PLATFORM position (or
+        for a platform-specific entry, or when the setting is off) the
+        editor stays on the active account's own system, seeded from this
+        account's my_score."""
+        over = self._list.overlay.get(show['id']) if self._list.overlay else None
+        owner = over.get('_score_owner') if over else None
+        owner_mi = self._multisync_pmi.get(owner) if owner else None
+        # The owner-system editor is only offered when the setting allows
+        # it; otherwise every entry is edited in the active account's own
+        # system (and the switch stays hidden).
+        can_synced = bool(owner_mi) and self._config.get(
+            'multisync_edit_owned_score', True)
+        self.switch_score_system.set_visible(can_synced)
+        self.label_score_system.set_visible(can_synced)
+        use_synced = can_synced and self.switch_score_system.get_active()
+        if use_synced:
+            if self._score_editor_provider != owner:
+                self._apply_score_widget_range(owner_mi)
+                self._score_editor_provider = owner
+            self.spinbtn_score.set_value(utils.score_to_display(
+                over.get('_score_owner_raw') or 0, owner_mi))
+            self._score_owner_mode = owner
+            self.label_score_system.set_text('Synced (%s)' % owner.capitalize())
+        else:
+            # Always re-apply the active account's own scale here, not
+            # only when transitioning off an owner scale: flipping the
+            # switch to Platform must reliably restore the signed-in
+            # tracker's system (e.g. Kitsu's 0-10/0.5), regardless of any
+            # stale editor-provider state.
+            self._apply_score_widget_range(self._engine.mediainfo)
+            self._score_editor_provider = None
+            self.spinbtn_score.set_value(utils.score_to_display(
+                show['my_score'], self._engine.mediainfo))
+            self._score_owner_mode = None
+            if can_synced:
+                self.label_score_system.set_text('Platform')
+
+    def _set_owned_score(self, showid, owner_raw):
+        """Persist a score entered in the owner's rating system to
+        multisync local (see uibridge.write_owned_score), then refresh
+        the list's overlay in place so the new owner-system score shows
+        immediately without dropping the selection. Returns True when
+        handled here, False to fall back to the active-account path."""
+        owner = self._score_owner_mode
+        owner_mi = self._multisync_pmi.get(owner)
+        media_type = self._multisync_media_type
+        if owner_raw is None or not owner_mi or not media_type:
+            return False
+        try:
+            from hakubun.sync import uibridge
+            if not uibridge.write_owned_score(
+                    media_type, self._account['api'], showid, owner_raw,
+                    owner_mi):
+                return False
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return False
+        # Rebuild the overlay (fresh reconciled state; this also re-seeds
+        # the score editor via _resync_score_editor) and re-apply the
+        # affected cells in place so the selection survives.
+        self._refresh_multisync_overlay()
+        self._list.apply_overlay_to_rows(self._engine.get_list())
+        self.set_status_idle(
+            "Score set in %s's rating system; the next multi-sync applies it."
+            % owner.capitalize())
+        return True
 
     def _on_statusbox_changed(self, widget):
         statusiter = self.statusbox.get_active_iter()
@@ -488,7 +703,7 @@ class MainView(Gtk.Box):
         self._list.update(show)
         if self._current_page and show['id'] == self._current_page.selected_show:
             self.btn_episode_show_entry.set_label(str(show['my_progress']))
-            self.spinbtn_score.set_value(utils.score_to_display(show['my_score'], self._engine.mediainfo))
+            self._set_score_editor(show)
 
     def change_show_title_idle(self, show, altname):
         GLib.idle_add(self._update_show_title, show, altname)
@@ -592,8 +807,9 @@ class MainView(Gtk.Box):
                 self.statusbox.set_active_iter(i.iter)
                 break
 
-        # Score selector
-        self.spinbtn_score.set_value(utils.score_to_display(show['my_score'], self._engine.mediainfo))
+        # Score selector -- owner's rating system for a shared, owned-
+        # elsewhere entry; the active account's own system otherwise.
+        self._set_score_editor(show)
 
         # Image
         if show.get('image_thumb') or show.get('image'):
@@ -692,14 +908,17 @@ class NotebookPage(Gtk.ScrolledWindow):
             config['colors'],
             config['visible_columns'],
             config['episodebar_style'])
-        self._show_tree_view.set_model(
-            Gtk.TreeModelSort(
-                model=ShowListFilter(
-                    status=self.status,
-                    child_model=self._list
-                )
+        sorted_model = Gtk.TreeModelSort(
+            model=ShowListFilter(
+                status=self.status,
+                child_model=self._list
             )
         )
+        # TreeModelSort implements GtkTreeSortable itself; a sort func
+        # set on the child ShowListStore is never consulted, so the
+        # Season column's year-first sort has to be installed here.
+        sorted_model.set_sort_func(ShowListStore.column('season'), sort_by_season)
+        self._show_tree_view.set_model(sorted_model)
         self._title.set_text('%s (%d)' % (
             self._title_text,
             len(self._show_tree_view.props.model)
@@ -814,6 +1033,20 @@ class NotebookPage(Gtk.ScrolledWindow):
         mb_folder.connect("activate",
                           self._on_mb_activate,
                           ShowEventType.OPEN_FOLDER)
+        has_folder = bool(self._engine.get_show_folder(self._selected_show))
+        mb_set_folder = Gtk.MenuItem(
+            "Change folder..." if has_folder else "Set folder...")
+        mb_set_folder.set_tooltip_text(
+            "Manually point this show at a local folder, bypassing "
+            "filename guessing -- for folders the parser can't match.")
+        mb_set_folder.connect("activate",
+                              self._on_mb_activate,
+                              ShowEventType.SET_FOLDER)
+        mb_clear_folder = Gtk.MenuItem("Clear folder")
+        mb_clear_folder.set_sensitive(has_folder)
+        mb_clear_folder.connect("activate",
+                                self._on_mb_activate,
+                                ShowEventType.CLEAR_FOLDER)
         mb_copy = Gtk.MenuItem("Copy title to clipboard")
         mb_copy.connect("activate",
                         self._on_mb_activate,
@@ -842,6 +1075,8 @@ class NotebookPage(Gtk.ScrolledWindow):
         menu.append(mb_move_to)
         menu.append(mb_web)
         menu.append(mb_folder)
+        menu.append(mb_set_folder)
+        menu.append(mb_clear_folder)
         menu.append(Gtk.SeparatorMenuItem())
         menu.append(mb_copy)
         menu.append(mb_alt_title)

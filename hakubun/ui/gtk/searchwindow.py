@@ -318,9 +318,19 @@ class SearchTreeView(Gtk.TreeView):
         self.cols['In Your List'].add_attribute(renderer_in_list, 'background', 7)
 
         self.store = Gtk.ListStore(str, str, str, str, str, str, str, str, str)
+        # Season (col 3) holds a 'Summer 2026'-style display string;
+        # plain text sort compares the season name before the year, so
+        # a custom sort func is needed to make year the primary key
+        # (see utils.season_sort_key / ShowTreeView's Season column).
+        self.store.set_sort_func(3, self._sort_by_season)
         self.set_model(self.store)
 
         self.colors = colors
+
+    def _sort_by_season(self, model, iter1, iter2, data):
+        ka = utils.season_sort_key(model.get_value(iter1, 3))
+        kb = utils.season_sort_key(model.get_value(iter2, 3))
+        return (ka > kb) - (ka < kb)
 
     def append_start(self):
         self.freeze_child_notify()
