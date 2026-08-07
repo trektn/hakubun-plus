@@ -148,3 +148,57 @@ def test_title_index_is_rebuilt_when_the_list_changes(showlist):
                  'total': 0, 'type': None}}
     assert utils.guess_show('Cowboy Bebop', (other, {})) is None
     assert utils.guess_show('Ping Pong the Animation', (other, {}))['id'] == 99
+
+
+# --- the suffix-strip margin ------------------------------------------------
+#
+# Parser wrappers append " Season N"/type/"(YYYY)" to a title. Scoring only the
+# decorated form lets that decoration carry a WRONG show over the cutoff;
+# preferring the stripped form whenever it merely scores higher then breaks
+# franchises the user tracks per season. Both directions are pinned here.
+
+# Titles/aliases copied verbatim from a real AniList list, because the exact
+# ratios are the whole point -- including the trailing space AniList actually
+# stores on "Initial D Season 2 ".
+_SUFFIX_LIST = {
+    0: {'id': 0, 'title': 'NARUTO -ナルト-', 'titles': ['NARUTO -ナルト-', 'NARUTO'],
+        'my_progress': 0, 'total': 0, 'type': None},
+    1: {'id': 1, 'title': 'Fate/Zero 2ndシーズン',
+        'titles': ['Fate/Zero 2ndシーズン', 'Fate/Zero Season 2'],
+        'my_progress': 0, 'total': 0, 'type': None},
+    2: {'id': 2, 'title': '頭文字[イニシャル]D',
+        'titles': ['頭文字[イニシャル]D', 'Initial D'],
+        'my_progress': 0, 'total': 0, 'type': None},
+    3: {'id': 3, 'title': '頭文字[イニシャル]D SECOND STAGE',
+        'titles': ['頭文字[イニシャル]D SECOND STAGE', 'Initial D Season 2 '],
+        'my_progress': 0, 'total': 0, 'type': None},
+}
+
+
+def test_decoration_alone_cannot_carry_an_unrelated_show():
+    """"Naruto Season 02" must not land on "Fate/Zero 2nd Season".
+
+    The decorated title scores 0.71 against Fate/Zero's "Fate/Zero Season 2"
+    alias purely on the shared season words -- over the cutoff, so a
+    fallback-only strip never runs. Stripped, it scores 1.00 against NARUTO:
+    a 0.29 margin, which has to be allowed to win.
+    """
+    got = utils.guess_show('Naruto Season 02', (_SUFFIX_LIST, {}))
+    assert got is not None and got['id'] == 0
+
+
+def test_a_season_entry_is_not_collapsed_onto_its_franchise():
+    """"Initial D Season 2" must stay on Second Stage, not fall back to S1.
+
+    Stripped scores 1.00 against plain "Initial D"; decorated scores 0.97
+    against Second Stage's "Initial D Season 2 " alias. A bare "higher ratio
+    wins" rule takes the 0.03 improvement and lands on the wrong season. The
+    margin is what prevents it.
+    """
+    got = utils.guess_show('Initial D Season 2', (_SUFFIX_LIST, {}))
+    assert got is not None and got['id'] == 3
+
+
+def test_strip_is_skipped_on_an_exact_match():
+    got = utils.guess_show('Naruto', (_SUFFIX_LIST, {}))
+    assert got is not None and got['id'] == 0
