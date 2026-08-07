@@ -1,7 +1,7 @@
 # Python bindings for the anitomy-ng anime filename parser.
 #
 # Lives here rather than in the consuming config because hakubun-plus declares
-# it as a real runtime dependency (`anitomy-ng>=1.0.7,<2`) and nixpkgs does not
+# it as a real runtime dependency (`anitomy-ng>=1.0.9,<2`) and nixpkgs does not
 # carry it -- so anything that wants to build hakubun-plus needs it, and this
 # flake should stand on its own. It is re-exported through the overlay, so a
 # consumer gets `python3Packages.anitomy-ng` for free.
@@ -20,14 +20,14 @@
 
 buildPythonPackage rec {
   pname = "anitomy-ng";
-  version = "1.0.8";
+  version = "1.0.9";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "tylergibbs2";
     repo = "anitomy-ng";
     rev = "v${version}";
-    hash = "sha256-PwLJTqvzHTV8xrWO/etFAf7GhgEOFQQNEwOD2BgGWC4=";
+    hash = "sha256-VxmxrVrLIUXJwVCrV5IXc2mD8TCTuQQwHVZFdHXwupM=";
   };
 
   sourceRoot = "${src.name}/anitomy-py";

@@ -121,3 +121,39 @@ def test_path_duplicate_folder_title_is_stripped(msg):
     w = parse(msg, "Beyblade X/Beyblade X - 11 - Kadovar's Test (1080p).mkv")
     assert w.getName() == "Beyblade X"
     assert w.getEpisode() == 11
+
+
+def test_bare_episode_under_a_duplicate_folder_keeps_no_prefix(msg):
+    # The plain 'Title - NN.mkv' shape, with no bracketed or parenthesised
+    # token to anchor on. anitomy-ng 1.0.8 left the whole directory prefix
+    # in the title ('Attack on Titan/Season 2/Attack on Titan'), which
+    # matches nothing in a tracker database. Fixed in 1.0.9; pinned, so
+    # assert it rather than trust the pin.
+    w = parse(msg, "Attack on Titan/Season 2/Attack on Titan - 05.mkv")
+    assert w.getName() == "Attack on Titan Season 2"
+    assert w.getEpisode() == 5
+
+
+def test_season_living_only_in_the_parent_folder_is_preserved(msg):
+    # The season exists nowhere in the filename. 1.0.8 emitted no season
+    # element for this, so __buildTitle silently dropped it and the file
+    # recorded progress against season 1 of the same show.
+    w = parse(msg, "Attack on Titan/Season 2/Attack on Titan - 05 (1080p).mkv")
+    assert w.getName() == "Attack on Titan Season 2"
+    assert w.getEpisode() == 5
+
+
+def test_title_containing_op_is_not_read_as_an_opening_type(msg):
+    # 'op.' inside the title region was tokenized as the OP (opening) type,
+    # so __buildTitle excluded the file as a clip and every episode of the
+    # show vanished from the library. Same class as 'Co-Ed' in an episode
+    # title. Genuine standalone OP/ED clips must still be excluded -- see
+    # test_no_credit_opening_is_excluded.
+    w = parse(msg, "Takt op.Destiny (2021)/Season 01/Takt op.Destiny (2021) "
+                   "- S01E01 - Overture [Bluray-1080p].mkv")
+    assert w.getName() == "Takt op.Destiny (2021)"
+    assert w.getEpisode() == 1
+
+    w = parse(msg, "Cromartie High School - 1x03 - Cromartie High (Co-Ed).mkv")
+    assert w.getName() == "Cromartie High School"
+    assert w.getEpisode() == 3
