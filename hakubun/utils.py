@@ -423,6 +423,14 @@ def estimate_aired_episodes(show):
 
 GUESS_SHOW_CUTOFF = 0.7
 
+# How much better the suffix-stripped title must score before it displaces the
+# decorated one -- see _PARSER_SUFFIX_RE. Swept over 12k real filenames (local
+# library in both library_full_path modes + nyaa's 2000 most-seeded releases):
+# 0.00 and 0.05 are net regressions, 0.10-0.25 are a broad plateau all clearly
+# better than fallback-only, and >=0.30 decays back to it. Mid-plateau chosen,
+# so the exact value is not load-bearing.
+GUESS_STRIP_MARGIN = 0.15
+
 # Every parser wrapper (AnimeInfoExtractor, AnitopyWrapper, AnitomyNgWrapper)
 # unconditionally appends these decorations to a parsed title -- " Season N"
 # for season > 1, a bare special/OVA/etc. type keyword, and "(YYYY)" for a
@@ -430,10 +438,23 @@ GUESS_SHOW_CUTOFF = 0.7
 # built as base + season + type + year. None of that text exists in a
 # tracker's own title for franchises with a single continuous entry (e.g.
 # "Naruto", "Bleach", "One Punch Man"), so the decoration alone routinely
-# drags an otherwise-exact title below GUESS_SHOW_CUTOFF. Stripped only as
-# a fallback retry after the undecorated title has already failed to match,
-# so it can only recover a match a plain lookup would otherwise miss, never
-# steal one a real title match would have won on its own.
+# drags an otherwise-exact title below GUESS_SHOW_CUTOFF.
+#
+# Both the decorated and the stripped title are scored, and the stripped one
+# wins only if it beats the decorated one by GUESS_STRIP_MARGIN (see
+# guess_show). Trying the stripped form only as a fallback -- i.e. only once
+# the decorated one had already missed the cutoff -- left the decoration free
+# to carry a WRONG show over the cutoff, at which point the fallback never
+# ran: "Naruto Season 02" scored 0.71 against "Fate/Zero 2nd Season" purely
+# on the shared season words, and 43 files were filed under Fate/Zero.
+#
+# The margin is what makes this safe. Preferring the stripped title whenever
+# it merely scores higher regresses badly, because stripping the season also
+# makes a title match the WRONG entry of a franchise the user tracks per
+# season: "Initial D Season 2" scores 0.97 against "Initial D SECOND STAGE"
+# (right) and 1.00 against "Initial D" (wrong). Requiring a clear margin
+# keeps those, while still rescuing the cases where the decoration alone
+# carried a completely unrelated show over the line.
 _PARSER_SUFFIX_RE = re.compile(
     r'(\s+\((?:19|20)\d{2}\))?'
     r'(\s+(?:OAD|OAV|ONA|OVA|SPECIALS?))?'
@@ -527,25 +548,24 @@ def guess_show(show_title, tracker_list):
     # Compare to every show in our list to see which one has the most
     # similar name. This runs once per unique title in the library during a
     # scan, against every title and alias, so it dominates scan time.
-    if rapidfuzz_fuzz:
-        highest_ratio = _guess_show_rapidfuzz(show_title, showlist)
-    else:
-        highest_ratio = _guess_show_difflib(show_title, showlist)
+    search = _guess_show_rapidfuzz if rapidfuzz_fuzz else _guess_show_difflib
+
+    highest_ratio = search(show_title, showlist)
+
+    # Also score the title with a parser-added "Season N"/type/year decoration
+    # stripped off the end, and let it win only by a clear margin -- see
+    # _PARSER_SUFFIX_RE for why this is not a fallback, and why the margin
+    # matters. Skipped when the decorated title already matched perfectly,
+    # since nothing can beat that.
+    stripped_title = _PARSER_SUFFIX_RE.sub('', show_title).strip()
+    if (highest_ratio[1] < 1.0 and stripped_title
+            and stripped_title.lower() != show_title.lower()):
+        stripped_ratio = search(stripped_title, showlist)
+        if stripped_ratio[1] >= highest_ratio[1] + GUESS_STRIP_MARGIN:
+            highest_ratio = stripped_ratio
 
     if highest_ratio[1] > GUESS_SHOW_CUTOFF:
         return highest_ratio[0]
-
-    # Retry once with a parser-added "Season N"/type/year decoration
-    # stripped off the end -- see _PARSER_SUFFIX_RE.
-    stripped_title = _PARSER_SUFFIX_RE.sub('', show_title).strip()
-    if stripped_title and stripped_title.lower() != show_title.lower():
-        if rapidfuzz_fuzz:
-            highest_ratio = _guess_show_rapidfuzz(stripped_title, showlist)
-        else:
-            highest_ratio = _guess_show_difflib(stripped_title, showlist)
-
-        if highest_ratio[1] > GUESS_SHOW_CUTOFF:
-            return highest_ratio[0]
 
 
 def redirect_show(show_tuple, redirections, tracker_list):
