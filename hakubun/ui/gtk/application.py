@@ -68,6 +68,12 @@ class HakubunApplication(Gtk.Application):
 
         accels = (
             ('win.search', '<Primary>A'),
+            # Ctrl+F is the near-universal "find within what's already on
+            # screen" key, which is what win.filter does -- it reveals
+            # the filter bar over the show list. The bare '/' handled in
+            # HakubunWindow._on_key_press still works; this is an extra
+            # binding, not a replacement.
+            ('win.filter', '<Primary>F'),
             ('win.synchronize', '<Primary>S'),
             ('win.upload', '<Primary>E'),
             ('win.download', '<Primary>D'),

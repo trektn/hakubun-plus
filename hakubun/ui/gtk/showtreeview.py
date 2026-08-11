@@ -100,6 +100,29 @@ def overlay_cells(show, over, decimals, factor):
             'my_finish_date': my_finish}
 
 
+# The show's RELEASE status, as the 'Airing Status' column shows it.
+# utils.Status' own values ('Ongoing', 'Not yet started') describe
+# publishing in general; these read the way an anime list talks about
+# the same three states.
+_STATUS_LABELS = {
+    utils.Status.ONGOING: 'Airing',
+    utils.Status.FINISHED: 'Completed',
+    utils.Status.NOTYET: 'Upcoming',
+}
+
+
+def status_label(status):
+    """Display label for a show's release status. Anything without a
+    nicer name (Cancelled, Other, Unknown) falls back to the utils.Status
+    value itself, so the cell still reads as something rather than
+    silently blank."""
+    try:
+        status = utils.Status(status)
+    except ValueError:
+        return ''
+    return _STATUS_LABELS.get(status, status.value)
+
+
 def sort_by_season(model, iter1, iter2, data):
     """TreeSortable sort func for the 'season' column. The column holds
     a display string ('Summer 2026'); a plain text sort compares the
@@ -152,6 +175,11 @@ class ShowListStore(Gtk.ListStore):
         # Dedicated 'Synced Score' column text (index 25): the owner-
         # system reconciled score for a shared entry, '' otherwise.
         ('synced-score', str),
+        # 'Airing Status' column text (index 26). The show's release
+        # status is already at index 16 as a utils.Status; this is its
+        # display label, kept as its own cell so the column renders text
+        # directly while index 16 keeps sorting rows in release order.
+        ('status-text', str),
     )
 
     def __init__(self, decimals=0, factor=1, colors=dict()):
@@ -266,6 +294,7 @@ class ShowListStore(Gtk.ListStore):
                else Pango.Style.NORMAL,
                cells['score_owner'],
                cells['synced_score_str'],
+               status_label(show['status']),
                ]
         super().append(row)
 
@@ -304,6 +333,11 @@ class ShowListStore(Gtk.ListStore):
                        else Pango.Style.NORMAL)
             row[24] = cells['score_owner']
             row[25] = cells['synced_score_str']
+            # A show that finished airing between two syncs would
+            # otherwise keep its stale 'Airing' label (and its stale
+            # sort key) until the whole list is repopulated.
+            row[16] = show['status']
+            row[26] = status_label(show['status'])
         return
 
         # print("Warning: Show ID not found in ShowView (%d)" % show['id'])
@@ -447,6 +481,13 @@ class ShowTreeView(Gtk.TreeView):
             ('Platform Score', 21),
             ('MAL Score', 22),
             ('Synced Score', 25),
+            # Sorted on the underlying utils.Status at 16, not on the
+            # label text at 26, so clicking the header groups the list
+            # in release order instead of alphabetically. Named 'Airing
+            # Status' rather than plain 'Status' because the list
+            # already has a per-tab status meaning -- where the user put
+            # the show, not where the show is in its run.
+            ('Airing Status', 16),
         )
 
         for (name, sort) in self.available_columns:
@@ -550,6 +591,15 @@ class ShowTreeView(Gtk.TreeView):
         self.cols['Synced Score'].pack_start(renderer_synced, False)
         self.cols['Synced Score'].add_attribute(renderer_synced, 'text', 25)
         self.cols['Synced Score'].add_attribute(renderer_synced, 'style', 23)
+
+        # Airing Status: the show's release state (col 26), sorted on the
+        # utils.Status behind it (col 16, set above).
+        renderer_status = Gtk.CellRendererText()
+        self.cols['Airing Status'].pack_start(renderer_status, False)
+        self.cols['Airing Status'].add_attribute(renderer_status, 'text', 26)
+        self.cols['Airing Status'].set_sizing(
+            Gtk.TreeViewColumnSizing.AUTOSIZE)
+        self.cols['Airing Status'].set_expand(False)
 
     def _on_drag_data_get(self, widget, drag_context, data, info, time):
         model, treeiter = self.get_selection().get_selected()
