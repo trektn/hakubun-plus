@@ -174,6 +174,14 @@ class AddListDelegate(QStyledItemDelegate):
         textRect.translate(0, self.fh + 5)
         textRect.setBottomRight(baseRect.bottomRight())
 
+        # Reclaim the poster's column once the synopsis has cleared the
+        # bottom of the poster. AddListModel caps thumbnails at 100x140
+        # while a card is comfortably taller than that, so the left
+        # column below the poster is dead space -- and the full width
+        # fits noticeably more synopsis per line.
+        if not thumb or textRect.top() >= baseRect.top() + thumb.height():
+            textRect.setLeft(baseRect.left() + 5)
+
         if 'extra' in data:
             painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.TextFlag.TextWordWrap, self._get_extra(
                 data['extra'], 'Synopsis'))
