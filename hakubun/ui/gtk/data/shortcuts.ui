@@ -26,8 +26,8 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Filter shows</property>
-                <property name="accelerator">slash</property>
+                <property name="title" translatable="yes">Filter list</property>
+                <property name="accelerator">&lt;Primary&gt;F slash</property>
                 <property name="visible">yes</property>
               </object>
             </child>
