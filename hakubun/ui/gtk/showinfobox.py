@@ -94,6 +94,17 @@ class ShowInfoBox(Gtk.Box):
             self.label_title.set_text(self.details['title'])
 
             detail = list()
+            # The tracker's own ID for this entry, first -- it isn't in
+            # any provider's 'extra' (those are all human-facing facts),
+            # but it's what you need to hand when looking the entry up
+            # on the site, filing a mismatch, or checking why multi-sync
+            # paired two entries. Labelled with the tracker it belongs
+            # to, since the same show has a different ID on each one.
+            show_id = (self._show or {}).get('id')
+            if show_id:
+                detail.append("<b>%s</b>\n%s" % (
+                    html.escape('%s ID' % self._engine.api_info['name']),
+                    html.escape(str(show_id))))
             for line in self.details['extra']:
                 if line[0] and line[1]:
                     title, content, *_ = line
