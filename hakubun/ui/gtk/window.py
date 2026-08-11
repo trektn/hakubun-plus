@@ -44,6 +44,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
     btn_airing_schedule = Gtk.Template.Child()
     btn_now_playing = Gtk.Template.Child()
     switch_subminer = Gtk.Template.Child()
+    subminer_box = Gtk.Template.Child()
     mediatype_box = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
 
@@ -239,6 +240,17 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._apply_subminer_state()
 
     def _apply_subminer_state(self):
+        # Settings > User Interface can hide the header-bar toggle
+        # outright (Qt already honours the same key). The whole box goes,
+        # not just the switch, or the 'SubMiner' label is left stranded.
+        # no_show_all is what makes hiding stick: the box is visible=True
+        # in window.ui and the window show_all()s its tree at startup.
+        self.subminer_box.set_no_show_all(True)
+        if not self._config.get('show_subminer_toggle', True):
+            self.subminer_box.hide()
+            return
+        self.subminer_box.show()
+
         available = utils.subminer_available()
         self.switch_subminer.set_sensitive(available)
         if available:

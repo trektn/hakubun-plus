@@ -1719,6 +1719,21 @@
                     <property name="position">4</property>
                   </packing>
                 </child>
+                <child>
+                  <object class="GtkCheckButton" id="checkbox_show_subminer_toggle">
+                    <property name="label" translatable="yes">Show the SubMiner switch in the header bar</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="receives_default">False</property>
+                    <property name="draw_indicator">True</property>
+                    <property name="tooltip_text" translatable="yes">Purely cosmetic -- hiding the switch doesn't turn SubMiner off. Settings &gt; Media still controls whether episodes open with SubMiner.</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">5</property>
+                  </packing>
+                </child>
               </object>
               <packing>
                 <property name="expand">False</property>
