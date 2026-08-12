@@ -273,10 +273,14 @@ def conflict_why(conflict, primary=None):
     policy jargon. Multi-line plain text."""
     name = field_label(conflict.field)
     others = sorted(s for s in conflict.values if s != 'local')
-    lines = ['%s differs:' % name,
-             '    %s:  %s' % (local_label(primary),
-                              fmt_value(conflict.field,
-                                        conflict.values['local']))]
+    lines = ['%s differs:' % name]
+    # A MIRROR conflict is between trackers only -- there is no 'local'
+    # side, by design (mirror.py), so it must not be invented here.
+    if 'local' in conflict.values:
+        lines.append('    %s:  %s'
+                     % (local_label(primary),
+                        fmt_value(conflict.field,
+                                  conflict.values['local'])))
     lines += ['    %s:  %s' % (label(s),
                                fmt_value(conflict.field,
                                          conflict.values[s]))
@@ -354,6 +358,206 @@ def plan_status(plan):
     if plan.errors:
         text += ' Errors: %s.' % ', '.join('%s (%s)' % kv
                                            for kv in plan.errors.items())
+    return text
+
+
+# -- Mirror ----------------------------------------------------------
+#
+# Mirror is tracker-to-tracker convergence (sync/mirror.py). Every
+# string below therefore talks about TRACKERS: no Hakubun side, no
+# "from Hakubun", no local value presented as a competing opinion.
+
+MIRROR_TAB_HELP = (
+    'Make your trackers agree, according to <b>Ownership</b>.\n\n'
+    'Ordinary <b>Sync</b> follows changes as they happen. <b>Mirror</b> '
+    'ignores history and asks a different question: given your '
+    'ownership rules, what should each tracker contain right now? Use '
+    'it after changing an ownership rule, or when a tracker has drifted '
+    'and normal syncing has nothing left to go on.\n\n'
+    'This can change a lot at once, so nothing is applied until you '
+    'review it and confirm.')
+
+
+def mirror_membership_lines(issue):
+    """The presence matrix for one entry, as tracker rows:
+
+        Anilist  ✓
+        Mal      ✓
+        Kitsu    ✗
+
+    Returns [(tracker label, present?, note)] so each toolkit can draw
+    its own ticks and crosses. `note` explains a row that is not simply
+    a yes/no -- a recorded decision, or a tracker identity has never
+    matched (which cannot be added to at all).
+    """
+    rows = []
+    for provider in sorted(set(issue.present) | set(issue.missing)
+                           | set(issue.unmapped)):
+        present = provider in issue.present
+        note = ''
+        if provider in issue.unmapped:
+            note = 'not matched yet -- resolve it under Identity'
+        elif provider in issue.removable:
+            note = 'marked as not belonging here'
+        else:
+            decision = issue.decisions.get(provider)
+            if decision == 'ignore':
+                note = "you chose to leave this tracker as it is"
+            elif decision == 'present':
+                note = 'should have this entry'
+            elif decision == 'absent':
+                note = 'should not have this entry'
+        rows.append((label(provider), present, note))
+    return rows
+
+
+def mirror_membership_why(issue):
+    """One sentence naming the discrepancy between trackers -- never
+    'add to Kitsu from Hakubun', which describes a synchronization the
+    user did not ask for."""
+    have = ' and '.join(label(p) for p in issue.present)
+    if issue.addable:
+        lack = ' and '.join(label(p) for p in issue.addable)
+        return ('%s %s this entry; %s %s not. Ownership says %s should '
+                'contain it.'
+                % (have, 'has' if len(issue.present) == 1 else 'have',
+                   lack, 'does' if len(issue.addable) == 1 else 'do',
+                   lack))
+    if issue.removable:
+        gone = ' and '.join(label(p) for p in issue.removable)
+        return '%s should not contain this entry.' % gone
+    return '%s %s this entry.' % (have,
+                                  'has' if len(issue.present) == 1
+                                  else 'have')
+
+
+def mirror_conflict_why(conflict):
+    """Explain a MIRROR decision: what each tracker holds, then the
+    rule that could not settle it.
+
+    Deliberately not conflict_why(): that one opens with Hakubun's
+    value and says Hakubun could not choose, which is the right framing
+    for Sync (where local IS the app's working copy being reconciled)
+    and the wrong one here. During a mirror the disagreement is between
+    trackers, and the app is not one of the parties.
+    """
+    name = field_label(conflict.field)
+    lines = ['%s differs between your trackers:' % name]
+    lines += ['    %s:  %s' % (label(s),
+                               fmt_value(conflict.field,
+                                         conflict.values[s]))
+              for s in sorted(conflict.values) if s != 'local']
+    why = 'These cannot be settled automatically: %s.' % \
+        policy_explanation(conflict.policy)
+    if conflict.reason:
+        why += ' (%s)' % conflict.reason
+    lines.append(why)
+    return '\n'.join(lines)
+
+
+def mirror_add_label(issue, provider):
+    return 'Add to %s' % label(provider)
+
+
+def mirror_remove_label(provider):
+    return 'Remove from %s' % label(provider)
+
+
+def mirror_ignore_label(provider):
+    return 'Leave %s as it is' % label(provider)
+
+
+def mirror_change_line(adapters, change):
+    """(direction, text) for one Mirror field operation. Always a push
+    between trackers, and always named as one: '<tracker>, <field>:
+    old → new — <rule>'."""
+    name = field_label(change.field)
+    values = '%s → %s' % (
+        fmt_target_value(adapters, change.field, change.old,
+                         change.target),
+        fmt_target_value(adapters, change.field, change.new,
+                         change.target))
+    text = '%s, %s: %s' % (label(change.target), name, values)
+    if change.field == 'score':
+        text += score_round_note(adapters, change.target, change.new)
+    if change.reason:
+        text += '  — %s' % change.reason
+    return 'push', text
+
+
+def mirror_remove_line(op):
+    return 'Remove %s from %s' % (op.title or 'this entry',
+                                  label(op.provider))
+
+
+def mirror_plan_summary(plan):
+    """The headline over the Mirror tab."""
+    counts = plan.counts()
+    entries = sum(counts['add'].values())
+    removals = sum(counts['remove'].values())
+    fields = sum(counts['update'].values())
+    if not (entries or removals or fields or plan.conflicts):
+        return 'Your trackers already agree.'
+    parts = []
+    if entries:
+        parts.append('%d entr%s to add' % (entries,
+                                           'y' if entries == 1 else 'ies'))
+    if removals:
+        parts.append('%d entr%s to remove'
+                     % (removals, 'y' if removals == 1 else 'ies'))
+    if fields:
+        parts.append('%d field(s) to update' % fields)
+    if plan.conflicts:
+        parts.append('%d decision(s) needed' % len(plan.conflicts))
+    return ' · '.join(parts)
+
+
+def mirror_confirmation(plan):
+    """The text of the bulk confirmation shown BEFORE a Mirror plan is
+    applied. Mirror can create and delete entries across real accounts
+    in bulk, so the user sees the per-tracker numbers first -- and adds
+    and removals are approved separately."""
+    counts = plan.counts()
+    lines = ['Mirror will make changes across your trackers:', '']
+    for heading, key, verb in (('Add', 'add', 'entries'),
+                               ('Remove', 'remove', 'entries'),
+                               ('Update', 'update', 'fields')):
+        group = counts[key]
+        if not group:
+            continue
+        lines.append('%s:' % heading)
+        for provider in sorted(group):
+            lines.append('    %s: %d %s' % (label(provider),
+                                            group[provider], verb))
+        lines.append('')
+    if sum(counts['remove'].values()):
+        lines.append('Removing an entry deletes it from that tracker '
+                     'account. This cannot be undone from Hakubun.')
+        lines.append('')
+    lines.append('This may make substantial changes to your tracker '
+                 'lists.')
+    return '\n'.join(lines)
+
+
+def mirror_result_status(result):
+    """Status line after applying a Mirror plan."""
+    parts = []
+    if result.get('pushed'):
+        parts.append('%d tracker change(s)' % result['pushed'])
+    if result.get('removed'):
+        parts.append('%d entr%s removed'
+                     % (result['removed'],
+                        'y' if result['removed'] == 1 else 'ies'))
+    text = ('Mirror applied: ' + ', '.join(parts) + '.' if parts
+            else 'Mirror made no changes.')
+    if result.get('skipped'):
+        text += (' %d not applied (you did not approve that category).'
+                 % result['skipped'])
+    if result.get('cancelled'):
+        text += ' Cancelled partway -- the rest re-plans.'
+    if result.get('errors'):
+        text += ' Errors: %s.' % ', '.join('%s (%s)' % kv for kv
+                                           in result['errors'].items())
     return text
 
 

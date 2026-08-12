@@ -476,3 +476,67 @@ def test_mirror_leaves_individual_fields_alone(store):
     own(store, score='individual')
     assert [o for o in engine.mirror_plan().updates
             if o.field == 'score'] == []
+
+
+# -- 7. presentation: never name Hakubun as a tracker -----------------
+
+def test_mirror_presentation_never_names_hakubun(store):
+    """§11: user-facing tracker reconciliation shows tracker sides and
+    the rule that applies -- not Hakubun competing for ownership."""
+    from hakubun.sync import present
+
+    engine, *_ = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 5})
+    assert engine.fetch() == {}
+    own(store, score='reconcile:manual')
+    plan = engine.mirror_plan()
+
+    adapters = engine.adapters
+    for op in plan.updates:
+        _direction, text = present.mirror_change_line(adapters, op)
+        assert 'Hakubun' not in text
+    assert plan.conflicts, 'expected a tracker-vs-tracker decision'
+    for conflict in plan.conflicts:
+        why = present.mirror_conflict_why(conflict)
+        assert 'Hakubun' not in why
+        assert 'between your trackers' in why
+    assert 'Hakubun' not in present.mirror_plan_summary(plan)
+
+
+def test_membership_presentation_reads_as_a_tracker_discrepancy(store):
+    from hakubun.sync import present
+
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+
+    issue = next(i for i in engine.mirror_plan().membership
+                 if i.title == 'GHOST')
+    rows = present.mirror_membership_lines(issue)
+    assert ('Anilist', True, '') in rows
+    assert ('Kitsu', False, '') in rows
+    why = present.mirror_membership_why(issue)
+    assert 'Kitsu' in why and 'Hakubun' not in why
+    assert present.mirror_remove_label('kitsu') == 'Remove from Kitsu'
+
+
+def test_bulk_confirmation_quotes_per_tracker_numbers(store):
+    from hakubun.sync import present
+
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
+                                       mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=5)])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, score='provider:anilist')
+
+    text = present.mirror_confirmation(engine.mirror_plan())
+    assert 'Add:' in text and 'Kitsu: 1 entries' in text
+    assert 'Update:' in text
