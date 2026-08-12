@@ -98,7 +98,13 @@ class AddOperation:
       question per entry -- "should Kitsu have this?" -- so there is
       one row per entry to answer it with.
 
-    Planned UNSELECTED and gated at apply time by `allow_adds`.
+    Planned SELECTED. Making the trackers agree is the entire point of
+    Mirror, and an addition is recoverable -- so requiring a tick per
+    entry on top of the preview and the confirmation asked the same
+    question three times. Untick the ones you don't want.
+
+    Deletions are the exception and stay unticked: see
+    RemoveOperation.
     """
 
     uuid: str
@@ -111,23 +117,29 @@ class AddOperation:
     reason: str = ''
     # The trackers whose entries justify creating this one.
     provenance: tuple = ()
-    selected: bool = False
+    selected: bool = True
 
 
 @dataclass
 class RemoveOperation:
     """Delete this entity's entry from one tracker.
 
-    Only ever produced from an explicit, persisted membership decision
-    of 'absent' (membership.Membership.removable()). No ownership
-    policy, no observation and no heuristic can create one: a deletion
-    on a real account is the single irreversible thing this subsystem
-    can do, so it requires a user to have said so, in as many words.
+    Produced by exactly two things (membership.Membership.removable):
+    an explicit, persisted 'absent' decision, or -- when an ENTRY OWNER
+    is designated -- that owner not listing a work it has an id for.
+    Nothing else: a deletion on a real account is the single
+    irreversible thing this subsystem can do.
 
-    Planned UNSELECTED, and additionally gated at apply time by
-    `allow_removes` (see SyncEngine.apply_mirror) -- two independent
-    confirmations, because bulk deletion is exactly the operation that
-    must never happen by accident.
+    Note what the second source excludes. A tracker's unique entries,
+    and anything identity has not matched to the owner, are left
+    alone: "the owner has no id for this" means we do not know, not
+    that the entry is unwanted.
+
+    Planned UNSELECTED, unlike everything else in a Mirror plan, and
+    additionally gated at apply time by `allow_removes` (see
+    SyncEngine.apply_mirror). Additions and field pushes can be undone
+    by mirroring again; a deleted list entry cannot be recovered from
+    here at all, so this is the one category that stays opt-in.
     """
 
     uuid: str
@@ -227,6 +239,9 @@ class MirrorPlan:
     # the same class of untruth as telling a user they chose something
     # they never chose.
     ownership: Dict[str, Any] = dc_field(default_factory=dict)
+    # The designated entry owner, if any -- so the preview can explain
+    # WHY entries are being added or removed without re-deriving it.
+    master: str = None
 
     @property
     def clean(self) -> bool:
@@ -273,16 +288,27 @@ class MirrorPlan:
 class MirrorPlanner:
     """Builds a MirrorPlan. Read-only: it never writes to the store."""
 
-    def __init__(self, store, adapters, primary=None):
+    def __init__(self, store, adapters, primary=None, master=None):
         self.store = store
         self.adapters = dict(adapters or {})
         self.primary = primary
+        # The ENTRY OWNER: the tracker whose list decides which entries
+        # should exist. Read from the store when not passed. See
+        # SyncStore.master and membership.Membership.removable.
+        self.master = (master if master is not None
+                       else store.master())
+        if self.master not in self.adapters:
+            # A master that is not a connected account cannot manage
+            # anything -- and must not be allowed to make every other
+            # tracker's entries look unwanted.
+            self.master = None
 
     # -- entry point ---------------------------------------------------
 
     def plan(self, should_cancel=None):
         ownership = self.store.ownership()
-        plan = MirrorPlan(ownership=dict(ownership))
+        plan = MirrorPlan(ownership=dict(ownership),
+                          master=self.master)
         ents = self.store.entities()
         uids = [e['uuid'] for e in ents]
         snapshot = {
@@ -619,16 +645,29 @@ class MirrorPlanner:
         """Turn this entity's tracker-membership discrepancies into
         proposals, and record the discrepancy itself for the UI.
 
-        Adds are proposals (unselected). Removes come only from a
-        recorded 'absent' decision. Both are reported as a difference
-        between TRACKERS -- which have it, which don't -- so the user
-        can answer the real question ("should Kitsu have this?")
-        instead of the misleading one ("add to Kitsu from Hakubun?").
+        With an ENTRY OWNER designated, its list is the set every
+        other tracker converges to, so both directions are derivable
+        and neither needs a per-entry question. Without one, adds are
+        proposed from any tracker holding the entry and removals come
+        only from an explicit decision.
+
+        Both are reported as a difference between TRACKERS -- which
+        have it, which don't -- so the user can answer the real
+        question ("should Kitsu have this?") instead of the misleading
+        one ("add to Kitsu from Hakubun?").
         """
         present = member.present()
-        addable = [p for p in member.addable()
+        addable = [p for p in member.addable(self.master)
                    if self.adapters[p].mediainfo.get('can_add', True)]
-        removable = member.removable()
+        # A provider that cannot delete is dropped only where the
+        # removal was DERIVED (the entry owner does not list it) --
+        # proposing an impossible action nobody asked for is noise. An
+        # explicit 'absent' decision is kept even then, so apply
+        # reports "Kitsu cannot delete list entries" instead of
+        # silently discarding what the user asked for.
+        removable = [p for p in member.removable(self.master)
+                     if self.adapters[p].can_remove()
+                     or member.decisions.get(p) == membership_mod.WANT_ABSENT]
         unmapped = member.unmapped()
 
         # A created entry starts with exactly the values Mirror is
@@ -650,17 +689,22 @@ class MirrorPlanner:
                 reasons=dict(member.reasons), values=dict(values)))
 
         if present and values:
-            provenance = tuple(present)
+            provenance = ((self.master,) if self.master in present
+                          else tuple(present))
             reason = 'exists on %s; %%s has no entry' % ' and '.join(
-                p.capitalize() for p in present)
+                p.capitalize() for p in provenance)
             for provider in addable:
                 plan.adds.append(AddOperation(
                     uid, provider, title=title, values=dict(values),
                     reason=reason % provider.capitalize(),
-                    provenance=provenance, selected=False))
+                    provenance=provenance))
 
         for provider in removable:
+            if (self.master
+                    and member.decisions.get(provider) is None):
+                reason = ('%s does not list it' % self.master.capitalize())
+            else:
+                reason = ('marked as not belonging on %s'
+                          % provider.capitalize())
             plan.removes.append(RemoveOperation(
-                uid, provider, title=title,
-                reason='marked as not belonging on %s'
-                       % provider.capitalize()))
+                uid, provider, title=title, reason=reason))

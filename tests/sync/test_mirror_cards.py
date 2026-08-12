@@ -41,8 +41,16 @@ def card_named(engine, plan, title, category='all'):
     return next(c for c in cards(engine, plan, category) if c.title == title)
 
 
-def row(card, provider):
-    return next(t for t in card.trackers if t.provider == provider)
+def texts(card):
+    return [text for _op, text in card.rows]
+
+
+def note_for(card, provider):
+    """The informational line for one tracker, if any."""
+    prefix = present.label(provider)
+    line = next((t for op, t in card.rows
+                 if op is None and t.startswith(prefix)), None)
+    return line.split(' — ', 1)[1] if line and ' — ' in line else None
 
 
 # -- 1. one card per work ---------------------------------------------
@@ -65,7 +73,9 @@ def test_a_work_is_one_card_covering_every_tracker(store):
     assert len(all_cards) == 1
     card = all_cards[0]
     assert card.title == 'GHOST'
-    assert {t.provider for t in card.trackers} == {'anilist', 'mal', 'kitsu'}
+    # Every tracker Mirror touches appears on this one card.
+    joined = ' | '.join(texts(card))
+    assert 'Mal' in joined and 'Kitsu' in joined
 
 
 def test_the_card_opens_with_what_ownership_says_it_should_be(store):
@@ -89,9 +99,9 @@ def test_the_card_opens_with_what_ownership_says_it_should_be(store):
     assert desired['Status'] == ('Completed', 'Mal')
 
 
-def test_a_tracker_row_shows_its_whole_entry_not_only_the_deltas(store):
-    """Arrows need something to stand against. "Score 5 -> 9" alone
-    leaves the reader wondering what else is about to move."""
+def test_a_change_says_what_happens_and_why_on_one_line(store):
+    """Sync's shape: a change is legible as a single line naming the
+    tracker, the field, both values and the rule behind it."""
     anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
                                        status='completed', mal_id=77)])
     mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=5,
@@ -101,15 +111,13 @@ def test_a_tracker_row_shows_its_whole_entry_not_only_the_deltas(store):
     own(store, score='provider:anilist')
 
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
-    mal_row = row(card, 'mal')
-    shown = dict(mal_row.values)
-    assert shown['Score'] == '5'            # its own scale, its own value
-    assert shown['Status'] == 'Completed'   # unchanged, and still shown
-    assert [c[0] for c in mal_row.changes] == ['Score']
+    line = next(t for t in texts(card) if t.startswith('Update Mal'))
+    assert 'Score: 5 → 9' in line
+    assert 'Anilist owns score' in line
 
 
-def test_the_owning_tracker_says_so_on_its_own_row(store):
-    """"Why is Kitsu changing and AniList not?" is answered in place."""
+def test_the_owner_is_named_on_the_change_it_caused(store):
+    """"Why is Mal changing and AniList not?" is answered in place."""
     anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
                                        mal_id=77)])
     mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=5)])
@@ -118,9 +126,10 @@ def test_the_owning_tracker_says_so_on_its_own_row(store):
     own(store, score='provider:anilist')
 
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
-    assert row(card, 'anilist').owns == ['Score']
-    assert row(card, 'mal').owns == []
-    assert row(card, 'mal').changes
+    # The owner is named on the change it caused, and the ownership
+    # row states the target value.
+    assert any('Anilist owns score' in t for t in texts(card))
+    assert ('Score', '9', 'Anilist') in [d[:3] for d in card.desired]
 
 
 def test_progress_is_shown_against_the_tracker_it_belongs_to(store):
@@ -133,9 +142,8 @@ def test_progress_is_shown_against_the_tracker_it_belongs_to(store):
     own(store, progress='provider:anilist')
 
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
-    assert dict(row(card, 'mal').values)['Watched Episodes'] == '3 / 26'
-    change = row(card, 'mal').changes[0]
-    assert change[1] == '3 / 26' and change[2] == '12 / 26'
+    line = next(t for t in texts(card) if t.startswith('Update Mal'))
+    assert '3 / 26 → 12 / 26' in line
 
 
 # -- 2. a created entry is ONE decision -------------------------------
@@ -158,11 +166,10 @@ def test_adding_an_entry_is_one_row_not_one_row_per_field(store):
     assert len([o for o in plan.adds if o.provider == 'kitsu']) == 1
 
     card = card_named(engine, plan, 'GHOST')
-    kitsu_row = row(card, 'kitsu')
-    assert kitsu_row.action == 'add'
-    assert kitsu_row.present is False
+    adds = [t for t in texts(card) if t.startswith('Add to Kitsu')]
+    assert len(adds) == 1
     # One row, carrying everything the entry will start with.
-    assert len(dict(kitsu_row.add_values)) > 1
+    assert adds[0].count(' · ') >= 1
 
 
 def test_an_entry_is_created_whole_or_not_at_all(store):
@@ -235,10 +242,9 @@ def test_an_unfinished_work_still_refuses_to_guess(store):
 
 # -- 4. the filter replaces the tabs, without losing them -------------
 
-def test_a_category_filter_narrows_to_the_same_divisions_the_tabs_had(
-        store):
-    """The categories survive as a filter -- how you narrow a large
-    plan -- rather than as five separate places to look."""
+def test_every_change_is_visible_without_filtering(store):
+    """No category filter: a plan you must filter to understand is one
+    you cannot confidently apply."""
     anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
                                        mal_id=77),
                                   show('anilist', 10, 'SOLO', score=80,
@@ -252,10 +258,14 @@ def test_a_category_filter_narrows_to_the_same_divisions_the_tabs_had(
     own(store, score='provider:anilist')
 
     plan = engine.mirror_plan()
-    assert cards(engine, plan, 'add'), 'Kitsu is missing both entries'
-    assert cards(engine, plan, 'remove') == [], 'nothing was marked absent'
-    for card in cards(engine, plan, 'update'):
-        assert any(t.changes for t in card.trackers)
+    shown = cards(engine, plan)
+    assert len(shown) == 2, 'both titles have work'
+    for card in shown:
+        assert any(t.startswith('Add to Kitsu') for t in texts(card))
+    # GHOST's MAL score disagrees and is pushed; SOLO's already
+    # matches, so it has no field row -- both appear regardless.
+    ghost = next(c for c in shown if c.title == 'GHOST')
+    assert any(t.startswith('Update Mal') for t in texts(ghost))
 
 
 def test_cards_that_do_nothing_are_not_shown(store):
@@ -303,8 +313,8 @@ def test_a_collapsed_card_says_what_happens_to_the_title(store):
 
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
     headline = present.mirror_card_headline(card)
-    assert 'Kitsu' in headline and 'add' in headline
-    assert 'Mal' in headline
+    assert 'add to Kitsu' in headline
+    assert 'field(s)' in headline
 
 
 def test_hakubun_is_never_a_tracker_row(store):
@@ -320,8 +330,11 @@ def test_hakubun_is_never_a_tracker_row(store):
     store.local_set(uid, 'score', 1.0, source='local')
 
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
-    assert 'local' not in {t.provider for t in card.trackers}
-    assert card.local, "Hakubun's copy is stale and must be disclosed"
+    local = [t for op, t in card.rows
+             if op is not None and getattr(op, 'target', None) == 'local']
+    assert local, "Hakubun's copy is stale and must be disclosed"
+    # Disclosed as this app's own copy, never as a tracker row.
+    assert not any(t.startswith('Update Local') for t in texts(card))
 
 
 # -- 6. a settled decision stays reachable ----------------------------
@@ -347,7 +360,7 @@ def test_a_settled_membership_decision_still_gets_a_card(store):
     assert not plan.adds, 'the decision is settled; nothing is proposed'
     card = next((c for c in cards(engine, plan) if c.uuid == uid), None)
     assert card is not None, 'the decision must remain revisitable'
-    assert row(card, 'kitsu').note
+    assert note_for(card, 'kitsu')
 
 
 def test_the_membership_filter_can_reach_a_settled_entry(store):
@@ -361,7 +374,9 @@ def test_the_membership_filter_can_reach_a_settled_entry(store):
     uid = store.mapping_for('anilist', '9')['uuid']
     engine.set_membership(uid, 'kitsu', 'ignore')
 
-    assert cards(engine, engine.mirror_plan(), 'membership')
+    uid_cards = [c for c in cards(engine, engine.mirror_plan())
+                 if c.uuid == uid]
+    assert uid_cards
 
 
 def test_a_decision_on_a_tracker_that_holds_the_entry_is_explained(store):
@@ -377,4 +392,4 @@ def test_a_decision_on_a_tracker_that_holds_the_entry_is_explained(store):
 
     card = next(c for c in cards(engine, engine.mirror_plan())
                 if c.uuid == uid)
-    assert 'should not have it' in row(card, 'mal').note
+    assert 'should not have it' in note_for(card, 'mal')

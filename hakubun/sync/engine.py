@@ -187,7 +187,20 @@ class SyncEngine:
         A fetch that returns an EMPTY list while we track entries for
         this provider is left alone: indistinguishable from an API
         quietly returning nothing, and wiping every base over a hiccup
-        is far worse than keeping a stale snapshot one run longer."""
+        is far worse than keeping a stale snapshot one run longer.
+
+        The same reasoning does not stop at zero. A fetch that drops a
+        LARGE SHARE of a provider's entries at once is the same class
+        of event: people delete entries a few at a time, so 250
+        vanishing in one response is far more likely to be a partial
+        API result, a changed account, or a bad token than 250
+        individual decisions. The snapshots are still dropped (they
+        genuinely are not in the provider's answer, and pushing
+        against a phantom is worse), but no 'ignore' decision is
+        recorded -- so Mirror keeps offering to restore them instead of
+        silently agreeing they should be gone. That silent agreement is
+        what turned one bad AniList response into 250 entries the UI
+        would never offer to re-add."""
         fetched = {str(e.provider_id) for e in entries}
         if not fetched:
             return
@@ -198,7 +211,19 @@ class SyncEngine:
         reported = {f for e in entries for f in e.user}
         self.store.remote_prune_fields(
             name, reported | {'_total', '_my_id'})
-        stale = self.store.remote_provider_ids(name) - fetched
+        tracked = self.store.remote_provider_ids(name)
+        stale = tracked - fetched
+        # See the docstring: a mass disappearance is evidence about the
+        # RESPONSE, not about the user's intent. Above this share, drop
+        # the snapshots but record no decision -- the entries stay
+        # proposable, which is the recoverable failure.
+        mass_loss = (len(stale) >= 25
+                     and len(stale) > len(tracked) * 0.20)
+        if mass_loss:
+            self._debug('%s dropped %d of %d tracked entries in one '
+                        'fetch; treating as a suspect response rather '
+                        'than %d deletions'
+                        % (name, len(stale), len(tracked), len(stale)))
         for pid in stale:
             self._debug('%s no longer lists entry %s; dropping its '
                         'remote snapshot' % (name, pid))
@@ -214,8 +239,9 @@ class SyncEngine:
                 # a standing instruction to delete the entry again if
                 # it ever comes back. clear_membership() (the UI's
                 # "ask me about this again") undoes it.
-                self.store.set_membership(mapping['uuid'], name,
-                                          'ignore', reason='deleted')
+                if not mass_loss:
+                    self.store.set_membership(mapping['uuid'], name,
+                                              'ignore', reason='deleted')
             row = self.store.identity_get(name, pid)
             if row and row['status'] in ('open', 'deferred'):
                 # An unresolved entry the user deleted on the website
@@ -313,8 +339,9 @@ class SyncEngine:
         for adapter in frozen:
             adapter.freeze_mediainfo()
         try:
-            return MirrorPlanner(self.store, self.adapters,
-                                 primary=self.primary).plan(should_cancel)
+            return MirrorPlanner(
+                self.store, self.adapters,
+                primary=self.primary).plan(should_cancel)
         finally:
             for adapter in frozen:
                 adapter.thaw_mediainfo()

@@ -840,44 +840,11 @@ class SyncWindow(QDialog):
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
 
-        # The bulk gates. Unticked by default and enforced in the
-        # engine (SyncEngine.apply_mirror), not here: these two boxes
-        # are how the user expresses the choice, not what makes it
-        # safe. Additions and removals are approved independently --
-        # "yes to adds, no to deletes" is the common answer.
-        gates = QHBoxLayout()
-        self.mirror_allow_adds = QCheckBox(
-            'Allow adding entries')
-        self.mirror_allow_adds.setToolTip(
-            'Permit Mirror to create new entries on trackers that are '
-            'missing them. Each entry must still be ticked.')
-        self.mirror_allow_removes = QCheckBox(
-            'Allow removing entries')
-        self.mirror_allow_removes.setToolTip(
-            'Permit Mirror to DELETE entries from trackers you marked '
-            'as not needing them. This cannot be undone from Hakubun.')
-        gates.addWidget(self.mirror_allow_adds)
-        gates.addWidget(self.mirror_allow_removes)
-        gates.addStretch()
-        layout.addLayout(gates)
-
-        # ONE view, organized by title -- not five tabs organized by
-        # operation kind. A user works a title at a time ("what happens
-        # to this show?"), and that question used to be answered across
-        # three tabs. The kinds survive as a filter, which is what they
-        # were actually useful for: narrowing a large plan.
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel('Show:'))
-        self.mirror_filter = QComboBox()
-        for key, text in present.CARD_CATEGORIES:
-            self.mirror_filter.addItem(text, key)
-        self.mirror_filter.currentIndexChanged.connect(
-            lambda _i: self._render_mirror_cards())
-        filter_row.addWidget(self.mirror_filter)
-        self.mirror_filter_count = QLabel('')
-        filter_row.addWidget(self.mirror_filter_count)
-        filter_row.addStretch()
-        layout.addLayout(filter_row)
+        # No "allow adding" / "allow removing" checkboxes, and no
+        # category filter. Both asked a question the preview and the
+        # confirmation already answer: you can see every change, and
+        # nothing is written until you confirm. A plan you must filter
+        # to understand is one you cannot confidently apply.
 
         splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.mirror_tree = QTreeWidget()
@@ -985,14 +952,11 @@ class SyncWindow(QDialog):
             self._sync_mirror_checks(child)
 
     def _render_mirror_cards(self):
-        """Draw the plan as one collapsible card per title.
+        """Draw the plan as one group per title, its changes as flat
+        rows -- the same shape the Sync tab uses.
 
-        Each card is: what ownership says this work should be, then
-        every tracker under it with what it holds now and what would
-        change. Tickable rows are the actual operations -- a field push,
-        a whole-entry creation, a deletion -- and a card's own tick
-        drives all of them, so "yes to this show" is one click rather
-        than one per field.
+        A card's own tick drives every change under it, so "yes to this
+        show" is one click rather than one per field.
         """
         tree = self.mirror_tree
         plan = self._mirror_plan
@@ -1001,14 +965,7 @@ class SyncWindow(QDialog):
             tree.clear()
             if plan is None:
                 return
-            category = self.mirror_filter.currentData() or 'all'
-            cards = present.mirror_cards(plan, self.engine.adapters,
-                                         category)
-            self.mirror_filter_count.setText(
-                '%d of %d entr%s'
-                % (len(cards),
-                   len(present.mirror_cards(plan, self.engine.adapters)),
-                   'y' if len(cards) == 1 else 'ies'))
+            cards = present.mirror_cards(plan, self.engine.adapters)
             bold = QtGui.QFont()
             bold.setBold(True)
             for card in cards:
@@ -1017,12 +974,14 @@ class SyncWindow(QDialog):
                      % (card.title, present.mirror_card_headline(card))])
                 top.setFont(0, bold)
                 top.setData(0, QtCore.Qt.ItemDataRole.UserRole + 3, card)
+                top.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1,
+                            card.issue)
                 if card.ops:
                     # Checkable, but NOT auto-tristate: Qt derives an
                     # auto-tristate item's state from its checkable
-                    # direct children, and a card's children are tracker
-                    # rows, which are not checkable. Left on the flag,
-                    # Qt overrode every click back to unchecked.
+                    # direct children, and a card's rows include
+                    # informational ones that are not checkable. Left
+                    # on, Qt overrode every click back to unchecked.
                     top.setFlags(top.flags()
                                  | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
                 self._build_mirror_card(top, card)
@@ -1034,7 +993,7 @@ class SyncWindow(QDialog):
             tree.blockSignals(False)
 
     def _build_mirror_card(self, top, card):
-        # The ownership row: what this work SHOULD be. Under a single
+        # What ownership says this work SHOULD be. Under a single
         # master list this would just be that list's entry; ownership
         # assembles it per field from each field's own authority, so it
         # names the owner alongside every value.
@@ -1048,60 +1007,28 @@ class SyncWindow(QDialog):
             header.setForeground(0, self._PULL_COLOR)
             top.addChild(header)
 
-        for row in card.trackers:
-            bits = ['%s  %s' % (row.label, '✓' if row.present else '✗')]
-            if row.owns:
-                bits.append('owns %s' % ', '.join(row.owns))
-            if row.values:
-                bits.append(' · '.join('%s %s' % (n, v)
-                                       for n, v in row.values))
-            if row.note:
-                bits.append(row.note)
-            item = QTreeWidgetItem(['   —   '.join(bits)])
-            item.setForeground(0, self._PULL_COLOR if row.present
-                               else self._CREATE_COLOR)
-            # Carried so the membership context menu can act on the row
-            # the user actually right-clicked.
-            item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, card.issue)
-            item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2, row.label)
-            top.addChild(item)
-
-            for name, old, new, why in row.changes:
-                op = next((o for o in card.ops
-                           if getattr(o, 'target', None) == row.provider
-                           and present.field_label(getattr(o, 'field', ''))
-                           == name), None)
-                text = '%s: %s → %s' % (name, old, new)
-                if why:
-                    text += '  — %s' % why
-                if op is not None:
-                    item.addChild(self._mirror_op_item(op, text,
-                                                       self._PUSH_COLOR))
-
-            if row.action == 'add':
-                op = next((o for o in card.ops
-                           if getattr(o, 'provider', None) == row.provider
-                           and hasattr(o, 'values')), None)
-                if op is not None:
-                    # ONE row for the whole entry. Creating it with an
-                    # arbitrary ticked subset of its fields is not a
-                    # thing the user can express, because it is not a
-                    # thing they would ever mean.
-                    item.addChild(self._mirror_op_item(
-                        op,
-                        'Create this entry on %s with %s'
-                        % (row.label,
-                           ' · '.join('%s %s' % (n, v)
-                                      for n, v in row.add_values)),
-                        self._CREATE_COLOR))
-            elif row.action == 'remove':
-                op = next((o for o in card.ops
-                           if getattr(o, 'provider', None) == row.provider
-                           and not hasattr(o, 'values')), None)
-                if op is not None:
-                    item.addChild(self._mirror_op_item(
-                        op, 'DELETE this entry from %s' % row.label,
-                        self._CONFLICT_COLOR))
+        for op, text in card.rows:
+            if op is None:
+                # Informational: a settled membership decision, or a
+                # tracker identity has not matched. Not actionable
+                # here, so not tickable -- but shown, because the way
+                # back to that decision is this card's context menu.
+                item = QTreeWidgetItem([text])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1,
+                             card.issue)
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2,
+                             text.split(' — ')[0].strip())
+                top.addChild(item)
+                continue
+            if hasattr(op, 'values'):
+                color = self._CREATE_COLOR
+            elif not hasattr(op, 'field'):
+                color = self._CONFLICT_COLOR
+            elif op.target == 'local':
+                color = self._PULL_COLOR
+            else:
+                color = self._PUSH_COLOR
+            top.addChild(self._mirror_op_item(op, text, color))
 
         for conflict in card.conflicts:
             note = QTreeWidgetItem(
@@ -1109,14 +1036,6 @@ class SyncWindow(QDialog):
                  % present.field_label(conflict.field)])
             note.setForeground(0, self._CONFLICT_COLOR)
             top.addChild(note)
-
-        if card.local:
-            group = QTreeWidgetItem(["%s's own copy" % present.local_label()])
-            group.setToolTip(0, present.MIRROR_LOCAL_HELP)
-            for op in card.local:
-                group.addChild(self._mirror_op_item(
-                    op, present.mirror_local_line(op), self._PULL_COLOR))
-            top.addChild(group)
 
     def _mirror_context_menu(self, tree, pos):
         """Right-click a tracker row in the membership view: record what
@@ -1301,19 +1220,14 @@ class SyncWindow(QDialog):
         if self._mirror_plan is None:
             return
         plan = self._mirror_plan
-        allow_adds = self.mirror_allow_adds.isChecked()
-        allow_removes = self.mirror_allow_removes.isChecked()
+        # Both categories are approved by the one confirmation below.
+        # The separate "allow adding" / "allow removing" checkboxes
+        # asked the same question the preview and this dialog already
+        # answer. The engine still defaults them off (there is a
+        # headless path too); the UI passes what the user confirmed.
+        allow_adds = allow_removes = True
 
         text = present.mirror_confirmation(plan)
-        notes = []
-        if plan.selected_adds() and not allow_adds:
-            notes.append('Additions are ticked but "Allow adding '
-                         'entries" is off — they will be skipped.')
-        if plan.selected_removes() and not allow_removes:
-            notes.append('Removals are ticked but "Allow removing '
-                         'entries" is off — they will be skipped.')
-        if notes:
-            text += '\n\n' + '\n'.join(notes)
 
         box = QMessageBox(self)
         box.setWindowTitle('Apply mirror')
@@ -1413,12 +1327,44 @@ class SyncWindow(QDialog):
                 lambda _idx, f=field: self._on_policy_combo(f))
             grid.addWidget(combo, row, 1)
             self._policy_combos[field] = combo
+
+        # ENTRIES: the same question one row down, about whole entries
+        # rather than a field. Field ownership says where a score comes
+        # from; it cannot say whether Kitsu should hold the entry at
+        # all, which is what made every membership difference a
+        # per-entry question.
+        row = len(USER_FIELDS)
+        grid.addWidget(QLabel(present.ENTRY_OWNER_LABEL), row, 0)
+        self.entry_owner_combo = QComboBox()
+        master = self.store.master()
+        for key, choice_label in present.entry_owner_choices(providers,
+                                                             master):
+            self.entry_owner_combo.addItem(choice_label, key)
+        self.entry_owner_combo.setCurrentIndex(
+            max(0, self.entry_owner_combo.findData(master or '')))
+        self.entry_owner_combo.currentIndexChanged.connect(
+            lambda _idx: self._on_entry_owner())
+        grid.addWidget(self.entry_owner_combo, row, 1)
+        help_label = QLabel(present.ENTRY_OWNER_HELP.split('\n\n')[0])
+        help_label.setWordWrap(True)
+        help_label.setToolTip(present.ENTRY_OWNER_HELP)
+        grid.addWidget(help_label, row + 1, 0, 1, 3)
+
         grid.setColumnStretch(2, 1)
         box = QGroupBox()
         box.setLayout(grid)
         layout.addWidget(box)
         layout.addStretch()
         return page
+
+    def _on_entry_owner(self):
+        if self._policy_updating:
+            return
+        provider = self.entry_owner_combo.currentData() or None
+        self.store.set_master(provider)
+        self._status('Entries now follow: %s'
+                     % (present.label(provider) if provider
+                        else 'no one (nothing removed automatically)'))
 
     def _on_policy_combo(self, field):
         if self._policy_updating:

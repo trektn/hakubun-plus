@@ -85,29 +85,63 @@ class Membership:
 
     # -- proposals -----------------------------------------------------
 
-    def addable(self) -> List[str]:
+    def addable(self, master=None) -> List[str]:
         """Providers that could receive a creation: mapped, without an
         entry, and not excluded by a decision or an answered lookup.
 
         A 'present' decision does NOT force an add on a provider with
         no mapping -- see UNMAPPED above.
+
+        With a MASTER designated, the master's list defines the set, so
+        a work the master does not hold is not propagated outward: it
+        is a candidate for removal instead (see removable). Without
+        one, any tracker holding the entry justifies creating it
+        elsewhere.
         """
+        if master and self.state.get(master) != PRESENT:
+            return []
         return sorted(
             p for p, s in self.state.items()
             if s == MISSING
             and self.decisions.get(p) not in (WANT_ABSENT, WANT_IGNORE)
             and p not in self.lookup_missed)
 
-    def removable(self) -> List[str]:
-        """Providers holding an entry the user has decided should not
-        be there. Deliberately derived ONLY from an explicit
-        WANT_ABSENT decision: no observation, ownership policy or
-        heuristic may ever produce a deletion proposal, because a
-        deletion on a real account is the one operation here that
-        cannot be taken back."""
-        return sorted(p for p, s in self.state.items()
-                      if s == PRESENT
-                      and self.decisions.get(p) == WANT_ABSENT)
+    def removable(self, master=None) -> List[str]:
+        """Providers holding an entry that should not be there.
+
+        Two sources, and only two:
+
+        1. An explicit WANT_ABSENT decision. Always honoured.
+        2. The MASTER's list, when one is designated: the master is the
+           entry manager, so a work it does not list is one the other
+           trackers should not list either.
+
+        Rule 2 is deliberately narrow, because a deletion on a real
+        account is the one thing here that cannot be taken back. It
+        applies only when this work is genuinely RESOLVED against the
+        master -- identity has matched it there (the master is not
+        UNMAPPED) and the master's own fetch simply does not list it.
+
+        A tracker's unique entries, and anything identity has not
+        matched to the master, are LEFT ALONE. "The master has no id
+        for this" means we do not know whether it belongs there; it
+        does not mean the entry is unwanted, and treating those two as
+        the same is exactly how a converge turns into deleting things
+        at random. An unresolved entry is an identity gap to fix, never
+        a deletion to propose.
+        """
+        out = {p for p, s in self.state.items()
+               if s == PRESENT and self.decisions.get(p) == WANT_ABSENT}
+        if master and self.state.get(master) == MISSING:
+            # MISSING, not UNMAPPED: the master is mapped (identity
+            # resolved this work there) and its fetch still has no
+            # entry -- so it really is absent from the managed list.
+            out |= {p for p, s in self.state.items()
+                    if s == PRESENT and p != master
+                    # A decision the user made outranks the master:
+                    # 'present'/'ignore' means hands off this tracker.
+                    and self.decisions.get(p) is None}
+        return sorted(out)
 
     def undecided_gaps(self) -> List[str]:
         """Providers missing the entry with no decision recorded yet --

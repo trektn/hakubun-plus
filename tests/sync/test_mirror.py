@@ -188,11 +188,14 @@ def test_missing_entry_is_a_tracker_membership_discrepancy(store):
     adds = [o for o in plan.adds if o.provider == 'kitsu']
     assert len(adds) == 1
     add = adds[0]
+    # Selected by default: making the trackers agree is the point of
+    # Mirror, and an addition is recoverable. Deletions are the one
+    # category that stays opt-in.
     assert add.values['score'] == pytest.approx(5.0)
     assert add.values['status'] == 'completed'
     # Justified by the trackers that actually list it, never by us.
     assert add.provenance == ('anilist', 'mal')
-    assert add.selected is False          # opt-in, always
+    assert add.selected is True
 
 
 def test_unmapped_tracker_is_an_identity_gap_not_an_add(store):
@@ -500,10 +503,10 @@ def test_mirror_presentation_never_names_hakubun(store):
     plan = engine.mirror_plan()
 
     for card in present.mirror_cards(plan, engine.adapters):
-        for row in card.trackers:
-            assert 'Hakubun' not in row.label
-            for change in row.changes:
-                assert all('Hakubun' not in str(part) for part in change)
+        for op, text in card.rows:
+            if op is not None and getattr(op, 'target', None) == 'local':
+                continue        # this app's own copy, named as such
+            assert 'Hakubun' not in text
     assert plan.conflicts, 'expected a tracker-vs-tracker decision'
     for conflict in plan.conflicts:
         why = present.mirror_conflict_why(conflict)
@@ -525,10 +528,9 @@ def test_membership_presentation_reads_as_a_tracker_discrepancy(store):
     plan = engine.mirror_plan()
     card = next(c for c in present.mirror_cards(plan, engine.adapters)
                 if c.title == 'GHOST')
-    rows = {t.label: t.present for t in card.trackers}
-    assert rows['Anilist'] is True
-    assert rows['Kitsu'] is False
-    assert 'Hakubun' not in rows
+    texts = [text for _op, text in card.rows]
+    assert any(t.startswith('Add to Kitsu') for t in texts)
+    assert not any('Hakubun' in t for t in texts)
     assert present.mirror_remove_label('kitsu') == 'Remove from Kitsu'
 
 
@@ -773,8 +775,9 @@ def _tracker_note(engine, plan, uid, provider):
     from hakubun.sync import present
     card = next(c for c in present.mirror_cards(plan, engine.adapters)
                 if c.uuid == uid)
-    row = next(t for t in card.trackers if t.provider == provider)
-    return row.note
+    line = next(text for op, text in card.rows
+                if op is None and text.startswith(present.label(provider)))
+    return line.split(' — ', 1)[1]
 
 
 def test_a_website_deletion_is_not_described_as_a_user_choice(store):
@@ -837,3 +840,213 @@ def test_a_decision_made_in_mirror_is_the_one_that_says_you_chose(store):
 
     note = _tracker_note(engine, engine.mirror_plan(), uid, 'kitsu')
     assert note == 'you chose to leave this tracker as it is'
+
+
+# -- 13. the entry owner (MALSync's "master", but safer) --------------
+
+def _entry_owner_setup(store, kitsu_shows, mal_shows=None):
+    """AniList manages entries; MAL and Kitsu follow it."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', mal_shows if mal_shows is not None
+                  else [show('mal', 77, 'GHOST')])
+    kitsu = FakeLib('kitsu', kitsu_shows, mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    store.set_master('anilist')
+    return engine, anilist, mal, kitsu
+
+
+def test_the_entry_owner_propagates_its_list_without_being_asked(store):
+    """The whole point: designating an owner makes membership
+    DERIVABLE, so "should Kitsu have this?" stops being a question per
+    entry."""
+    engine, *_ = _entry_owner_setup(store, kitsu_shows=[])
+
+    plan = engine.mirror_plan()
+    add = next(o for o in plan.adds if o.provider == 'kitsu')
+    assert add.selected is True
+    assert add.provenance == ('anilist',), \
+        'the owner is what justifies the creation'
+
+
+def test_an_entry_the_owner_dropped_is_proposed_for_removal(store):
+    """The other direction, which is what makes it an entry MANAGER
+    rather than just a source."""
+    anilist = FakeLib('anilist', [])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    # AniList knows this work (identity mapped it) but does not list it.
+    uid = store.mapping_for('mal', '77')['uuid']
+    store.add_mapping(uid, 'anilist', '9', confirmed=True)
+    store.set_master('anilist')
+
+    plan = engine.mirror_plan()
+    op = next(o for o in plan.removes if o.provider == 'mal')
+    assert 'Anilist does not list it' in op.reason
+    assert op.selected is False, 'deletions stay opt-in, always'
+
+
+def test_a_tracker_s_unique_entry_is_left_alone(store):
+    """"If trackers have unique entries we leave them be rather than
+    deleting random things." An entry the owner has no id for is an
+    identity gap, not evidence the entry is unwanted."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    # SOLO exists only on MAL, and nothing maps it to AniList.
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST'),
+                          show('mal', 78, 'SOLO')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    store.set_master('anilist')
+
+    solo = store.mapping_for('mal', '78')['uuid']
+    plan = engine.mirror_plan()
+    assert [o for o in plan.removes if o.uuid == solo] == [], \
+        'unresolved against the owner means unknown, not unwanted'
+
+
+def test_an_unresolved_entry_is_never_deleted(store):
+    """Same rule stated the other way: UNMAPPED on the owner is not
+    MISSING from the owner, and only the latter authorizes anything."""
+    from hakubun.sync import membership as m
+
+    member = m.Membership(
+        uuid='u1',
+        state={'anilist': m.UNMAPPED, 'mal': m.PRESENT})
+    assert member.removable('anilist') == []
+
+    member.state['anilist'] = m.MISSING     # mapped, and genuinely gone
+    assert member.removable('anilist') == ['mal']
+
+
+def test_a_user_decision_outranks_the_entry_owner(store):
+    """Ownership automates the default; it does not overrule someone
+    who said "leave this tracker alone"."""
+    anilist = FakeLib('anilist', [])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '77')['uuid']
+    store.add_mapping(uid, 'anilist', '9', confirmed=True)
+    store.set_master('anilist')
+
+    engine.set_membership(uid, 'mal', 'ignore')
+    plan = engine.mirror_plan()
+    assert [o for o in plan.removes if o.provider == 'mal'] == []
+
+
+def test_the_owner_itself_is_never_a_removal_target(store):
+    """It is the set; it cannot disagree with itself."""
+    engine, *_ = _entry_owner_setup(store, kitsu_shows=[])
+    plan = engine.mirror_plan()
+    assert [o for o in plan.removes if o.provider == 'anilist'] == []
+
+
+def test_a_disconnected_owner_is_ignored_entirely(store):
+    """A master with no account cannot manage anything -- and must not
+    make every other tracker's entries look unwanted, which is exactly
+    the "deleted 200 entries" failure."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    store.set_master('shikimori')       # never connected
+
+    plan = engine.mirror_plan()
+    assert plan.removes == []
+    assert plan.master is None
+
+
+def test_without_an_owner_nothing_is_ever_removed_automatically(store):
+    """The default stays conservative: no owner, no derived deletions."""
+    anilist = FakeLib('anilist', [])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '77')['uuid']
+    store.add_mapping(uid, 'anilist', '9', confirmed=True)
+
+    assert engine.mirror_plan().removes == []
+
+
+# -- 14. a mass disappearance is a suspect response, not 250 choices --
+
+def test_a_mass_disappearance_does_not_become_a_standing_decision(store):
+    """A real report: one AniList fetch came back missing 250 entries,
+    and every one was recorded as "removed on the site -- not offered
+    again". Nothing would ever offer to restore them.
+
+    People delete entries a few at a time. Hundreds vanishing in one
+    response is far more likely to be a partial result, a changed
+    account or a bad token, and the recoverable reading is the right
+    one: drop the snapshots, record NO decision, keep proposing them.
+    """
+    shows = [show('mal', 100 + i, 'SHOW %d' % i) for i in range(40)]
+    mal = FakeLib('mal', shows)
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST')])
+    engine = make_engine(store, {'mal': mal, 'anilist': anilist})
+    assert engine.fetch() == {}
+
+    mal.shows = {k: v for k, v in list(mal.shows.items())[:5]}
+    assert engine.fetch() == {}
+
+    decided = [uid for uid, marks in store.membership_many(
+        [e['uuid'] for e in store.entities()]).items()
+        if 'mal' in marks]
+    assert decided == [], \
+        'a suspect response must not speak for the user 35 times'
+
+
+def test_a_few_real_deletions_are_still_honoured(store):
+    """The guard must stay narrow: deleting a couple of entries on the
+    website is exactly what the 'ignore' decision is for."""
+    shows = [show('mal', 100 + i, 'SHOW %d' % i) for i in range(40)]
+    mal = FakeLib('mal', shows)
+    engine = make_engine(store, {'mal': mal})
+    assert engine.fetch() == {}
+
+    gone = str(shows[0]['id'])
+    uid = store.mapping_for('mal', gone)['uuid']
+    del mal.shows[gone]
+    assert engine.fetch() == {}
+
+    assert store.membership_of(uid)['mal'] == 'ignore'
+    assert store.membership_reason(uid, 'mal') == 'deleted'
+
+
+# -- 15. cross-ids chain through the atlas ---------------------------
+
+def test_an_atlas_triple_reaches_the_third_tracker(store):
+    """A real report: a work "atlased on all 3 sites" showed only two,
+    and Mirror never offered to add it to the third.
+
+    The atlas is keyed by (provider, id). AniList publishing a MAL id
+    planted a MAL mapping and stopped -- even though the atlas knew
+    that MAL id's Kitsu counterpart. The ids have to chain.
+    """
+    class Atlas:
+        def lookup(self, provider, pid):
+            return ({'kitsu': 'k1'} if (provider, str(pid)) == ('mal', '77')
+                    else {})
+
+        def lookup_sources(self, provider, pid):
+            return {p: 'anime-relations'
+                    for p in self.lookup(provider, pid)}
+
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
+                                       mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=9)])
+    kitsu = FakeLib('kitsu', [])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    engine.identity._atlas = Atlas()
+    assert engine.fetch() == {}
+
+    uid = store.mapping_for('anilist', '9')['uuid']
+    providers = {m['provider'] for m in store.mappings_of(uid)}
+    assert providers == {'anilist', 'mal', 'kitsu'}
+
+    plan = engine.mirror_plan()
+    assert [o.provider for o in plan.adds] == ['kitsu'], \
+        'the third tracker must be offered the entry'

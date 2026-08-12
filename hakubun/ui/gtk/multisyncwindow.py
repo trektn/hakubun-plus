@@ -317,6 +317,12 @@ class MultiSyncWindow(Gtk.Window):
     def _on_change_toggled(self, _renderer, path, store):
         it = store.get_iter(path)
         change = store.get_value(it, _C_CHANGE)
+        # An INFORMATIONAL row -- a settled membership decision, an
+        # unmatched tracker -- carries its (issue, label) payload here
+        # instead of an operation. There is nothing to select, and
+        # reaching for .selected on it crashed the window on a click.
+        if change is not None and not hasattr(change, 'selected'):
+            return
         new_state = not store.get_value(it, _C_ACTIVE)
         store.set_value(it, _C_ACTIVE, new_state)
         if change is None:
@@ -703,42 +709,9 @@ class MultiSyncWindow(Gtk.Window):
         help_label.set_markup(present.MIRROR_TAB_HELP)
         page.pack_start(help_label, False, False, 0)
 
-        # The bulk gates. Unticked by default and enforced in the
-        # engine (SyncEngine.apply_mirror), not here: these two boxes
-        # are how the user expresses the choice, not what makes it
-        # safe. Additions and removals are approved independently --
-        # "yes to adds, no to deletes" is the common answer.
-        gates = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        self.mirror_allow_adds = Gtk.CheckButton(
-            label='Allow adding entries')
-        self.mirror_allow_adds.set_tooltip_text(
-            'Permit Mirror to create new entries on trackers that are '
-            'missing them. Each entry must still be ticked.')
-        self.mirror_allow_removes = Gtk.CheckButton(
-            label='Allow removing entries')
-        self.mirror_allow_removes.set_tooltip_text(
-            'Permit Mirror to DELETE entries from trackers you marked '
-            'as not needing them. This cannot be undone from Hakubun.')
-        gates.pack_start(self.mirror_allow_adds, False, False, 0)
-        gates.pack_start(self.mirror_allow_removes, False, False, 0)
-        page.pack_start(gates, False, False, 0)
-
-        # ONE view, organized by title -- see the Qt twin. The old
-        # per-kind pages survive as a filter, which is what they were
-        # actually good for: narrowing a large plan.
-        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                             spacing=6)
-        filter_row.pack_start(Gtk.Label(label='Show:'), False, False, 0)
-        self.mirror_filter = Gtk.ComboBoxText()
-        for key, text in present.CARD_CATEGORIES:
-            self.mirror_filter.append(key, text)
-        self.mirror_filter.set_active(0)
-        self.mirror_filter.connect(
-            'changed', lambda *_a: self._render_mirror_cards())
-        filter_row.pack_start(self.mirror_filter, False, False, 0)
-        self.mirror_filter_count = Gtk.Label(xalign=0)
-        filter_row.pack_start(self.mirror_filter_count, False, False, 0)
-        page.pack_start(filter_row, False, False, 0)
+        # No "allow adding" / "allow removing" checkboxes, and no
+        # category filter -- see the Qt twin: both asked a question
+        # the preview and the confirmation already answer.
 
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         self._mirror_store, mirror_widget = self._make_changes_tree()
@@ -955,21 +928,14 @@ class MultiSyncWindow(Gtk.Window):
         self._status(present.mirror_plan_summary(plan))
 
     def _render_mirror_cards(self):
-        """Draw the plan as one card per title -- see the Qt twin's
-        _render_mirror_cards for why the plan is projected this way."""
+        """Draw the plan as one group per title, its changes as flat
+        rows -- see the Qt twin."""
         store = self._mirror_store
         store.clear()
         plan = self._mirror_plan
         if plan is None:
-            self.mirror_filter_count.set_text('')
             return
-        category = self.mirror_filter.get_active_id() or 'all'
-        cards = present.mirror_cards(plan, self.engine.adapters, category)
-        total = len(present.mirror_cards(plan, self.engine.adapters))
-        self.mirror_filter_count.set_text(
-            '%d of %d entr%s' % (len(cards), total,
-                                 'y' if len(cards) == 1 else 'ies'))
-        for card in cards:
+        for card in present.mirror_cards(plan, self.engine.adapters):
             states = {o.selected for o in card.ops}
             parent = store.append(None, [
                 states == {True}, len(states) > 1,
@@ -989,58 +955,25 @@ class MultiSyncWindow(Gtk.Window):
                                  in card.desired),
                 _PULL_COLOR, None])
 
-        for row in card.trackers:
-            bits = ['%s  %s' % (row.label, '✓' if row.present else '✗')]
-            if row.owns:
-                bits.append('owns %s' % ', '.join(row.owns))
-            if row.values:
-                bits.append(' · '.join('%s %s' % (n, v)
-                                       for n, v in row.values))
-            if row.note:
-                bits.append(row.note)
-            # Carries (issue, tracker label) so the membership menu can
-            # act on the row the user actually right-clicked.
-            tracker_it = store.append(parent, [
-                False, False, '   —   '.join(bits),
-                _PULL_COLOR if row.present else _CREATE_COLOR,
-                (card.issue, row.label) if card.issue is not None
-                else None])
-
-            for name, old, new, why in row.changes:
-                op = next((o for o in card.ops
-                           if getattr(o, 'target', None) == row.provider
-                           and present.field_label(getattr(o, 'field', ''))
-                           == name), None)
-                if op is None:
-                    continue
-                text = '%s: %s → %s' % (name, old, new)
-                if why:
-                    text += '  — %s' % why
-                store.append(tracker_it, [op.selected, False, text,
-                                          _PUSH_COLOR, op])
-
-            if row.action == 'add':
-                op = next((o for o in card.ops
-                           if getattr(o, 'provider', None) == row.provider
-                           and hasattr(o, 'values')), None)
-                if op is not None:
-                    # ONE row for the whole entry -- see the Qt twin.
-                    store.append(tracker_it, [
-                        op.selected, False,
-                        'Create this entry on %s with %s'
-                        % (row.label,
-                           ' · '.join('%s %s' % (n, v)
-                                      for n, v in row.add_values)),
-                        _CREATE_COLOR, op])
-            elif row.action == 'remove':
-                op = next((o for o in card.ops
-                           if getattr(o, 'provider', None) == row.provider
-                           and not hasattr(o, 'values')), None)
-                if op is not None:
-                    store.append(tracker_it, [
-                        op.selected, False,
-                        'DELETE this entry from %s' % row.label,
-                        _CONFLICT_COLOR, op])
+        for op, text in card.rows:
+            if op is None:
+                # Informational: a settled decision, or an unmatched
+                # tracker. Carries (issue, label) so the context menu
+                # can offer the way back to that decision.
+                store.append(parent, [
+                    False, False, text, None,
+                    (card.issue, text.split(' — ')[0].strip())
+                    if card.issue is not None else None])
+                continue
+            if hasattr(op, 'values'):
+                color = _CREATE_COLOR
+            elif not hasattr(op, 'field'):
+                color = _CONFLICT_COLOR
+            elif op.target == 'local':
+                color = _PULL_COLOR
+            else:
+                color = _PUSH_COLOR
+            store.append(parent, [op.selected, False, text, color, op])
 
         for conflict in card.conflicts:
             store.append(parent, [
@@ -1049,14 +982,6 @@ class MultiSyncWindow(Gtk.Window):
                 % present.field_label(conflict.field),
                 _CONFLICT_COLOR, None])
 
-        if card.local:
-            group = store.append(parent, [
-                False, False, "%s's own copy" % present.local_label(),
-                None, None])
-            for op in card.local:
-                store.append(group, [op.selected, False,
-                                     present.mirror_local_line(op),
-                                     _PULL_COLOR, op])
 
     def s_mirror_apply(self):
         """Never applies silently: the totals are shown first, per
@@ -1065,16 +990,10 @@ class MultiSyncWindow(Gtk.Window):
         if self._mirror_plan is None:
             return
         plan = self._mirror_plan
-        allow_adds = self.mirror_allow_adds.get_active()
-        allow_removes = self.mirror_allow_removes.get_active()
-
-        notes = []
-        if plan.selected_adds() and not allow_adds:
-            notes.append('Additions are ticked but "Allow adding '
-                         'entries" is off — they will be skipped.')
-        if plan.selected_removes() and not allow_removes:
-            notes.append('Removals are ticked but "Allow removing '
-                         'entries" is off — they will be skipped.')
+        # Both categories are approved by the one confirmation
+        # below -- see the Qt twin. The engine still defaults them
+        # off; the UI passes what the user confirmed.
+        allow_adds = allow_removes = True
 
         dialog = Gtk.MessageDialog(
             transient_for=self, modal=True,
@@ -1082,8 +1001,7 @@ class MultiSyncWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.OK_CANCEL,
             text='Apply mirror?')
         dialog.format_secondary_text(
-            present.mirror_confirmation(plan)
-            + ('\n\n' + '\n'.join(notes) if notes else ''))
+            present.mirror_confirmation(plan))
         answer = dialog.run()
         dialog.destroy()
         if answer != Gtk.ResponseType.OK:
@@ -1173,8 +1091,37 @@ class MultiSyncWindow(Gtk.Window):
             combo.connect('changed', self._on_policy_combo, field)
             grid.attach(combo, 1, row, 1, 1)
             self._policy_combos[field] = combo
+
+        # ENTRIES: the same question about whole entries rather than a
+        # field -- see the Qt twin.
+        row = len(USER_FIELDS)
+        grid.attach(Gtk.Label(label=present.ENTRY_OWNER_LABEL, xalign=0),
+                    0, row, 1, 1)
+        self.entry_owner_combo = Gtk.ComboBoxText()
+        master = self.store.master()
+        for key, choice_label in present.entry_owner_choices(providers,
+                                                             master):
+            self.entry_owner_combo.append(key or '_none', choice_label)
+        self.entry_owner_combo.set_active_id(master or '_none')
+        self.entry_owner_combo.connect('changed', self._on_entry_owner)
+        grid.attach(self.entry_owner_combo, 1, row, 1, 1)
+        note = Gtk.Label(label=present.ENTRY_OWNER_HELP.split('\n\n')[0],
+                         xalign=0, wrap=True)
+        note.set_tooltip_text(present.ENTRY_OWNER_HELP)
+        grid.attach(note, 0, row + 1, 3, 1)
+
         page.pack_start(grid, False, False, 0)
         return page
+
+    def _on_entry_owner(self, combo):
+        if self._policy_updating:
+            return
+        provider = combo.get_active_id()
+        provider = None if provider in (None, '_none') else provider
+        self.store.set_master(provider)
+        self._status('Entries now follow: %s'
+                     % (present.label(provider) if provider
+                        else 'no one (nothing removed automatically)'))
 
     def _on_policy_combo(self, combo, field):
         if self._policy_updating:

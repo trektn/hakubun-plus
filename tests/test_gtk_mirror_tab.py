@@ -107,29 +107,21 @@ def test_the_preview_is_one_card_per_title(win):
     assert any(t.startswith('Doomed') for t in titles)
 
 
-def test_a_card_carries_the_ownership_row_and_every_tracker(win):
+def test_a_card_carries_the_ownership_row_and_its_changes(win):
     win.r_mirror_planned(_plan(), None)
     rows = _rows(win._mirror_store)
     assert any('Ownership says' in r for r in rows)
-    assert any(r.startswith('Anilist  ✓') for r in rows)
-    assert any(r.startswith('Kitsu  ✗') for r in rows)
-
-
-def test_the_filter_narrows_without_hiding_the_total(win):
-    """The old pages survive as a filter -- what they were actually
-    good for -- and the count says what is being hidden."""
-    win.r_mirror_planned(_plan(), None)
-    total = win._mirror_store.iter_n_children(None)
-    win.mirror_filter.set_active_id('remove')
-    assert win._mirror_store.iter_n_children(None) < total
-    assert 'of %d' % total in win.mirror_filter_count.get_text()
+    assert any(r.startswith('Add to Kitsu') for r in rows)
+    assert any(r.startswith('Update Mal') for r in rows)
 
 
 def test_tracker_rows_never_name_hakubun(win):
     """Local convergence is disclosed, but never as a TRACKER."""
     win.r_mirror_planned(_plan(), None)
     for row in _rows(win._mirror_store):
-        if '✓' in row or '✗' in row:
+        if row.startswith('Update Hakubun'):
+            continue        # this app's own copy, named as such
+        if row.startswith(('Add to', 'Update ', 'Remove from')):
             assert 'Hakubun' not in row
 
 
@@ -156,7 +148,7 @@ def test_creating_an_entry_is_a_single_tickable_row(win):
 
     walk(store.get_iter_first())
     assert len(found) == 1
-    assert 'Create this entry on Kitsu' in found[0]
+    assert 'Add to Kitsu' in found[0]
 
 
 def test_adds_and_removes_start_unticked(win):
@@ -232,7 +224,7 @@ def test_unticking_one_operation_makes_the_card_inconsistent(win):
               if store.get_value(i, _C_LABEL).startswith('GHOST'))
     win._on_change_toggled(None, store.get_path(it), store)
 
-    path = _path_of(store, lambda label: label.startswith('Score:'),
+    path = _path_of(store, lambda label: label.startswith('Update Mal'),
                     under='GHOST')
     win._on_change_toggled(None, path, store)
 
@@ -250,31 +242,19 @@ def test_apply_is_refused_without_confirmation(win, monkeypatch):
     assert win.engine.applied == []
 
 
-def test_gates_are_passed_through_independently(win, monkeypatch):
-    monkeypatch.setattr(Gtk.MessageDialog, 'run',
-                        lambda self: Gtk.ResponseType.OK)
-    monkeypatch.setattr(Gtk.MessageDialog, 'destroy', lambda self: None)
-    for adds, removes in ((False, False), (True, False), (False, True),
-                          (True, True)):
-        win.r_mirror_planned(_plan(), None)
-        win.mirror_allow_adds.set_active(adds)
-        win.mirror_allow_removes.set_active(removes)
-        win.s_mirror_apply()
-        if win._thread is not None:
-            win._thread.join()
-    assert win.engine.applied == [(False, False), (True, False),
-                                  (False, True), (True, True)]
-
-
-def test_right_clicking_a_tracker_row_reaches_the_membership_menu(
+def test_right_clicking_a_settled_row_reaches_the_membership_menu(
         win, monkeypatch):
-    """One tree now serves both gestures, so the handler has to tell a
-    tracker row from an operation row. This is the branch the whole
-    removal workflow depends on."""
-    win.r_mirror_planned(_plan(), None)
+    """One tree serves both gestures, so the handler has to tell an
+    informational row from an operation row. This is the branch the
+    whole membership workflow depends on -- and the only way back to a
+    decision that, being settled, produces no operations."""
+    plan = _plan()
+    plan.membership[0].decisions['kitsu'] = 'ignore'
+    win.r_mirror_planned(plan, None)
     store = win._mirror_store
-    path = _path_of(store, lambda label: label.startswith('Kitsu  ✗'),
+    path = _path_of(store, lambda label: label.startswith('Kitsu —'),
                     under='GHOST')
+
 
     labels = []
     monkeypatch.setattr(Gtk.Menu, 'popup_at_pointer',
@@ -287,6 +267,7 @@ def test_right_clicking_a_tracker_row_reaches_the_membership_menu(
     assert win._on_mirror_row_button(view, event) is True
     assert 'Add to Kitsu' in labels
     assert 'Leave Kitsu as it is' in labels
+    assert 'Ask me about Kitsu again' in labels
     assert not any(l.startswith('Remove from') for l in labels)
 
 
@@ -305,7 +286,7 @@ def test_right_clicking_a_resolved_row_offers_the_way_back(win,
                         lambda self, event: None)
 
     store = win._mirror_store
-    path = _path_of(store, lambda label: label.startswith('Score:'))
+    path = _path_of(store, lambda label: label.startswith('Update Mal'))
     view = win._mirror_view
     monkeypatch.setattr(view, 'get_path_at_pos', lambda x, y: (path,))
     event = type('E', (), {'button': 3, 'x': 0.0, 'y': 0.0})()

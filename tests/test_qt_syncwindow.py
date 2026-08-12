@@ -210,3 +210,18 @@ def test_tab_names_stay_correct_after_the_identity_count_lands(qapp):
         assert names.count('Identity') == 1
     finally:
         win.close()
+
+
+def test_entries_are_configured_like_any_other_field(qapp):
+    """The entry owner is a row in Configuration alongside Score and
+    Status -- the same question about whole entries rather than a
+    field, so it belongs in the same place."""
+    win = SyncWindow(None, None, engine=_FakeEngine(), active_api=None,
+                     media_type='anime')
+    try:
+        assert win.store.master() is None       # conservative default
+        index = win.entry_owner_combo.findData('')
+        assert index >= 0, 'must be able to choose no owner'
+        assert 'never remove' in win.entry_owner_combo.itemText(index)
+    finally:
+        win.close()

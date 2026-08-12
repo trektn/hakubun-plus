@@ -156,6 +156,31 @@ def policy_choices(field, providers, current=None):
     return choices
 
 
+ENTRY_OWNER_LABEL = 'Entries'
+
+ENTRY_OWNER_HELP = (
+    'Which tracker decides what is ON your lists — as opposed to what '
+    'each entry says. Pick one and Mirror adds its entries to the '
+    'others, and offers to remove entries it no longer lists.\n\n'
+    'Entries unique to another tracker, and anything Hakubun has not '
+    'matched to this one, are left alone: not being able to find a '
+    'work here means we do not know, not that you do not want it.')
+
+
+def entry_owner_choices(providers, current=None):
+    """[(value, label)] for the entry-owner picker. '' means none --
+    the conservative default, where nothing is ever removed
+    automatically and any tracker holding an entry can justify
+    creating it elsewhere."""
+    choices = [('', 'No one (never remove entries automatically)')]
+    choices += [(p, 'Follow %s' % label(p)) for p in providers]
+    if current and current not in providers:
+        # Configured, but that account is not connected -- say so
+        # rather than silently showing "No one".
+        choices.append((current, '%s (not connected)' % label(current)))
+    return choices
+
+
 def fmt_value(field, value):
     """A canonical value as the user should read it."""
     if value is None or value == []:
@@ -461,11 +486,17 @@ def mirror_ignore_label(provider):
 
 
 def mirror_local_line(op):
-    """One row in Mirror's Hakubun category. Phrased as the app's own
-    copy being brought into line with the trackers -- never as a
-    tracker-to-tracker change, which it is not."""
-    return '%s, %s: %s → %s  — %s' % (
-        op.title, field_label(op.field),
+    """One row for a change to Hakubun's own copy.
+
+    It NAMES Hakubun, in the same 'Update <where>, <field>' shape the
+    tracker rows use. It used to open with the show's title and rely on
+    sitting under a "Hakubun's copy" heading to say what it was --
+    which stopped being true the moment the preview became one flat
+    list per title, where it read as just another tracker change with
+    the tracker's name missing.
+    """
+    return 'Update %s, %s: %s → %s  — %s' % (
+        local_label(), field_label(op.field),
         fmt_value(op.field, op.old), fmt_value(op.field, op.new),
         op.reason or 'matches the trackers')
 
@@ -502,84 +533,38 @@ MIRROR_LOCAL_HELP = (
 # Both toolkits render this same model, so the two windows cannot drift
 # apart again, and the layout is testable without a widget.
 
-# Card categories, for the preview filter. These are the same divisions
-# the old tabs had -- kept, because they are how a user narrows a large
-# plan ("just show me what gets deleted"), only no longer imposed as
-# five separate places to look.
-CARD_CATEGORIES = (
-    ('all', 'Everything'),
-    ('update', 'Fields to update'),
-    ('add', 'Entries to add'),
-    ('remove', 'Entries to remove'),
-    ('conflict', 'Needs a decision'),
-    ('membership', 'Tracker membership'),
-    ('local', "Hakubun's copy"),
-)
-
-
-class MirrorTrackerRow:
-    """One tracker's line inside a card: what it holds now, and what
-    Mirror would do to it."""
-
-    def __init__(self, provider, present_here, action='', note='',
-                 owns=(), values=None, changes=(), add_values=None):
-        self.provider = provider
-        self.label = label(provider)
-        self.present = present_here
-        # '' | 'add' | 'remove' | 'unmapped' -- the entry-level thing
-        # happening to this tracker, distinct from field changes.
-        self.action = action
-        self.note = note
-        # Fields this tracker is the authority for. Shown on the row so
-        # "why is Kitsu changing and AniList not?" is answered in place
-        # rather than in a legend somewhere else.
-        self.owns = list(owns)
-        # [(field label, formatted current value)] -- the whole entry,
-        # not just what changes.
-        self.values = list(values or ())
-        # [(field label, formatted old, formatted new, why)]
-        self.changes = list(changes)
-        # For an 'add' row: [(field label, formatted value)] the created
-        # entry starts with.
-        self.add_values = list(add_values or ())
-
-
 class MirrorCard:
-    """Everything a Mirror plan does to one work."""
+    """Everything a Mirror plan does to one work.
+
+    One card per title, and inside it a FLAT list of changes -- the
+    same shape the Sync tab uses, for the same reason: a change is
+    legible as one line that says what happens and why, and grouping
+    them under per-tracker sub-headers made the reader expand two
+    levels to find a single value.
+    """
 
     def __init__(self, uuid, title):
         self.uuid = uuid
         self.title = title
         # [(field label, formatted value, owning tracker label, why)]
         self.desired = []
-        self.trackers = []
+        # [(operation, text)] -- every tickable change, flat, in the
+        # order they read best: entries created, entries deleted, then
+        # field pushes, then this app's own copy.
+        self.rows = []
         self.conflicts = []
-        self.local = []         # SyncOperations against Hakubun's copy
-        # The MembershipIssue behind this card, when there is one: the
-        # membership decisions (add / remove / leave alone) are recorded
-        # against it, so the row that shows a tracker's presence is also
-        # the row that can change it.
         self.issue = None
-        self.ops = []           # every tickable operation on this card
-        self.categories = set()
+
+    @property
+    def ops(self):
+        """The tickable operations. Informational rows carry None and
+        are excluded -- both windows derive a card's checkbox state
+        from this, and a None in it crashed the render."""
+        return [op for op, _text in self.rows if op is not None]
 
     @property
     def changed(self):
-        """Is this card worth showing?
-
-        Operations are the obvious answer, but not the only one. An
-        entry whose membership the user has already SETTLED ("leave
-        Kitsu alone") produces no operations by design -- and dropping
-        it would make the decision unrevisitable, since "Ask me about
-        Kitsu again" is offered from the tracker row and there would be
-        no row to right-click. Same for a tracker identity has never
-        matched: nothing to do, but a gap the user should see."""
-        settled = self.issue is not None and (self.issue.decisions
-                                              or self.issue.unmapped)
-        return bool(self.ops or self.conflicts or self.local or settled)
-
-    def matches(self, category):
-        return category == 'all' or category in self.categories
+        return bool(self.rows or self.conflicts)
 
 
 def _fmt_progress(value, total):
@@ -590,12 +575,13 @@ def _fmt_progress(value, total):
 
 
 def mirror_cards(plan, adapters, category='all'):
-    """Re-project a MirrorPlan into one card per work, newest concern
-    first: entries that need a decision, then entries being created or
-    deleted, then plain field updates.
+    """Re-project a MirrorPlan into one card per work.
 
     Pure data -- no toolkit, no widgets -- so both windows render the
-    same thing and the layout can be tested directly.
+    same thing and the layout can be tested directly. `category` is
+    accepted for call-site compatibility and ignored: the preview
+    shows everything, because a plan you have to filter to understand
+    is one you cannot confidently apply.
     """
     cards = {}
 
@@ -607,18 +593,6 @@ def mirror_cards(plan, adapters, category='all'):
             card.title = title
         return card
 
-    # Which tracker is a field's AUTHORITY, straight from the
-    # configuration. Never inferred from which tracker's value won: a
-    # reconcile policy's winner is whichever tracker happened to hold
-    # the agreed value, and calling it the owner would put a claim on
-    # screen the configuration does not make.
-    owned_fields = {}
-    for field, policy in (plan.ownership or {}).items():
-        if getattr(policy, 'kind', None) is PolicyKind.PROVIDER:
-            owned_fields.setdefault(policy.provider, []).append(
-                field_label(field))
-
-    # The ownership row, per card: what this work SHOULD look like.
     for uuid, fields in plan.desired.items():
         card = card_for(uuid, '')
         for field in sorted(fields):
@@ -628,144 +602,110 @@ def mirror_cards(plan, adapters, category='all'):
                                  label(source) if source else '',
                                  reason))
 
-    updates_by = {}
-    for op in plan.updates:
-        card_for(op.uuid, op.title)
-        updates_by.setdefault((op.uuid, op.target), []).append(op)
-    adds_by = {op.uuid: op for op in plan.adds}
-    removes_by = {}
+    # Entry creations first: the biggest thing that can happen to a
+    # title, and the thing the user came here for.
+    for op in plan.adds:
+        card = card_for(op.uuid, op.title)
+        detail = ' · '.join(
+            '%s %s' % (field_label(f),
+                       fmt_target_value(adapters, f, op.values[f],
+                                        op.provider))
+            for f in sorted(op.values))
+        text = 'Add to %s: %s' % (label(op.provider), detail)
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append((op, text))
+
     for op in plan.removes:
-        removes_by[(op.uuid, op.provider)] = op
-        card_for(op.uuid, op.title)
-    issues = {issue.uuid: issue for issue in plan.membership}
-    for issue in plan.membership:
-        card_for(issue.uuid, issue.title)
+        card = card_for(op.uuid, op.title)
+        text = 'Remove from %s' % label(op.provider)
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append((op, text))
+
+    totals = {}
+    for uuid, observed in plan.observed.items():
+        for provider, values in observed.items():
+            if values.get('_total'):
+                totals[(uuid, provider)] = values['_total']
+
+    for op in plan.updates:
+        card = card_for(op.uuid, op.title)
+        total = totals.get((op.uuid, op.target))
+        if op.field == 'progress':
+            old = _fmt_progress(op.old, total)
+            new = _fmt_progress(op.new, total)
+        else:
+            old = fmt_target_value(adapters, op.field, op.old, op.target)
+            new = fmt_target_value(adapters, op.field, op.new, op.target)
+        text = 'Update %s, %s: %s → %s' % (
+            label(op.target), field_label(op.field), old, new)
+        if op.field == 'score':
+            text += score_round_note(adapters, op.target, op.new)
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append((op, text))
+
+    for op in plan.local:
+        card = card_for(op.uuid, op.title)
+        card.rows.append((op, mirror_local_line(op)))
+
     for conflict in plan.conflicts:
         card_for(conflict.uuid, conflict.title).conflicts.append(conflict)
-    for op in plan.local:
-        card_for(op.uuid, op.title).local.append(op)
 
-    for uuid, card in cards.items():
-        issue = issues.get(uuid)
+    # An entry whose membership the user already settled has nothing to
+    # do -- but the way BACK to that decision is offered from its card,
+    # so it must still appear.
+    for issue in plan.membership:
+        card = card_for(issue.uuid, issue.title)
         card.issue = issue
-        observed = plan.observed.get(uuid, {})
-        add_op = adds_by.get(uuid)
-        # Every tracker this work touches, whether or not it changes.
-        providers = set(observed)
-        if issue is not None:
-            providers |= (set(issue.present) | set(issue.missing)
-                          | set(issue.unmapped))
-        if add_op is not None:
-            providers.add(add_op.provider)
-        # A removal may be ALL a card has: an entry the user marked as
-        # not belonging somewhere has no field updates and no
-        # membership gap to report. Without this the card had no
-        # tracker rows, counted as doing nothing, and the deletion
-        # vanished from the preview it most needed to appear in.
-        for _u, prov in removes_by:
-            if _u == uuid:
-                providers.add(prov)
-        for _u, target in list(updates_by):
-            if _u == uuid:
-                providers.add(target)
-
-        for provider in sorted(providers):
-            values = observed.get(provider, {})
-            total = values.get('_total')
-            present_here = bool(values) or (
-                issue is not None and provider in issue.present)
-            row_values = [
-                (field_label(f),
-                 _fmt_progress(values[f], total) if f == 'progress'
-                 else fmt_target_value(adapters, f, values[f], provider))
-                for f in sorted(values) if f != '_total']
-
-            changes = []
-            for op in updates_by.get((uuid, provider), ()):
-                changes.append((
-                    field_label(op.field),
-                    _fmt_progress(op.old, total) if op.field == 'progress'
-                    else fmt_target_value(adapters, op.field, op.old,
-                                          provider),
-                    _fmt_progress(op.new, total) if op.field == 'progress'
-                    else fmt_target_value(adapters, op.field, op.new,
-                                          provider),
-                    op.reason or ''))
-                card.ops.append(op)
-                card.categories.add('update')
-
-            action, note, add_values = '', '', ()
-            if add_op is not None and add_op.provider == provider:
-                action = 'add'
-                add_values = [(field_label(f),
-                               fmt_target_value(adapters, f,
-                                                add_op.values[f], provider))
-                              for f in sorted(add_op.values)]
-                card.ops.append(add_op)
-                card.categories.add('add')
-            elif (uuid, provider) in removes_by:
-                action = 'remove'
-                card.ops.append(removes_by[(uuid, provider)])
-                card.categories.add('remove')
-            elif issue is not None and provider in issue.unmapped:
-                action = 'unmapped'
-                note = 'not matched yet — resolve it under Identity'
-            if not note and issue is not None and provider in issue.decisions:
-                # Any recorded decision, on a tracker that holds the
-                # entry as much as on one that doesn't -- and phrased
-                # by how it actually got there. The same `want` arrives
-                # by routes that are not the same fact, and only some
-                # of them are the user's doing (see membership_note).
-                note = membership_note(issue.decisions[provider],
-                                       issue.reasons.get(provider))
-
-            card.trackers.append(MirrorTrackerRow(
-                provider, present_here, action=action, note=note,
-                owns=sorted(owned_fields.get(provider, ())),
-                values=row_values, changes=changes,
-                add_values=add_values))
-
-        if issue is not None:
-            card.categories.add('membership')
-        if card.conflicts:
-            card.categories.add('conflict')
-        if card.local:
-            card.categories.add('local')
+        for provider in sorted(issue.decisions):
+            note = membership_note(issue.decisions[provider],
+                                   issue.reasons.get(provider))
+            if note:
+                card.rows.append(
+                    (None, '%s — %s' % (label(provider), note)))
+        for provider in issue.unmapped:
+            card.rows.append(
+                (None, '%s — not matched yet; resolve it under Identity'
+                 % label(provider)))
 
     def rank(card):
-        # Decisions first (nothing else can proceed until they are
-        # answered), then entry-level changes, then field updates.
-        for i, key in enumerate(('conflict', 'remove', 'add', 'update',
-                                 'membership', 'local')):
-            if key in card.categories:
-                return i
-        return 9
+        # Decisions first: nothing else can be applied confidently
+        # until they are answered.
+        return (0 if card.conflicts else 1, card.title.casefold())
 
-    ordered = sorted(cards.values(),
-                     key=lambda c: (rank(c), c.title.casefold()))
-    return [c for c in ordered if c.changed and c.matches(category)]
+    return sorted((c for c in cards.values() if c.changed), key=rank)
 
 
 def mirror_card_headline(card):
-    """The one-line summary on a collapsed card: what happens to this
-    work, in the fewest words that are still true."""
+    """The one-line summary beside a title: what happens to this work,
+    in the fewest words that are still true."""
+    adds, removes, updates, local = set(), set(), 0, 0
+    for op, _text in card.rows:
+        target = getattr(op, 'provider', None) or getattr(op, 'target',
+                                                          None)
+        if op is None:
+            continue
+        if hasattr(op, 'values'):
+            adds.add(label(target))
+        elif not hasattr(op, 'field'):
+            removes.add(label(target))
+        elif target == 'local':
+            local += 1
+        else:
+            updates += 1
     parts = []
-    adds = [t for t in card.trackers if t.action == 'add']
-    removes = [t for t in card.trackers if t.action == 'remove']
-    updated = [t for t in card.trackers if t.changes]
     if adds:
-        parts.append('add to %s' % ', '.join(t.label for t in adds))
+        parts.append('add to %s' % ', '.join(sorted(adds)))
     if removes:
-        parts.append('remove from %s' % ', '.join(t.label for t in removes))
-    if updated:
-        parts.append('%d field(s) on %s'
-                     % (sum(len(t.changes) for t in updated),
-                        ', '.join(t.label for t in updated)))
+        parts.append('remove from %s' % ', '.join(sorted(removes)))
+    if updates:
+        parts.append('%d field(s)' % updates)
     if card.conflicts:
         parts.append('%d decision(s) needed' % len(card.conflicts))
-    if card.local and not parts:
-        parts.append("%d value(s) in %s's copy"
-                     % (len(card.local), local_label()))
+    if local and not parts:
+        parts.append("%d value(s) in %s's copy" % (local, local_label()))
     return ' · '.join(parts)
 
 

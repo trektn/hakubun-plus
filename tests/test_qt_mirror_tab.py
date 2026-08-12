@@ -132,36 +132,25 @@ def test_the_preview_is_one_card_per_title(window):
     assert any(t.startswith('Doomed') for t in titles)
 
 
-def test_a_card_carries_the_ownership_row_and_every_tracker(window):
+def test_a_card_carries_the_ownership_row_and_its_changes(window):
     window.r_mirror_planned(_plan(), None)
     texts = _walk(_card_named(window.mirror_tree, 'GHOST'))
     assert any('Ownership says' in t for t in texts)
-    assert any(t.strip().startswith('Anilist  ✓') for t in texts)
-    assert any(t.strip().startswith('Kitsu  ✗') for t in texts)
-
-
-def test_the_filter_narrows_without_hiding_the_total(window):
-    """The old tabs survive as a filter -- what they were actually good
-    for -- and the count says what is being hidden."""
-    window.r_mirror_planned(_plan(), None)
-    total = window.mirror_tree.topLevelItemCount()
-    index = [i for i in range(window.mirror_filter.count())
-             if window.mirror_filter.itemData(i) == 'remove'][0]
-    window.mirror_filter.setCurrentIndex(index)
-    assert window.mirror_tree.topLevelItemCount() < total
-    assert 'of %d' % total in window.mirror_filter_count.text()
+    assert any(t.startswith('Add to Kitsu') for t in texts)
+    assert any(t.startswith('Update Mal') for t in texts)
 
 
 def test_tracker_rows_never_name_hakubun(window):
-    """Local convergence is disclosed, but never as a TRACKER."""
+    """Local convergence is disclosed -- named as this app's own copy,
+    in the same shape as a tracker row so it cannot be mistaken for
+    one with its name left off."""
     window.r_mirror_planned(_plan(), None)
     card = _card_named(window.mirror_tree, 'GHOST')
-    tracker_rows = [card.child(i).text(0)
-                    for i in range(card.childCount())
-                    if '✓' in card.child(i).text(0)
-                    or '✗' in card.child(i).text(0)]
-    assert tracker_rows
-    for text in tracker_rows:
+    rows = [card.child(i).text(0) for i in range(card.childCount())]
+    assert any(t.startswith('Update Hakubun') for t in rows)
+    for text in rows:
+        if text.startswith('Update Hakubun'):
+            continue
         assert 'Hakubun' not in text
 
 
@@ -188,7 +177,7 @@ def test_creating_an_entry_is_a_single_tickable_row(window):
                  if isinstance(i.data(0, QtCore.Qt.ItemDataRole.UserRole),
                                AddOperation)]
     assert len(add_items) == 1
-    assert 'Create this entry on Kitsu' in add_items[0].text(0)
+    assert 'Add to Kitsu' in add_items[0].text(0)
 
 
 def test_adds_and_removes_start_unticked(window):
@@ -221,27 +210,6 @@ def test_apply_is_refused_without_confirmation(window, monkeypatch):
     assert window.engine.applied == []
 
 
-def test_gates_are_passed_through_independently(window, monkeypatch):
-    import hakubun.ui.qt.syncwindow as mod
-
-    def accept(box):
-        # Click the Apply button the dialog just built.
-        box.clickedButton = lambda: box.buttons()[0]
-
-    monkeypatch.setattr(mod.QMessageBox, 'exec', accept)
-
-    for adds, removes in ((False, False), (True, False), (False, True),
-                          (True, True)):
-        window.r_mirror_planned(_plan(), None)
-        window.mirror_allow_adds.setChecked(adds)
-        window.mirror_allow_removes.setChecked(removes)
-        window.s_mirror_apply()
-        if window._task is not None:
-            window._task.wait()
-    assert window.engine.applied == [(False, False), (True, False),
-                                     (False, True), (True, True)]
-
-
 def test_summary_reads_in_tracker_terms(window):
     window.r_mirror_planned(_plan(), None)
     text = window.mirror_summary.text()
@@ -258,11 +226,13 @@ def test_membership_right_click_still_reaches_the_membership_menu(
     on."""
     import hakubun.ui.qt.syncwindow as mod
 
-    window.r_mirror_planned(_plan(), None)
+    plan = _plan()
+    plan.membership[0].decisions['kitsu'] = 'ignore'
+    window.r_mirror_planned(plan, None)
     tree = window.mirror_tree
     card = _card_named(tree, 'GHOST')
     kitsu_row = next(card.child(i) for i in range(card.childCount())
-                     if card.child(i).text(0).startswith('Kitsu'))
+                     if card.child(i).text(0).startswith('Kitsu —'))
 
     actions = []
     monkeypatch.setattr(mod.QMenu, 'exec', lambda self, pos=None:
@@ -281,11 +251,13 @@ def test_membership_right_click_on_a_holder_offers_removal(window,
                                                            monkeypatch):
     import hakubun.ui.qt.syncwindow as mod
 
-    window.r_mirror_planned(_plan(), None)
+    plan = _plan()
+    plan.membership[0].decisions['mal'] = 'present'
+    window.r_mirror_planned(plan, None)
     tree = window.mirror_tree
     card = _card_named(tree, 'GHOST')
     mal_row = next(card.child(i) for i in range(card.childCount())
-                   if card.child(i).text(0).startswith('Mal'))
+                   if card.child(i).text(0).startswith('Mal —'))
 
     actions = []
     monkeypatch.setattr(mod.QMenu, 'exec', lambda self, pos=None:

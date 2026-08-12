@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS identity_conflicts(
 CREATE TABLE IF NOT EXISTS ownership(
     field TEXT PRIMARY KEY,
     policy TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings(
+    key TEXT PRIMARY KEY,
+    value TEXT);
 CREATE TABLE IF NOT EXISTS resolved_absent(
     uuid TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -714,6 +717,34 @@ class SyncStore:
     def set_ownership(self, field, policy):
         self._exec('INSERT OR REPLACE INTO ownership(field, policy)'
                    ' VALUES(?,?)', (field, policy.serialize()))
+
+    # -- the master tracker -------------------------------------------
+    #
+    # MEMBERSHIP's equivalent of field ownership: the tracker whose
+    # list decides which entries should exist at all.
+    #
+    # Field ownership cannot answer that -- it says where a SCORE comes
+    # from, not whether Kitsu should hold the entry. Without a master,
+    # every membership difference is a question for the user, which is
+    # how "make these two lists match" turned into one decision per
+    # entry. With one, the answer is derivable: the master's list is
+    # the set, everything else converges to it.
+    #
+    # Optional. Unset means the previous behaviour -- adds proposed
+    # from any tracker that holds the entry, removals only from an
+    # explicit per-entry decision.
+
+    def master(self):
+        row = self._exec('SELECT value FROM settings WHERE key=?',
+                         ('master',)).fetchone()
+        return row['value'] if row and row['value'] else None
+
+    def set_master(self, provider):
+        if provider:
+            self._exec('INSERT OR REPLACE INTO settings(key, value)'
+                       ' VALUES(?,?)', ('master', provider))
+        else:
+            self._exec('DELETE FROM settings WHERE key=?', ('master',))
 
     # -- identity conflicts -------------------------------------------
 
