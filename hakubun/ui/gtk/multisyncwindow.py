@@ -18,9 +18,12 @@
 of hakubun.ui.qt.syncwindow, over the same, UI-agnostic SyncEngine.
 
 Same information architecture as the Qt window: Sync (Changes and New
-entries side by side with the Decisions pane), Configuration (one
-friendly rule picker per field), Identity (titles needing matching) and
-Advanced (full policy matrix, inspector, reset). 'Hakubun' is the app's
+entries side by side with the Decisions pane), Mirror (make the
+trackers agree according to Ownership -- membership, adds, removes,
+field updates, behind an explicit bulk confirmation), Configuration
+(one friendly rule picker per field), Identity (titles needing
+matching) and Advanced (full policy matrix, inspector, reset).
+'Hakubun' is the app's
 own reconciled state (the engine's 'local'); it is always labeled as
 the app, never as a provider. Two deliberate simplifications from the
 Qt window: no per-field change category tabs (one Changes tree grouped
@@ -95,6 +98,8 @@ class MultiSyncWindow(Gtk.Window):
         self._notebook = Gtk.Notebook()
         self._notebook.append_page(self._build_sync_tab(),
                                    Gtk.Label(label='Sync'))
+        self._notebook.append_page(self._build_mirror_tab(),
+                                   Gtk.Label(label='Mirror'))
         self._notebook.append_page(self._build_config_tab(),
                                    Gtk.Label(label='Configuration'))
         self._identity_label = Gtk.Label(label='Identity')
@@ -589,6 +594,20 @@ class MultiSyncWindow(Gtk.Window):
         self._changes_page_label.set_text('Changes')
         self._creates_page_label.set_text('New entries')
         self._set_decisions([])
+        # The Mirror tab's preview describes the database that was just
+        # wiped -- membership decisions included. Clear it too, or its
+        # rows would offer to act on entities that no longer exist.
+        self._mirror_plan = None
+        for key, store in self._mirror_stores.items():
+            store.clear()
+            self._mirror_page_labels[key].set_text(
+                {'membership': 'Tracker membership',
+                 'add': 'Entries to add', 'remove': 'Entries to remove',
+                 'update': 'Fields to update'}[key])
+        self._set_mirror_decisions([])
+        self.mirror_apply_button.set_sensitive(False)
+        self.mirror_summary.set_text('Preview a mirror to see what '
+                                     'would change.')
         self.apply_progress.hide()
         self._set_log('')
         self._apply_log_scroll.hide()
@@ -607,6 +626,417 @@ class MultiSyncWindow(Gtk.Window):
         buf = self.apply_log.get_buffer()
         buf.insert(buf.get_end_iter(), ('' if buf.get_char_count() == 0
                                         else '\n') + text)
+
+    # -- Mirror ---------------------------------------------------------
+    #
+    # GTK twin of the Qt Mirror tab; same information architecture, same
+    # wording (both delegate to sync/present.py). Sync is incremental,
+    # Mirror converges the TRACKERS onto what Ownership says
+    # (sync/mirror.py) -- its own tab, preview and apply path, because
+    # it is a different and potentially much larger operation.
+    #
+    # Hakubun never appears here as a tracker side. Local state still
+    # converges (MirrorPlan.local) but is not shown: it is
+    # reconciliation state, not one of the things being mirrored.
+
+    def _build_mirror_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        page.set_border_width(6)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.mirror_summary = Gtk.Label(xalign=0)
+        self.mirror_summary.set_text('Preview a mirror to see what '
+                                     'would change.')
+        bar.pack_start(self.mirror_summary, False, False, 0)
+        self.mirror_preview_button = Gtk.Button(label='Preview mirror')
+        self.mirror_preview_button.set_tooltip_text(
+            'Work out what each tracker should contain according to '
+            'Ownership. Nothing is written anywhere until you apply.')
+        self.mirror_preview_button.connect(
+            'clicked', lambda *_a: self.s_mirror_preview())
+        self.mirror_apply_button = Gtk.Button(label='Apply mirror…')
+        self.mirror_apply_button.set_tooltip_text(
+            'Review the totals, then carry out the ticked changes.')
+        self.mirror_apply_button.set_sensitive(False)
+        self.mirror_apply_button.connect(
+            'clicked', lambda *_a: self.s_mirror_apply())
+        self.mirror_cancel_button = Gtk.Button(label='Cancel')
+        self.mirror_cancel_button.set_no_show_all(True)
+        self.mirror_cancel_button.connect(
+            'clicked', lambda *_a: self.s_cancel_apply())
+        for b in (self.mirror_cancel_button, self.mirror_apply_button,
+                  self.mirror_preview_button):
+            bar.pack_end(b, False, False, 0)
+        page.pack_start(bar, False, False, 0)
+
+        help_label = Gtk.Label(xalign=0, wrap=True)
+        help_label.set_markup(present.MIRROR_TAB_HELP)
+        page.pack_start(help_label, False, False, 0)
+
+        # The bulk gates. Unticked by default and enforced in the
+        # engine (SyncEngine.apply_mirror), not here: these two boxes
+        # are how the user expresses the choice, not what makes it
+        # safe. Additions and removals are approved independently --
+        # "yes to adds, no to deletes" is the common answer.
+        gates = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.mirror_allow_adds = Gtk.CheckButton(
+            label='Allow adding entries')
+        self.mirror_allow_adds.set_tooltip_text(
+            'Permit Mirror to create new entries on trackers that are '
+            'missing them. Each entry must still be ticked.')
+        self.mirror_allow_removes = Gtk.CheckButton(
+            label='Allow removing entries')
+        self.mirror_allow_removes.set_tooltip_text(
+            'Permit Mirror to DELETE entries from trackers you marked '
+            'as not needing them. This cannot be undone from Hakubun.')
+        gates.pack_start(self.mirror_allow_adds, False, False, 0)
+        gates.pack_start(self.mirror_allow_removes, False, False, 0)
+        page.pack_start(gates, False, False, 0)
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        inner = Gtk.Notebook()
+        self._mirror_stores = {}
+        self._mirror_views = {}
+        self._mirror_page_labels = {}
+        for key, text in (('membership', 'Tracker membership'),
+                          ('add', 'Entries to add'),
+                          ('remove', 'Entries to remove'),
+                          ('update', 'Fields to update')):
+            if key == 'membership':
+                store, widget = self._make_membership_tree()
+            else:
+                store, widget = self._make_changes_tree()
+                self._mirror_views[key] = self._last_changes_view
+            self._mirror_stores[key] = store
+            label = Gtk.Label(label=text)
+            self._mirror_page_labels[key] = label
+            inner.append_page(widget, label)
+        paned.pack1(inner, True, True)
+
+        frame = Gtk.Frame(label='Decisions')
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._mirror_decisions_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._mirror_decisions_box.set_border_width(6)
+        scroll.add(self._mirror_decisions_box)
+        frame.add(scroll)
+        self._mirror_decisions_frame = frame
+        paned.pack2(frame, True, True)
+        paned.set_position(520)
+        page.pack_start(paned, True, True, 0)
+
+        self._mirror_plan = None
+        self._set_mirror_decisions([])
+        return page
+
+    def _make_membership_tree(self):
+        """(TreeStore, scrolled widget) for the tracker presence matrix.
+
+        Same column scheme as the change trees so one toggle/colour
+        setup serves both, but the rows are never checkable: a
+        membership row is a statement about the trackers, and the
+        action on it is a decision taken from its context menu, not a
+        tick."""
+        store = Gtk.TreeStore(bool, bool, str, str, GObject.TYPE_PYOBJECT)
+        view = Gtk.TreeView(model=store)
+        view.set_headers_visible(False)
+        text = Gtk.CellRendererText()
+        view.append_column(Gtk.TreeViewColumn(
+            'Tracker', text, text=_C_LABEL, foreground=_C_COLOR))
+        view.connect('button-press-event', self._on_membership_button)
+        self._membership_view = view
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                          Gtk.PolicyType.AUTOMATIC)
+        scroll.add(view)
+        return store, scroll
+
+    def _populate_membership(self, store, issues):
+        """One row per entry, its trackers beneath it as ✓/✗ rows.
+
+        This is the presentation the old 'Add to Kitsu from Hakubun'
+        line got wrong: what the user needs to see is which trackers
+        have the entry and which don't, so they can answer whether it
+        belongs there at all."""
+        store.clear()
+        for issue in sorted(issues, key=lambda i: i.title.casefold()):
+            parent = store.append(None, [False, False, issue.title,
+                                         None, issue])
+            for name, present_here, note in \
+                    present.mirror_membership_lines(issue):
+                label = '%s  %s' % (name, '✓' if present_here else '✗')
+                if note:
+                    label += '   — %s' % note
+                store.append(parent, [
+                    False, False, label,
+                    _PULL_COLOR if present_here else _CREATE_COLOR,
+                    (issue, name)])
+            store.append(parent, [False, False,
+                                  present.mirror_membership_why(issue),
+                                  None, issue])
+
+    def _on_membership_button(self, view, event):
+        """Right-click a tracker row: record what should be true of this
+        entry on that tracker.
+
+        These are the three membership decisions (sync/membership.py),
+        and they persist -- the next mirror does not rediscover a
+        discrepancy the user has already settled. 'Remove from' is the
+        ONLY way a deletion is ever proposed."""
+        if event.button != 3:
+            return False
+        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
+        if pathinfo is None:
+            return False
+        store = self._mirror_stores['membership']
+        payload = store.get_value(store.get_iter(pathinfo[0]), _C_CHANGE)
+        if not isinstance(payload, tuple):
+            return False
+        issue, provider_label = payload
+        provider = provider_label.lower()
+        menu = Gtk.Menu()
+        if provider in issue.present:
+            item = Gtk.MenuItem(
+                label=present.mirror_remove_label(provider))
+            item.connect('activate', lambda *_a:
+                         self._confirm_membership_removal(issue, provider))
+        else:
+            item = Gtk.MenuItem(
+                label=present.mirror_add_label(issue, provider))
+            item.connect('activate', lambda *_a:
+                         self._set_membership(issue, provider, 'present'))
+        menu.append(item)
+        item = Gtk.MenuItem(label=present.mirror_ignore_label(provider))
+        item.connect('activate', lambda *_a:
+                     self._set_membership(issue, provider, 'ignore'))
+        menu.append(item)
+        if provider in issue.decisions:
+            item = Gtk.MenuItem(label='Ask me about %s again'
+                                % provider_label)
+            item.connect('activate', lambda *_a:
+                         self._set_membership(issue, provider, None))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _confirm_membership_removal(self, issue, provider):
+        """Marking a tracker 'absent' is what authorizes a deletion, so
+        it is confirmed at the moment it is recorded as well as at the
+        moment it is applied."""
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text='Mark "%s" as not belonging on %s?'
+                 % (issue.title, present.label(provider)))
+        dialog.format_secondary_text(
+            'Mirror will then offer to DELETE that entry from your %s '
+            'account. Nothing is deleted until you tick it, allow '
+            'removals, and apply.' % present.label(provider))
+        answer = dialog.run()
+        dialog.destroy()
+        if answer != Gtk.ResponseType.YES:
+            return
+        self._set_membership(issue, provider, 'absent')
+
+    def _set_membership(self, issue, provider, want):
+        if want is None:
+            self.engine.clear_membership(issue.uuid, provider)
+            self._status('%s: %s will be asked about again.'
+                         % (issue.title, present.label(provider)))
+        else:
+            self.engine.set_membership(issue.uuid, provider, want)
+            self._status('%s: recorded "%s" for %s.'
+                         % (issue.title, want, present.label(provider)))
+        self.s_mirror_preview()
+
+    def _set_mirror_decisions(self, conflicts):
+        for child in self._mirror_decisions_box.get_children():
+            self._mirror_decisions_box.remove(child)
+        if conflicts:
+            for conflict in sorted(conflicts,
+                                   key=lambda c: c.title.casefold()):
+                self._mirror_decisions_box.pack_start(
+                    self._mirror_decision_card(conflict), False, False, 0)
+        else:
+            placeholder = Gtk.Label(
+                label='Nothing needs your decision. When two trackers '
+                'hold different values for a field whose rule cannot '
+                'settle it on its own, the choice appears here.',
+                xalign=0, wrap=True)
+            self._mirror_decisions_box.pack_start(placeholder, False,
+                                                  False, 0)
+        self._mirror_decisions_frame.set_label('Decisions (%d)'
+                                               % len(conflicts))
+        self._mirror_decisions_box.show_all()
+
+    def _mirror_decision_card(self, conflict):
+        """A mirror decision is between TRACKERS -- the card lists only
+        tracker sides."""
+        frame = Gtk.Frame(label='%s: %s' % (
+            conflict.title,
+            _FIELD_LABELS.get(conflict.field, conflict.field)))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_border_width(6)
+        box.pack_start(Gtk.Label(label=present.mirror_conflict_why(conflict),
+                                 xalign=0, wrap=True), False, False, 0)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        for source in sorted(conflict.values):
+            if source == 'local':
+                continue
+            shown = self._fmt_value(conflict.field,
+                                    conflict.values[source])
+            if conflict.structural:
+                row.pack_start(
+                    Gtk.Label(label='%s is at %s (its own structure)'
+                              % (present.label(source), shown)),
+                    False, False, 0)
+                continue
+            button = Gtk.Button(label='Use %s: %s'
+                                % (present.label(source), shown))
+            button.connect('clicked', lambda _b, c=conflict, s=source:
+                           self._resolve_mirror(c, s))
+            row.pack_start(button, False, False, 0)
+        box.pack_start(row, False, False, 0)
+        frame.add(box)
+        return frame
+
+    def _resolve_mirror(self, conflict, source):
+        self.engine.resolve_conflict(conflict, source)
+        self._status('Resolved %s for %s, re-previewing...' % (
+            _FIELD_LABELS.get(conflict.field, conflict.field),
+            conflict.title))
+        self.s_mirror_preview()
+
+    def s_mirror_preview(self):
+        self._cancel.clear()
+        self._run(self.engine.mirror_plan, self.r_mirror_planned,
+                  'Working out what each tracker should contain...',
+                  should_cancel=self._cancel.is_set)
+
+    def r_mirror_planned(self, plan, error):
+        if isinstance(error, SyncCancelled):
+            self._status('Mirror cancelled.')
+            return
+        if error is not None:
+            self._status('Mirror preview failed: %s' % error)
+            return
+        self._mirror_plan = plan
+        counts = plan.counts()
+
+        self._populate_membership(self._mirror_stores['membership'],
+                                  plan.membership)
+        self._populate_mirror_ops(
+            self._mirror_stores['add'], plan.adds,
+            lambda o: ('%s, %s: %s' % (
+                present.label(o.target), present.field_label(o.field),
+                self._fmt_target_value(o.field, o.new, o.target)),
+                _CREATE_COLOR),
+            lambda o: '%s → %s' % (o.title, present.label(o.target)))
+        self._populate_mirror_ops(
+            self._mirror_stores['remove'], plan.removes,
+            lambda o: (present.mirror_remove_line(o), _CREATE_COLOR),
+            lambda o: present.label(o.provider))
+        self._populate_mirror_ops(
+            self._mirror_stores['update'], plan.updates,
+            lambda o: (present.mirror_change_line(
+                self.engine.adapters, o)[1], _PUSH_COLOR),
+            lambda o: o.title)
+
+        for key, text, n in (
+                ('membership', 'Tracker membership', len(plan.membership)),
+                ('add', 'Entries to add', sum(counts['add'].values())),
+                ('remove', 'Entries to remove',
+                 sum(counts['remove'].values())),
+                ('update', 'Fields to update',
+                 sum(counts['update'].values()))):
+            self._mirror_page_labels[key].set_text('%s (%d)' % (text, n))
+
+        self._set_mirror_decisions(plan.conflicts)
+        self.mirror_apply_button.set_sensitive(not plan.clean)
+        self.mirror_summary.set_markup(
+            '<b>%s</b>' % GLib.markup_escape_text(
+                present.mirror_plan_summary(plan)))
+        self._status(present.mirror_plan_summary(plan))
+
+    def _populate_mirror_ops(self, store, ops, line_fn, group_fn):
+        store.clear()
+        groups = {}
+        for op in ops:
+            groups.setdefault(group_fn(op), []).append(op)
+        for key in sorted(groups):
+            ops_here = groups[key]
+            states = {o.selected for o in ops_here}
+            parent = store.append(
+                None, [states == {True}, len(states) > 1,
+                       '%s (%d)' % (key, len(ops_here)), None, None])
+            for op in ops_here:
+                label, color = line_fn(op)
+                store.append(parent, [op.selected, False, label, color,
+                                      op])
+
+    def s_mirror_apply(self):
+        """Never applies silently: the totals are shown first, per
+        tracker, and the two bulk gates must be ticked for the
+        corresponding category to run at all."""
+        if self._mirror_plan is None:
+            return
+        plan = self._mirror_plan
+        allow_adds = self.mirror_allow_adds.get_active()
+        allow_removes = self.mirror_allow_removes.get_active()
+
+        notes = []
+        if plan.selected_adds() and not allow_adds:
+            notes.append('Additions are ticked but "Allow adding '
+                         'entries" is off — they will be skipped.')
+        if plan.selected_removes() and not allow_removes:
+            notes.append('Removals are ticked but "Allow removing '
+                         'entries" is off — they will be skipped.')
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text='Apply mirror?')
+        dialog.format_secondary_text(
+            present.mirror_confirmation(plan)
+            + ('\n\n' + '\n'.join(notes) if notes else ''))
+        answer = dialog.run()
+        dialog.destroy()
+        if answer != Gtk.ResponseType.OK:
+            self._status('Mirror cancelled.')
+            return
+
+        self._mirror_plan = None
+        self.mirror_apply_button.set_sensitive(False)
+        self._cancel.clear()
+        self.mirror_cancel_button.show()
+        self.mirror_cancel_button.set_sensitive(True)
+        self._set_log('Mirroring...')
+        self._apply_log_scroll.show()
+        self.apply_progress.set_fraction(0)
+        self.apply_progress.set_text('Mirroring...')
+        self.apply_progress.show()
+        self._run(self.engine.apply_mirror, self.r_mirror_applied,
+                  'Applying the mirror...', plan,
+                  allow_adds=allow_adds, allow_removes=allow_removes,
+                  should_cancel=self._cancel.is_set,
+                  forward_progress=True)
+
+    def r_mirror_applied(self, result, error):
+        self.mirror_cancel_button.hide()
+        if error is not None:
+            self.apply_progress.hide()
+            self._append_log('Mirror failed: %s' % error)
+            self._status('Mirror failed: %s' % error)
+            return
+        self.apply_progress.set_fraction(1.0)
+        text = present.mirror_result_status(result)
+        self._append_log(text)
+        self._status(text)
+        self.s_fetch()
 
     # -- Configuration (simple per-field rules) ------------------------
 
