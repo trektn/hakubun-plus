@@ -54,9 +54,12 @@ def test_mirror_never_compares_against_hakubun(store):
 
     plan = engine.mirror_plan()
     assert plan.updates, 'expected the trackers to be brought into line'
-    for op in plan.updates + plan.adds:
+    for op in plan.updates:
         assert op.target != 'local'
         assert op.source != 'local'
+    for op in plan.adds:
+        assert op.provider != 'local'
+        assert 'local' not in op.provenance
     for conflict in plan.conflicts:
         assert 'local' not in conflict.values
 
@@ -180,13 +183,16 @@ def test_missing_entry_is_a_tracker_membership_discrepancy(store):
     assert issue.values['score'] == pytest.approx(5.0)
     assert issue.values['status'] == 'completed'
 
-    adds = {o.field: o for o in plan.adds if o.target == 'kitsu'}
-    assert adds['score'].new == pytest.approx(5.0)
-    assert adds['status'].new == 'completed'
+    # ONE operation for the whole entry, carrying every field -- not
+    # one per field. An entry is created whole or not at all.
+    adds = [o for o in plan.adds if o.provider == 'kitsu']
+    assert len(adds) == 1
+    add = adds[0]
+    assert add.values['score'] == pytest.approx(5.0)
+    assert add.values['status'] == 'completed'
     # Justified by the trackers that actually list it, never by us.
-    assert adds['score'].provenance == ('anilist', 'mal')
-    for op in adds.values():
-        assert op.selected is False       # opt-in, always
+    assert add.provenance == ('anilist', 'mal')
+    assert add.selected is False          # opt-in, always
 
 
 def test_unmapped_tracker_is_an_identity_gap_not_an_add(store):
@@ -202,7 +208,7 @@ def test_unmapped_tracker_is_an_identity_gap_not_an_add(store):
     issue = next(i for i in plan.membership if i.title == 'GHOST')
     assert issue.unmapped == ['mal']
     assert issue.addable == []
-    assert [o for o in plan.adds if o.target == 'mal'] == []
+    assert [o for o in plan.adds if o.provider == 'mal'] == []
 
 
 def test_settled_discrepancy_is_not_reproposed(store):
@@ -215,10 +221,10 @@ def test_settled_discrepancy_is_not_reproposed(store):
     assert engine.fetch() == {}
     uid = store.mapping_for('anilist', '9')['uuid']
 
-    assert [o for o in engine.mirror_plan().adds if o.target == 'kitsu']
+    assert [o for o in engine.mirror_plan().adds if o.provider == 'kitsu']
     engine.set_membership(uid, 'kitsu', 'ignore')
     plan = engine.mirror_plan()
-    assert [o for o in plan.adds if o.target == 'kitsu'] == []
+    assert [o for o in plan.adds if o.provider == 'kitsu'] == []
     # Still SHOWN, with the decision, rather than silently dropped.
     issue = next(i for i in plan.membership if i.title == 'GHOST')
     assert issue.missing == ['kitsu']
@@ -646,9 +652,8 @@ def test_a_created_entry_is_seeded_from_the_trackers_not_local(store):
     store.local_set(uid, 'score', 1.0, source='local')   # stale
 
     plan = engine.mirror_plan()
-    add = next(o for o in plan.adds
-               if o.target == 'kitsu' and o.field == 'score')
-    assert add.new == pytest.approx(9.0), \
+    add = next(o for o in plan.adds if o.provider == 'kitsu')
+    assert add.values['score'] == pytest.approx(9.0), \
         'the new entry must carry the tracker-derived value, not local'
     issue = next(i for i in plan.membership if i.title == 'GHOST')
     assert issue.values['score'] == pytest.approx(9.0)
@@ -669,8 +674,8 @@ def test_an_owned_field_the_owner_lacks_seeds_nothing(store):
     own(store, score='provider:annict')     # a tracker that isn't here
 
     plan = engine.mirror_plan()
-    assert [o for o in plan.adds
-            if o.target == 'kitsu' and o.field == 'score'] == []
+    add = next((o for o in plan.adds if o.provider == 'kitsu'), None)
+    assert add is None or 'score' not in add.values
 
 
 # -- 10. local-only convergence is reachable --------------------------

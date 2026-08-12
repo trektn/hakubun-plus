@@ -79,6 +79,42 @@ from hakubun.sync.normalize import (emptyish, progress_convert,
 
 
 @dataclass
+class AddOperation:
+    """Create this entity's entry on one tracker, WHOLE.
+
+    Deliberately one operation per (entity, tracker) carrying every
+    field's value, rather than one per field. Both reasons matter:
+
+    * Correctness. SyncEngine.apply batches a creation by (provider,
+      entity) and calls adapter.add once with whatever fields it was
+      given, so per-field operations with per-field `selected` flags
+      let a user tick `score` and not `status` and get an entry
+      created with a score and no status -- a half-formed row on a
+      real account, from a UI that only offered tickboxes. An entry is
+      created whole or not at all, which is also what MALSync's
+      syncMissing does (set every field, then one sync()).
+    * Legibility. 200 entries missing from Kitsu across six fields is
+      1200 checkboxes describing 200 decisions. The user has one
+      question per entry -- "should Kitsu have this?" -- so there is
+      one row per entry to answer it with.
+
+    Planned UNSELECTED and gated at apply time by `allow_adds`.
+    """
+
+    uuid: str
+    provider: str
+    title: str = ''
+    # field -> the value the created entry starts with. Exactly the
+    # values Mirror is asserting for the trackers that already hold the
+    # entry -- same computation, same numbers.
+    values: Dict[str, Any] = dc_field(default_factory=dict)
+    reason: str = ''
+    # The trackers whose entries justify creating this one.
+    provenance: tuple = ()
+    selected: bool = False
+
+
+@dataclass
 class RemoveOperation:
     """Delete this entity's entry from one tracker.
 
@@ -147,13 +183,50 @@ class MirrorPlan:
     moved, and get pushed back out or raise a conflict).
     """
 
-    adds: List[SyncOperation] = dc_field(default_factory=list)
+    adds: List[AddOperation] = dc_field(default_factory=list)
     removes: List[RemoveOperation] = dc_field(default_factory=list)
     updates: List[SyncOperation] = dc_field(default_factory=list)
     local: List[SyncOperation] = dc_field(default_factory=list)
     conflicts: List[FieldConflict] = dc_field(default_factory=list)
     membership: List[MembershipIssue] = dc_field(default_factory=list)
     errors: Dict[str, str] = dc_field(default_factory=dict)
+    # uuid -> {field: (value, owning tracker, why)} -- what ownership
+    # says this work SHOULD look like, independent of any one tracker.
+    #
+    # This is the plan's authoritative row, and it is kept because the
+    # preview is unreadable without it. Every update is a delta, and a
+    # list of deltas with nothing to stand against ("Kitsu, Score: 7 ->
+    # 8") makes the reader reconstruct the target value in their head,
+    # per row. MALSync solves this by putting the master list's entry
+    # at the top of each card; ownership's equivalent is this row --
+    # synthesized per field from each field's own owner, which is
+    # exactly the generalization ownership makes over a single master.
+    desired: Dict[str, Dict[str, Any]] = dc_field(default_factory=dict)
+    # uuid -> {provider: {field: value}} -- what each tracker holds
+    # RIGHT NOW, straight from its own snapshot: canonical values (the
+    # form every comparison here uses, projected back onto the
+    # provider's scale for display) plus `_total`, that tracker's own
+    # episode count, so progress can be shown as "12 / 26" against the
+    # structure it belongs to.
+    #
+    # Carried so the preview can show a tracker's whole entry and not
+    # only the fields about to change. Unchanged values are what the
+    # arrows are read against: "Score 7 -> 8" alone tells you nothing
+    # about whether the rest of the entry is about to be disturbed,
+    # and that uncertainty is most of what makes a bulk preview
+    # frightening to apply.
+    observed: Dict[str, Dict[str, Dict[str, Any]]] = dc_field(
+        default_factory=dict)
+    # The ownership configuration this plan was built from, so the
+    # preview can say which tracker is a field's AUTHORITY.
+    #
+    # Deliberately not inferred from which tracker's value won: under a
+    # reconcile policy the winner is whichever tracker happened to hold
+    # the agreed value, and labelling that tracker the owner would
+    # credit it with an authority the configuration never gave it --
+    # the same class of untruth as telling a user they chose something
+    # they never chose.
+    ownership: Dict[str, Any] = dc_field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
@@ -173,8 +246,8 @@ class MirrorPlan:
         'update': {provider: n_fields}} -- the numbers the bulk
         confirmation dialog quotes before anything is applied."""
         adds = {}
-        for uid, provider in {(o.uuid, o.target) for o in self.adds}:
-            adds[provider] = adds.get(provider, 0) + 1
+        for op in self.adds:
+            adds[op.provider] = adds.get(op.provider, 0) + 1
         removes = {}
         for op in self.removes:
             removes[op.provider] = removes.get(op.provider, 0) + 1
@@ -209,7 +282,7 @@ class MirrorPlanner:
 
     def plan(self, should_cancel=None):
         ownership = self.store.ownership()
-        plan = MirrorPlan()
+        plan = MirrorPlan(ownership=dict(ownership))
         ents = self.store.entities()
         uids = [e['uuid'] for e in ents]
         snapshot = {
@@ -275,24 +348,73 @@ class MirrorPlanner:
         # tracker the tracker-reconciled value and a newly created one
         # local's, which differ precisely when local is stale, i.e. in
         # the situation Mirror exists to fix.
+        # `status` is resolved FIRST because progress depends on it:
+        # an entry the owner calls completed has a defined progress on
+        # every tracker (that tracker's own total) even when the
+        # episode structures are otherwise incomparable. See `finished`
+        # below and _desired_value's `mismatched` handling.
         desired = {}
-        for field, policy in ownership.items():
+        for field in sorted(ownership, key=lambda f: f != 'status'):
+            policy = ownership[field]
             if policy.kind is PolicyKind.INDIVIDUAL:
                 continue
             outcome = self._desired_value(
                 plan, uid, title, field, policy, holders, ent_total,
-                snapshot['resolutions'])
+                snapshot['resolutions'],
+                finished=self._finished(desired))
             if outcome is not None:
                 desired[field] = outcome
+        finished = self._finished(desired)
+        # Each tracker's entry as IT holds it -- raw, unconverted, so a
+        # row reads as that tracker's own numbers rather than as
+        # something already translated on its behalf.
+        observed = {}
+        for provider, remote in holders.items():
+            vals = {}
+            for field, policy in ownership.items():
+                if policy.kind is PolicyKind.INDIVIDUAL or field not in remote:
+                    continue
+                vals[field] = remote[field][0]
+            total = (remote.get('_total') or (None, 0))[0]
+            if total:
+                vals['_total'] = total
+            observed[provider] = vals
+        if observed:
+            plan.observed[uid] = observed
+        if desired:
+            plan.desired[uid] = {field: (outcome[0], outcome[1], outcome[2])
+                                 for field, outcome in desired.items()}
 
-        for field, (effective, source, reason, states, raws) in \
+        for field, (effective, source, reason, states, raws, mismatched) in \
                 desired.items():
             for provider, current in states.items():
                 if provider == source:
                     continue
                 self._push_op(plan, uid, title, field, ownership[field],
                               provider, current, effective, source,
-                              reason, raws, ent_total)
+                              reason, raws, ent_total, finished)
+            if field == 'progress' and finished:
+                # Trackers whose episode structure cannot be compared
+                # with this work's. Normally that is a structural
+                # conflict -- there is no honest way to translate 5/13
+                # into a 26-episode listing. "Completed" is the one
+                # case where there is: the answer is that tracker's own
+                # total, whatever it happens to be. This is the split-
+                # season problem (MAL lists two 13-episode seasons where
+                # AniList lists one run of 26), and it is the most
+                # common structural difference there is -- so leaving it
+                # as an unanswerable conflict on a finished show made
+                # Mirror look broken on exactly the entries it should
+                # have handled best.
+                for provider, (raw_r, r_scale) in mismatched.items():
+                    if not r_scale or raw_r == r_scale:
+                        continue
+                    plan.updates.append(SyncOperation(
+                        uid, field, raw_r, r_scale, target=provider,
+                        source=source, title=title,
+                        reason='%s says completed, so %s goes to its own '
+                               'total' % (source.capitalize(),
+                                          provider.capitalize())))
             # Local converges too -- silently, as reconciliation state.
             l_val = local.get(field, (None, 0))[0]
             if not values_equal(field, l_val, effective):
@@ -307,11 +429,20 @@ class MirrorPlanner:
 
     # -- fields --------------------------------------------------------
 
+    @staticmethod
+    def _finished(desired):
+        """Does ownership say this work is completed? Read from the
+        already-resolved `status` outcome, so it is the OWNER's verdict
+        -- not a vote among trackers, and not local's opinion."""
+        outcome = desired.get('status')
+        return bool(outcome) and outcome[0] == 'completed'
+
     def _desired_value(self, plan, uid, title, field, policy, holders,
-                       ent_total, resolutions):
+                       ent_total, resolutions, finished=False):
         """What this field SHOULD be across the trackers.
 
-        Returns (effective, source, reason, states, raws), or None when
+        Returns (effective, source, reason, states, raws, mismatched),
+        or None when
         there is nothing to assert (no tracker can represent the field,
         the owner doesn't hold the entry, a strategy said NoChange, or
         the question needs a human -- in which case a conflict has been
@@ -335,7 +466,13 @@ class MirrorPlanner:
                     continue
                 r_val = converted
             states[provider] = r_val
-        if mismatched:
+        # A tracker whose structure cannot be translated is a conflict
+        # ONLY while the answer is genuinely unknown. Once ownership
+        # says the work is completed, each such tracker has a defined
+        # target -- its own total -- and the caller pushes it there
+        # instead. Raising a conflict anyway would be asking the user a
+        # question that has already been answered.
+        if mismatched and not (finished and progress_field):
             plan.conflicts.append(FieldConflict(
                 uid, field, {p: rv for p, (rv, _) in mismatched.items()},
                 policy=policy, title=title,
@@ -377,7 +514,7 @@ class MirrorPlanner:
                     plan.conflicts.append(resolved)
                     return
                 effective, source, reason = resolved
-        return effective, source, reason, states, raws
+        return effective, source, reason, states, raws, mismatched
 
     @staticmethod
     def fingerprint(states):
@@ -443,7 +580,8 @@ class MirrorPlanner:
                 '%s reconciliation: %s' % (strategy.label, result.reason))
 
     def _push_op(self, plan, uid, title, field, policy, provider, current,
-                 effective, source, reason, raws, ent_total):
+                 effective, source, reason, raws, ent_total,
+                 finished=False):
         """Append one tracker-to-tracker field push, if it changes
         anything. Progress converts into the destination's own episode
         structure, exactly as in ordinary Sync."""
@@ -452,6 +590,11 @@ class MirrorPlanner:
             if values_equal(field, current, effective):
                 return
             target_val = progress_convert(effective, ent_total, r_scale)
+            if finished and r_scale:
+                # Completed means completed on that tracker's own
+                # terms. Its total is the answer whether or not the
+                # arithmetic happens to line up.
+                target_val = r_scale
             if target_val is None:
                 plan.conflicts.append(FieldConflict(
                     uid, field, {provider: raw_r}, policy=policy,
@@ -511,13 +654,10 @@ class MirrorPlanner:
             reason = 'exists on %s; %%s has no entry' % ' and '.join(
                 p.capitalize() for p in present)
             for provider in addable:
-                for field, val in values.items():
-                    plan.adds.append(SyncOperation(
-                        uid, field, None, val, target=provider,
-                        source=present[0], title=title,
-                        reason=reason % provider.capitalize(),
-                        selected=False, creates_entry=True,
-                        provenance=provenance))
+                plan.adds.append(AddOperation(
+                    uid, provider, title=title, values=dict(values),
+                    reason=reason % provider.capitalize(),
+                    provenance=provenance, selected=False))
 
         for provider in removable:
             plan.removes.append(RemoveOperation(

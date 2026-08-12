@@ -14,7 +14,7 @@ from hakubun.sync import normalize
 from hakubun.sync.adapters import AdapterError
 from hakubun.sync.history import History
 from hakubun.sync.identity import IdentityResolver
-from hakubun.sync.models import SyncCancelled
+from hakubun.sync.models import SyncCancelled, SyncOperation
 from hakubun.sync.normalize import values_equal
 from hakubun.sync.planner import SyncPlanner
 
@@ -402,7 +402,22 @@ class SyncEngine:
 
         updates = [o for o in plan.selected_updates()
                    if (o.uuid, o.target) not in gone]
-        adds = [o for o in adds if (o.uuid, o.target) not in gone]
+        # An AddOperation is one decision about a whole entry (see
+        # mirror.AddOperation); apply() speaks in per-field operations
+        # and batches them back together by (provider, entity), so the
+        # expansion happens HERE, after the user's single yes/no, and
+        # never becomes a set of independently tickable fields.
+        adds = [op for op in adds if (op.uuid, op.provider) not in gone]
+        add_changes = [
+            SyncOperation(op.uuid, field, None, value,
+                          target=op.provider,
+                          source=(op.provenance[0] if op.provenance
+                                  else None),
+                          title=op.title, reason=op.reason,
+                          selected=True, creates_entry=True,
+                          provenance=op.provenance)
+            for op in adds
+            for field, value in op.values.items()]
         # Local convergence follows the trackers only where the user
         # actually let the trackers converge: a field whose tracker
         # pushes were unticked is left entirely alone, rather than
@@ -419,7 +434,8 @@ class SyncEngine:
                   'cancelled': cancelled}
         if not cancelled:
             from hakubun.sync.models import SyncPlan
-            result = self.apply(SyncPlan(changes=local + updates + adds),
+            result = self.apply(SyncPlan(changes=local + updates
+                                         + add_changes),
                                 progress=progress,
                                 should_cancel=should_cancel)
         result['errors'] = {**errors, **result.get('errors', {})}
