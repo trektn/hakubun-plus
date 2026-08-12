@@ -618,6 +618,11 @@ class MirrorCard:
         self.trackers = []
         self.conflicts = []
         self.local = []         # SyncOperations against Hakubun's copy
+        # The MembershipIssue behind this card, when there is one: the
+        # membership decisions (add / remove / leave alone) are recorded
+        # against it, so the row that shows a tracker's presence is also
+        # the row that can change it.
+        self.issue = None
         self.ops = []           # every tickable operation on this card
         self.categories = set()
 
@@ -694,6 +699,7 @@ def mirror_cards(plan, adapters, category='all'):
 
     for uuid, card in cards.items():
         issue = issues.get(uuid)
+        card.issue = issue
         observed = plan.observed.get(uuid, {})
         add_op = adds_by.get(uuid)
         # Every tracker this work touches, whether or not it changes.
@@ -703,6 +709,14 @@ def mirror_cards(plan, adapters, category='all'):
                           | set(issue.unmapped))
         if add_op is not None:
             providers.add(add_op.provider)
+        # A removal may be ALL a card has: an entry the user marked as
+        # not belonging somewhere has no field updates and no
+        # membership gap to report. Without this the card had no
+        # tracker rows, counted as doing nothing, and the deletion
+        # vanished from the preview it most needed to appear in.
+        for _u, prov in removes_by:
+            if _u == uuid:
+                providers.add(prov)
         for _u, target in list(updates_by):
             if _u == uuid:
                 providers.add(target)

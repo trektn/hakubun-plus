@@ -320,18 +320,21 @@ class MultiSyncWindow(Gtk.Window):
         new_state = not store.get_value(it, _C_ACTIVE)
         store.set_value(it, _C_ACTIVE, new_state)
         if change is None:
-            # A show-group header: cascade to its children.
-            child = store.iter_children(it)
-            while child is not None:
-                store.set_value(child, _C_ACTIVE, new_state)
-                child_change = store.get_value(child, _C_CHANGE)
-                if child_change is not None:
-                    child_change.selected = new_state
-                child = store.iter_next(child)
+            # A group header: cascade to everything beneath it.
+            # RECURSIVE, because Mirror's cards are three levels deep
+            # (title -> tracker -> operation) -- a one-level cascade
+            # ticked the tracker rows and left the operations they
+            # contain untouched, so "yes to this show" silently did
+            # nothing. The change trees are two levels deep and so are
+            # unaffected.
+            self._cascade_selection(store, it, new_state)
             store.set_value(it, _C_INCONSISTENT, False)
         else:
             change.selected = new_state
-            self._sync_group_state(store, store.iter_parent(it))
+            parent = store.iter_parent(it)
+            while parent is not None:
+                self._sync_group_state(store, parent)
+                parent = store.iter_parent(parent)
 
     def _on_creates_button(self, view, event):
         """Right-click on a new-entry row: durably decline the creation
@@ -361,6 +364,18 @@ class MultiSyncWindow(Gtk.Window):
         self._status('%s will not be offered for creation on %s again.'
                      % (change.title, present.label(change.target)))
         self._run(self.engine.plan, self.r_planned, 'Planning...')
+
+    @staticmethod
+    def _cascade_selection(store, parent, new_state):
+        child = store.iter_children(parent)
+        while child is not None:
+            store.set_value(child, _C_ACTIVE, new_state)
+            store.set_value(child, _C_INCONSISTENT, False)
+            change = store.get_value(child, _C_CHANGE)
+            if change is not None and hasattr(change, 'selected'):
+                change.selected = new_state
+            MultiSyncWindow._cascade_selection(store, child, new_state)
+            child = store.iter_next(child)
 
     @staticmethod
     def _sync_group_state(store, parent):
@@ -598,13 +613,7 @@ class MultiSyncWindow(Gtk.Window):
         # wiped -- membership decisions included. Clear it too, or its
         # rows would offer to act on entities that no longer exist.
         self._mirror_plan = None
-        for key, store in self._mirror_stores.items():
-            store.clear()
-            self._mirror_page_labels[key].set_text(
-                {'membership': 'Tracker membership',
-                 'add': 'Entries to add', 'remove': 'Entries to remove',
-                 'update': 'Fields to update',
-                 'local': "Hakubun's copy"}[key])
+        self._render_mirror_cards()
         self._set_mirror_decisions([])
         self.mirror_apply_button.set_sensitive(False)
         self.mirror_summary.set_text('Preview a mirror to see what '
@@ -694,31 +703,29 @@ class MultiSyncWindow(Gtk.Window):
         gates.pack_start(self.mirror_allow_removes, False, False, 0)
         page.pack_start(gates, False, False, 0)
 
+        # ONE view, organized by title -- see the Qt twin. The old
+        # per-kind pages survive as a filter, which is what they were
+        # actually good for: narrowing a large plan.
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                             spacing=6)
+        filter_row.pack_start(Gtk.Label(label='Show:'), False, False, 0)
+        self.mirror_filter = Gtk.ComboBoxText()
+        for key, text in present.CARD_CATEGORIES:
+            self.mirror_filter.append(key, text)
+        self.mirror_filter.set_active(0)
+        self.mirror_filter.connect(
+            'changed', lambda *_a: self._render_mirror_cards())
+        filter_row.pack_start(self.mirror_filter, False, False, 0)
+        self.mirror_filter_count = Gtk.Label(xalign=0)
+        filter_row.pack_start(self.mirror_filter_count, False, False, 0)
+        page.pack_start(filter_row, False, False, 0)
+
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        inner = Gtk.Notebook()
-        self._mirror_stores = {}
-        self._mirror_views = {}
-        self._mirror_page_labels = {}
-        for key, text in (('membership', 'Tracker membership'),
-                          ('add', 'Entries to add'),
-                          ('remove', 'Entries to remove'),
-                          ('update', 'Fields to update'),
-                          # Last, and named as this app's own copy
-                          # rather than a tracker -- see the Qt twin.
-                          ('local', "Hakubun's copy")):
-            if key == 'membership':
-                store, widget = self._make_membership_tree()
-            else:
-                store, widget = self._make_changes_tree()
-                view = self._last_changes_view
-                self._mirror_views[key] = view
-                view.connect('button-press-event',
-                             self._on_mirror_op_button, key)
-            self._mirror_stores[key] = store
-            label = Gtk.Label(label=text)
-            self._mirror_page_labels[key] = label
-            inner.append_page(widget, label)
-        paned.pack1(inner, True, True)
+        self._mirror_store, mirror_widget = self._make_changes_tree()
+        self._mirror_view = self._last_changes_view
+        self._mirror_view.connect('button-press-event',
+                                  self._on_mirror_row_button)
+        paned.pack1(mirror_widget, True, True)
 
         frame = Gtk.Frame(label='Decisions')
         scroll = Gtk.ScrolledWindow()
@@ -737,70 +744,43 @@ class MultiSyncWindow(Gtk.Window):
         self._set_mirror_decisions([])
         return page
 
-    def _make_membership_tree(self):
-        """(TreeStore, scrolled widget) for the tracker presence matrix.
+    def _on_mirror_row_button(self, view, event):
+        """Right-click inside a Mirror card.
 
-        Same column scheme as the change trees so one toggle/colour
-        setup serves both, but the rows are never checkable: a
-        membership row is a statement about the trackers, and the
-        action on it is a decision taken from its context menu, not a
-        tick."""
-        store = Gtk.TreeStore(bool, bool, str, str, GObject.TYPE_PYOBJECT)
-        view = Gtk.TreeView(model=store)
-        view.set_headers_visible(False)
-        text = Gtk.CellRendererText()
-        view.append_column(Gtk.TreeViewColumn(
-            'Tracker', text, text=_C_LABEL, foreground=_C_COLOR))
-        view.connect('button-press-event', self._on_membership_button)
-        self._membership_view = view
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
-                          Gtk.PolicyType.AUTOMATIC)
-        scroll.add(view)
-        return store, scroll
+        One handler, because there is now one tree: a TRACKER row
+        carries (issue, label) and offers the three membership
+        decisions (sync/membership.py), while an OPERATION row produced
+        by a stored decision offers the way back to it -- that field is
+        settled and so no longer appears as a conflict card.
 
-    def _populate_membership(self, store, issues):
-        """One row per entry, its trackers beneath it as ✓/✗ rows.
-
-        This is the presentation the old 'Add to Kitsu from Hakubun'
-        line got wrong: what the user needs to see is which trackers
-        have the entry and which don't, so they can answer whether it
-        belongs there at all."""
-        store.clear()
-        for issue in sorted(issues, key=lambda i: i.title.casefold()):
-            parent = store.append(None, [False, False, issue.title,
-                                         None, issue])
-            for name, present_here, note in \
-                    present.mirror_membership_lines(issue):
-                label = '%s  %s' % (name, '✓' if present_here else '✗')
-                if note:
-                    label += '   — %s' % note
-                store.append(parent, [
-                    False, False, label,
-                    _PULL_COLOR if present_here else _CREATE_COLOR,
-                    (issue, name)])
-            store.append(parent, [False, False,
-                                  present.mirror_membership_why(issue),
-                                  None, issue])
-
-    def _on_membership_button(self, view, event):
-        """Right-click a tracker row: record what should be true of this
-        entry on that tracker.
-
-        These are the three membership decisions (sync/membership.py),
-        and they persist -- the next mirror does not rediscover a
-        discrepancy the user has already settled. 'Remove from' is the
-        ONLY way a deletion is ever proposed."""
+        Membership decisions persist: the next mirror does not
+        rediscover a discrepancy the user has already settled, and
+        'Remove from' is the ONLY way a deletion is ever proposed.
+        """
         if event.button != 3:
             return False
         pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
         if pathinfo is None:
             return False
-        store = self._mirror_stores['membership']
+        store = self._mirror_store
         payload = store.get_value(store.get_iter(pathinfo[0]), _C_CHANGE)
+        if payload is not None and not isinstance(payload, tuple):
+            if 'you chose this' not in getattr(payload, 'reason', ''):
+                return False
+            menu = Gtk.Menu()
+            item = Gtk.MenuItem(label='Ask me about %s again'
+                                % present.field_label(payload.field))
+            item.connect('activate', lambda *_a:
+                         self._clear_mirror_resolution(payload))
+            menu.append(item)
+            menu.show_all()
+            menu.popup_at_pointer(event)
+            return True
         if not isinstance(payload, tuple):
             return False
         issue, provider_label = payload
+        if issue is None:
+            return False
         provider = provider_label.lower()
         menu = Gtk.Menu()
         if provider in issue.present:
@@ -824,29 +804,6 @@ class MultiSyncWindow(Gtk.Window):
             item.connect('activate', lambda *_a:
                          self._set_membership(issue, provider, None))
             menu.append(item)
-        menu.show_all()
-        menu.popup_at_pointer(event)
-        return True
-
-    def _on_mirror_op_button(self, view, event, key):
-        """Right-click a row produced by a stored Mirror decision: the
-        field is settled and so no longer appears as a conflict card,
-        which without this leaves no way back to it."""
-        if event.button != 3:
-            return False
-        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
-        if pathinfo is None:
-            return False
-        store = self._mirror_stores[key]
-        op = store.get_value(store.get_iter(pathinfo[0]), _C_CHANGE)
-        if op is None or 'you chose this' not in getattr(op, 'reason', ''):
-            return False
-        menu = Gtk.Menu()
-        item = Gtk.MenuItem(label='Ask me about %s again'
-                            % present.field_label(op.field))
-        item.connect('activate', lambda *_a:
-                     self._clear_mirror_resolution(op))
-        menu.append(item)
         menu.show_all()
         menu.popup_at_pointer(event)
         return True
@@ -969,41 +926,7 @@ class MultiSyncWindow(Gtk.Window):
             self._status('Mirror preview failed: %s' % error)
             return
         self._mirror_plan = plan
-        counts = plan.counts()
-
-        self._populate_membership(self._mirror_stores['membership'],
-                                  plan.membership)
-        self._populate_mirror_ops(
-            self._mirror_stores['add'], plan.adds,
-            lambda o: ('%s, %s: %s' % (
-                present.label(o.target), present.field_label(o.field),
-                self._fmt_target_value(o.field, o.new, o.target)),
-                _CREATE_COLOR),
-            lambda o: '%s → %s' % (o.title, present.label(o.target)))
-        self._populate_mirror_ops(
-            self._mirror_stores['remove'], plan.removes,
-            lambda o: (present.mirror_remove_line(o), _CREATE_COLOR),
-            lambda o: present.label(o.provider))
-        self._populate_mirror_ops(
-            self._mirror_stores['update'], plan.updates,
-            lambda o: (present.mirror_change_line(
-                self.engine.adapters, o)[1], _PUSH_COLOR),
-            lambda o: o.title)
-        self._populate_mirror_ops(
-            self._mirror_stores['local'], plan.local,
-            lambda o: (present.mirror_local_line(o), _PULL_COLOR),
-            lambda o: present.local_label())
-
-        for key, text, n in (
-                ('membership', 'Tracker membership', len(plan.membership)),
-                ('add', 'Entries to add', sum(counts['add'].values())),
-                ('remove', 'Entries to remove',
-                 sum(counts['remove'].values())),
-                ('update', 'Fields to update',
-                 sum(counts['update'].values())),
-                ('local', "Hakubun's copy", counts['local'])):
-            self._mirror_page_labels[key].set_text('%s (%d)' % (text, n))
-
+        self._render_mirror_cards()
         self._set_mirror_decisions(plan.conflicts)
         self.mirror_apply_button.set_sensitive(not plan.clean)
         self.mirror_summary.set_markup(
@@ -1011,21 +934,109 @@ class MultiSyncWindow(Gtk.Window):
                 present.mirror_plan_summary(plan)))
         self._status(present.mirror_plan_summary(plan))
 
-    def _populate_mirror_ops(self, store, ops, line_fn, group_fn):
+    def _render_mirror_cards(self):
+        """Draw the plan as one card per title -- see the Qt twin's
+        _render_mirror_cards for why the plan is projected this way."""
+        store = self._mirror_store
         store.clear()
-        groups = {}
-        for op in ops:
-            groups.setdefault(group_fn(op), []).append(op)
-        for key in sorted(groups):
-            ops_here = groups[key]
-            states = {o.selected for o in ops_here}
-            parent = store.append(
-                None, [states == {True}, len(states) > 1,
-                       '%s (%d)' % (key, len(ops_here)), None, None])
-            for op in ops_here:
-                label, color = line_fn(op)
-                store.append(parent, [op.selected, False, label, color,
-                                      op])
+        plan = self._mirror_plan
+        if plan is None:
+            self.mirror_filter_count.set_text('')
+            return
+        category = self.mirror_filter.get_active_id() or 'all'
+        cards = present.mirror_cards(plan, self.engine.adapters, category)
+        total = len(present.mirror_cards(plan, self.engine.adapters))
+        self.mirror_filter_count.set_text(
+            '%d of %d entr%s' % (len(cards), total,
+                                 'y' if len(cards) == 1 else 'ies'))
+        for card in cards:
+            states = {o.selected for o in card.ops}
+            parent = store.append(None, [
+                states == {True}, len(states) > 1,
+                '%s   —   %s' % (card.title,
+                                 present.mirror_card_headline(card)),
+                None, None])
+            self._build_mirror_card(store, parent, card)
+
+    def _build_mirror_card(self, store, parent, card):
+        if card.desired:
+            store.append(parent, [
+                False, False,
+                'Ownership says:  '
+                + '   ·   '.join('%s %s (%s)' % (name, value, owner)
+                                 if owner else '%s %s' % (name, value)
+                                 for name, value, owner, _why
+                                 in card.desired),
+                _PULL_COLOR, None])
+
+        for row in card.trackers:
+            bits = ['%s  %s' % (row.label, '✓' if row.present else '✗')]
+            if row.owns:
+                bits.append('owns %s' % ', '.join(row.owns))
+            if row.values:
+                bits.append(' · '.join('%s %s' % (n, v)
+                                       for n, v in row.values))
+            if row.note:
+                bits.append(row.note)
+            # Carries (issue, tracker label) so the membership menu can
+            # act on the row the user actually right-clicked.
+            tracker_it = store.append(parent, [
+                False, False, '   —   '.join(bits),
+                _PULL_COLOR if row.present else _CREATE_COLOR,
+                (card.issue, row.label) if card.issue is not None
+                else None])
+
+            for name, old, new, why in row.changes:
+                op = next((o for o in card.ops
+                           if getattr(o, 'target', None) == row.provider
+                           and present.field_label(getattr(o, 'field', ''))
+                           == name), None)
+                if op is None:
+                    continue
+                text = '%s: %s → %s' % (name, old, new)
+                if why:
+                    text += '  — %s' % why
+                store.append(tracker_it, [op.selected, False, text,
+                                          _PUSH_COLOR, op])
+
+            if row.action == 'add':
+                op = next((o for o in card.ops
+                           if getattr(o, 'provider', None) == row.provider
+                           and hasattr(o, 'values')), None)
+                if op is not None:
+                    # ONE row for the whole entry -- see the Qt twin.
+                    store.append(tracker_it, [
+                        op.selected, False,
+                        'Create this entry on %s with %s'
+                        % (row.label,
+                           ' · '.join('%s %s' % (n, v)
+                                      for n, v in row.add_values)),
+                        _CREATE_COLOR, op])
+            elif row.action == 'remove':
+                op = next((o for o in card.ops
+                           if getattr(o, 'provider', None) == row.provider
+                           and not hasattr(o, 'values')), None)
+                if op is not None:
+                    store.append(tracker_it, [
+                        op.selected, False,
+                        'DELETE this entry from %s' % row.label,
+                        _CONFLICT_COLOR, op])
+
+        for conflict in card.conflicts:
+            store.append(parent, [
+                False, False,
+                '%s needs your decision — see Decisions'
+                % present.field_label(conflict.field),
+                _CONFLICT_COLOR, None])
+
+        if card.local:
+            group = store.append(parent, [
+                False, False, "%s's own copy" % present.local_label(),
+                None, None])
+            for op in card.local:
+                store.append(group, [op.selected, False,
+                                     present.mirror_local_line(op),
+                                     _PULL_COLOR, op])
 
     def s_mirror_apply(self):
         """Never applies silently: the totals are shown first, per

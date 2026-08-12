@@ -780,8 +780,7 @@ class SyncWindow(QDialog):
         # wiped -- membership decisions included. Clear it too, or its
         # rows would offer to act on entities that no longer exist.
         self._mirror_plan = None
-        for tree in self._mirror_trees.values():
-            tree.clear()
+        self.mirror_tree.clear()
         self._set_mirror_decisions([])
         self.mirror_apply_button.setEnabled(False)
         self.mirror_summary.setText('Preview a mirror to see what '
@@ -861,31 +860,33 @@ class SyncWindow(QDialog):
         gates.addStretch()
         layout.addLayout(gates)
 
+        # ONE view, organized by title -- not five tabs organized by
+        # operation kind. A user works a title at a time ("what happens
+        # to this show?"), and that question used to be answered across
+        # three tabs. The kinds survive as a filter, which is what they
+        # were actually useful for: narrowing a large plan.
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel('Show:'))
+        self.mirror_filter = QComboBox()
+        for key, text in present.CARD_CATEGORIES:
+            self.mirror_filter.addItem(text, key)
+        self.mirror_filter.currentIndexChanged.connect(
+            lambda _i: self._render_mirror_cards())
+        filter_row.addWidget(self.mirror_filter)
+        self.mirror_filter_count = QLabel('')
+        filter_row.addWidget(self.mirror_filter_count)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+
         splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
-        self.mirror_tabs = QTabWidget()
-        self._mirror_trees = {}
-        for key, label_text in (('membership', 'Tracker membership'),
-                                ('add', 'Entries to add'),
-                                ('remove', 'Entries to remove'),
-                                ('update', 'Fields to update'),
-                                # Last, and named as this app's own
-                                # copy rather than a tracker: Hakubun
-                                # is not a peer of AniList and Kitsu,
-                                # but converging it is still a change
-                                # the user is making, and it can
-                                # discard an unsynced local edit. Shown
-                                # so it can be unticked.
-                                ('local', "Hakubun's copy")):
-            tree = QTreeWidget()
-            tree.setHeaderHidden(True)
-            tree.itemChanged.connect(self._on_mirror_item_toggled)
-            tree.setContextMenuPolicy(
-                QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-            tree.customContextMenuRequested.connect(
-                lambda pos, t=tree: self._mirror_context_menu(t, pos))
-            self._mirror_trees[key] = tree
-            self.mirror_tabs.addTab(tree, label_text)
-        splitter.addWidget(self.mirror_tabs)
+        self.mirror_tree = QTreeWidget()
+        self.mirror_tree.setHeaderHidden(True)
+        self.mirror_tree.itemChanged.connect(self._on_mirror_item_toggled)
+        self.mirror_tree.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.mirror_tree.customContextMenuRequested.connect(
+            lambda pos: self._mirror_context_menu(self.mirror_tree, pos))
+        splitter.addWidget(self.mirror_tree)
 
         self.mirror_decisions_box = QGroupBox('Decisions')
         outer = QVBoxLayout(self.mirror_decisions_box)
@@ -921,68 +922,200 @@ class SyncWindow(QDialog):
     def _on_mirror_item_toggled(self, item, column):
         if column != 0:
             return
+        card = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 3)
+        if card is not None:
+            # A card's own tick answers the whole title at once. Qt's
+            # auto-tristate only reaches CHECKABLE descendants, and a
+            # card's operations sit under its tracker rows, which are
+            # not checkable -- so propagating by hand is what makes
+            # "yes to this show" a single click instead of one per
+            # field.
+            state = item.checkState(0)
+            if state == QtCore.Qt.CheckState.PartiallyChecked:
+                return
+            selected = state == QtCore.Qt.CheckState.Checked
+            for op in card.ops:
+                op.selected = selected
+            self.mirror_tree.blockSignals(True)
+            try:
+                self._sync_mirror_checks(item)
+            finally:
+                self.mirror_tree.blockSignals(False)
+            return
         op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
         if op is None or not hasattr(op, 'selected'):
             return
         op.selected = (item.checkState(0)
                        == QtCore.Qt.CheckState.Checked)
+        # Keep the card above in step, so a card that is half-ticked
+        # says so rather than claiming the whole title is going.
+        parent = item.parent()
+        while parent is not None:
+            owner = parent.data(0, QtCore.Qt.ItemDataRole.UserRole + 3)
+            if owner is not None:
+                self.mirror_tree.blockSignals(True)
+                try:
+                    parent.setCheckState(0,
+                                         self._card_check_state(owner))
+                finally:
+                    self.mirror_tree.blockSignals(False)
+                return
+            parent = parent.parent()
 
-    def _populate_mirror_membership(self, tree, issues):
-        """One box per entry: the tracker presence matrix, then the
-        discrepancy in tracker terms. This is the presentation the old
-        'Add to Kitsu from Hakubun' row got wrong -- what the user
-        needs to see is which trackers have the entry and which don't,
-        so they can answer whether it belongs there at all."""
-        tree.clear()
-        bold = QtGui.QFont()
-        bold.setBold(True)
-        for issue in sorted(issues, key=lambda i: i.title.casefold()):
-            group = QTreeWidgetItem([issue.title])
-            group.setFont(0, bold)
-            group.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
-            for name, present_here, note in \
-                    present.mirror_membership_lines(issue):
-                text = '%s  %s' % (name, '✓' if present_here else '✗')
-                if note:
-                    text += '   — %s' % note
-                row = QTreeWidgetItem([text])
-                row.setForeground(0, self._PULL_COLOR if present_here
-                                  else self._CREATE_COLOR)
-                row.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
-                row.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2, name)
-                group.addChild(row)
-            why = QTreeWidgetItem([present.mirror_membership_why(issue)])
-            why.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
-            group.addChild(why)
-            tree.addTopLevelItem(group)
-        tree.expandAll()
+    @staticmethod
+    def _card_check_state(card):
+        states = {o.selected for o in card.ops}
+        if states == {True}:
+            return QtCore.Qt.CheckState.Checked
+        if states == {False} or not states:
+            return QtCore.Qt.CheckState.Unchecked
+        return QtCore.Qt.CheckState.PartiallyChecked
 
-    def _populate_mirror_ops(self, tree, ops, line_fn, color,
-                             group_key, group_label):
-        tree.clear()
-        groups = {}
-        for op in ops:
-            groups.setdefault(group_key(op), []).append(op)
-        bold = QtGui.QFont()
-        bold.setBold(True)
-        for key in sorted(groups):
-            ops_here = groups[key]
-            group = QTreeWidgetItem([group_label(key, ops_here)])
-            group.setFont(0, bold)
-            group.setFlags(group.flags()
-                           | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                           | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
-            for op in ops_here:
-                group.addChild(self._mirror_op_item(op, line_fn(op),
-                                                    color))
-            states = {o.selected for o in ops_here}
-            group.setCheckState(0, QtCore.Qt.CheckState.Checked
-                                if states == {True} else
-                                QtCore.Qt.CheckState.Unchecked
-                                if states == {False} else
-                                QtCore.Qt.CheckState.PartiallyChecked)
-            tree.addTopLevelItem(group)
-        tree.expandAll()
+    def _sync_mirror_checks(self, item):
+        """Redraw every operation tick under `item` from the operations
+        themselves, so the widgets agree with the plan."""
+        for i in range(item.childCount()):
+            child = item.child(i)
+            op = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if op is not None and hasattr(op, 'selected'):
+                child.setCheckState(
+                    0, QtCore.Qt.CheckState.Checked if op.selected
+                    else QtCore.Qt.CheckState.Unchecked)
+            self._sync_mirror_checks(child)
+
+    def _render_mirror_cards(self):
+        """Draw the plan as one collapsible card per title.
+
+        Each card is: what ownership says this work should be, then
+        every tracker under it with what it holds now and what would
+        change. Tickable rows are the actual operations -- a field push,
+        a whole-entry creation, a deletion -- and a card's own tick
+        drives all of them, so "yes to this show" is one click rather
+        than one per field.
+        """
+        tree = self.mirror_tree
+        plan = self._mirror_plan
+        tree.blockSignals(True)
+        try:
+            tree.clear()
+            if plan is None:
+                return
+            category = self.mirror_filter.currentData() or 'all'
+            cards = present.mirror_cards(plan, self.engine.adapters,
+                                         category)
+            self.mirror_filter_count.setText(
+                '%d of %d entr%s'
+                % (len(cards),
+                   len(present.mirror_cards(plan, self.engine.adapters)),
+                   'y' if len(cards) == 1 else 'ies'))
+            bold = QtGui.QFont()
+            bold.setBold(True)
+            for card in cards:
+                top = QTreeWidgetItem(
+                    ['%s   —   %s'
+                     % (card.title, present.mirror_card_headline(card))])
+                top.setFont(0, bold)
+                top.setData(0, QtCore.Qt.ItemDataRole.UserRole + 3, card)
+                if card.ops:
+                    # Checkable, but NOT auto-tristate: Qt derives an
+                    # auto-tristate item's state from its checkable
+                    # direct children, and a card's children are tracker
+                    # rows, which are not checkable. Left on the flag,
+                    # Qt overrode every click back to unchecked.
+                    top.setFlags(top.flags()
+                                 | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                self._build_mirror_card(top, card)
+                if card.ops:
+                    top.setCheckState(0, self._card_check_state(card))
+                tree.addTopLevelItem(top)
+                top.setExpanded(len(cards) <= 25)
+        finally:
+            tree.blockSignals(False)
+
+    def _build_mirror_card(self, top, card):
+        # The ownership row: what this work SHOULD be. Under a single
+        # master list this would just be that list's entry; ownership
+        # assembles it per field from each field's own authority, so it
+        # names the owner alongside every value.
+        if card.desired:
+            header = QTreeWidgetItem(
+                ['Ownership says:  '
+                 + '   ·   '.join('%s %s (%s)' % (name, value, owner)
+                                  if owner else '%s %s' % (name, value)
+                                  for name, value, owner, _why
+                                  in card.desired)])
+            header.setForeground(0, self._PULL_COLOR)
+            top.addChild(header)
+
+        for row in card.trackers:
+            bits = ['%s  %s' % (row.label, '✓' if row.present else '✗')]
+            if row.owns:
+                bits.append('owns %s' % ', '.join(row.owns))
+            if row.values:
+                bits.append(' · '.join('%s %s' % (n, v)
+                                       for n, v in row.values))
+            if row.note:
+                bits.append(row.note)
+            item = QTreeWidgetItem(['   —   '.join(bits)])
+            item.setForeground(0, self._PULL_COLOR if row.present
+                               else self._CREATE_COLOR)
+            # Carried so the membership context menu can act on the row
+            # the user actually right-clicked.
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, card.issue)
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2, row.label)
+            top.addChild(item)
+
+            for name, old, new, why in row.changes:
+                op = next((o for o in card.ops
+                           if getattr(o, 'target', None) == row.provider
+                           and present.field_label(getattr(o, 'field', ''))
+                           == name), None)
+                text = '%s: %s → %s' % (name, old, new)
+                if why:
+                    text += '  — %s' % why
+                if op is not None:
+                    item.addChild(self._mirror_op_item(op, text,
+                                                       self._PUSH_COLOR))
+
+            if row.action == 'add':
+                op = next((o for o in card.ops
+                           if getattr(o, 'provider', None) == row.provider
+                           and hasattr(o, 'values')), None)
+                if op is not None:
+                    # ONE row for the whole entry. Creating it with an
+                    # arbitrary ticked subset of its fields is not a
+                    # thing the user can express, because it is not a
+                    # thing they would ever mean.
+                    item.addChild(self._mirror_op_item(
+                        op,
+                        'Create this entry on %s with %s'
+                        % (row.label,
+                           ' · '.join('%s %s' % (n, v)
+                                      for n, v in row.add_values)),
+                        self._CREATE_COLOR))
+            elif row.action == 'remove':
+                op = next((o for o in card.ops
+                           if getattr(o, 'provider', None) == row.provider
+                           and not hasattr(o, 'values')), None)
+                if op is not None:
+                    item.addChild(self._mirror_op_item(
+                        op, 'DELETE this entry from %s' % row.label,
+                        self._CONFLICT_COLOR))
+
+        for conflict in card.conflicts:
+            note = QTreeWidgetItem(
+                ['%s needs your decision — see Decisions'
+                 % present.field_label(conflict.field)])
+            note.setForeground(0, self._CONFLICT_COLOR)
+            top.addChild(note)
+
+        if card.local:
+            group = QTreeWidgetItem(["%s's own copy" % present.local_label()])
+            group.setToolTip(0, present.MIRROR_LOCAL_HELP)
+            for op in card.local:
+                group.addChild(self._mirror_op_item(
+                    op, present.mirror_local_line(op), self._PULL_COLOR))
+            top.addChild(group)
 
     def _mirror_context_menu(self, tree, pos):
         """Right-click a tracker row in the membership view: record what
@@ -1153,50 +1286,7 @@ class SyncWindow(QDialog):
             self._status('Mirror preview failed: %s' % error)
             return
         self._mirror_plan = plan
-        counts = plan.counts()
-
-        self._populate_mirror_membership(self._mirror_trees['membership'],
-                                         plan.membership)
-        self._populate_mirror_ops(
-            self._mirror_trees['add'], plan.adds,
-            lambda o: '%s, %s: %s' % (
-                present.label(o.target),
-                present.field_label(o.field),
-                self._fmt_target_value(o.field, o.new, o.target)),
-            self._CREATE_COLOR,
-            lambda o: (o.target, o.title),
-            lambda key, ops: '%s → %s (%d field(s))'
-            % (key[1], present.label(key[0]), len(ops)))
-        self._populate_mirror_ops(
-            self._mirror_trees['remove'], plan.removes,
-            present.mirror_remove_line, self._CONFLICT_COLOR,
-            lambda o: o.provider,
-            lambda key, ops: '%s (%d entr%s)'
-            % (present.label(key), len(ops),
-               'y' if len(ops) == 1 else 'ies'))
-        self._populate_mirror_ops(
-            self._mirror_trees['update'], plan.updates,
-            lambda o: present.mirror_change_line(
-                self.engine.adapters, o)[1],
-            self._PUSH_COLOR,
-            lambda o: o.title,
-            lambda key, ops: '%s (%d change(s))' % (key, len(ops)))
-        self._populate_mirror_ops(
-            self._mirror_trees['local'], plan.local,
-            present.mirror_local_line, self._PULL_COLOR,
-            lambda o: present.local_label(),
-            lambda key, ops: '%s (%d value(s))' % (key, len(ops)))
-
-        for index, (key, label_text, n) in enumerate((
-                ('membership', 'Tracker membership', len(plan.membership)),
-                ('add', 'Entries to add', sum(counts['add'].values())),
-                ('remove', 'Entries to remove',
-                 sum(counts['remove'].values())),
-                ('update', 'Fields to update',
-                 sum(counts['update'].values())),
-                ('local', "Hakubun's copy", counts['local']))):
-            self.mirror_tabs.setTabText(index, '%s (%d)' % (label_text, n))
-
+        self._render_mirror_cards()
         self._set_mirror_decisions(plan.conflicts)
         self.mirror_apply_button.setEnabled(not plan.clean)
         self.mirror_summary.setText('<b>%s</b>'
