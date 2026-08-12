@@ -608,24 +608,22 @@ other and the app is not one of the parties. Five tabs:
    button per adoptable side. The buttons are *Fetch changes* and
    *Sync selected*; the engine keeps calling these plan and apply.
 2. **Mirror** — *make your trackers agree, according to Ownership*
-   (§15). **One card per title** (§15.4): what ownership says the work
-   should be, then every tracker under it with what it holds
-   (`Anilist ✓ / Mal ✓ / Kitsu ✗`), what would change (`Score: 5 →
-   9`), and the entry it would gain or lose. A card's tick answers the
-   whole title at once; a tracker row's context menu records the
-   membership decision. The per-kind divisions survive as a **filter**
-   above the list, which is what they were good for — narrowing a
-   large plan — rather than as five separate places to look for one
-   title. Alongside is a Decisions pane for tracker-vs-tracker
-   disagreements. Its own preview, deliberately not overloaded onto
-   Sync's: it is a different and potentially much larger operation.
-   Applying always goes through a confirmation quoting the per-tracker
-   totals, and the two bulk gates ("Allow adding entries", "Allow
-   removing entries") are independent, both default off, and are
-   enforced by the engine regardless (§15.5).
+   (§15). **One card per title** (§15.5), laid out like the Sync tab:
+   what ownership says the work should be, then its changes as flat
+   rows, each naming the tracker, the field, both values and the rule
+   behind it. A card's tick answers the whole title at once; a row's
+   context menu records or revisits a membership decision. Alongside
+   is a Decisions pane for tracker-vs-tracker disagreements. Its own
+   preview, deliberately not overloaded onto Sync's: it is a different
+   and potentially much larger operation. **Preview → Apply** is the
+   whole flow — no category filter, no bulk-gate checkboxes, and
+   everything preselected except deletions. Applying goes through one
+   confirmation quoting the per-tracker totals.
 3. **Configuration** — one rule picker per field, in consequences
    rather than policy syntax: "Keep the furthest progress", "Keep
-   from Mal", "Ask me when they differ", "Don't sync". Serialized
+   from Mal", "Ask me when they differ", "Don't sync". Plus
+   **Entries** (§15.4): which tracker decides what is *on* your lists,
+   as opposed to what each entry says. Serialized
    policies never surface here; `present.policy_choices` maps each
    field to its sensible options and appends the current policy when
    the advanced matrix set something the simple list doesn't offer.
@@ -908,71 +906,94 @@ conversion between them. `resolve_mirror_conflict` refuses, and the UI
 points at the Sync tab, which has the local structure to resolve
 against.
 
-### 15.4 The preview: one card per work
+### 15.4 The entry owner
 
-`present.mirror_cards(plan, adapters, category)` re-projects the plan
-into one **card per work**, and both windows render that same model —
-so the layout is tested once, without a widget, and the two UIs cannot
-drift apart.
+Field ownership says where a SCORE comes from. It cannot say whether
+Kitsu should hold the entry at all — and without an answer to that,
+every membership difference is a question for the user, which is how
+"make these two lists match" turned into one decision per entry.
 
-The plan's natural unit is the field operation, and the first version
-of this tab showed exactly that: five tabs of operations sorted by
-kind. That is the shape the engine needs and the wrong shape for a
-person. A user works one title at a time — "what happens to this
-show?" — and the answer was spread across three tabs, with the entry's
-membership in one, its field pushes in another, and the entry it would
-gain in a third, split into one row per field.
+So membership gets an owner of its own, configured as a row in
+**Configuration** alongside Score and Status (`SyncStore.master`):
 
-A card is:
+> **Entries** — Follow AniList
+
+That is MALSync's master list, generalized. With one designated, the
+owner's list is the set: works it holds are propagated outward, works
+it no longer lists are offered for removal, and neither needs asking.
+
+The removal rule is deliberately narrow, because a deletion on a real
+account is the one thing here that cannot be undone. It requires the
+work to be genuinely RESOLVED against the owner — identity has matched
+it there, and the owner's own fetch still does not list it
+(`MISSING`, never `UNMAPPED`). Everything else is left alone:
+
+| situation | what happens |
+|---|---|
+| owner lists it, another tracker does not | offered as an add |
+| owner has an id for it and does not list it | offered as a removal |
+| owner has **no id** for it | left alone — an identity gap, not evidence |
+| unique to one tracker | left alone |
+| user decided 'present' / 'ignore' | left alone; a decision outranks the owner |
+| owner is not a connected account | ignored entirely |
+
+Unset is the default, and stays conservative: nothing is ever removed
+automatically, and any tracker holding an entry can justify creating
+it elsewhere.
+
+### 15.5 The preview: one card per work
+
+`present.mirror_cards(plan, adapters)` re-projects the plan into one
+**card per work**, and both windows render that same model — so the
+layout is tested once, without a widget, and the two UIs cannot drift.
+
+Inside a card the changes are a **flat list**, in exactly the shape the
+Sync tab uses:
 
 ```
-GHOST   —   add to Kitsu · 1 field(s) on Mal
+GHOST   —   add to Kitsu · 1 field(s)
     Ownership says:  Score 9 (Anilist)   ·   Status Completed (Mal)
-    Anilist  ✓   —   owns Score   —   Score 9 · Status Completed
-    Kitsu    ✗
-        Create this entry on Kitsu with Score 9 · Status Completed
-    Mal      ✓   —   owns Status   —   Score 5 · Status Completed
-        Score: 5 → 9  — Anilist owns score
+    Add to Kitsu: Score 9 · Status Completed  — exists on Anilist
+    Update Mal, Score: 5 → 9  — Anilist owns score
+    Update Hakubun, Score: 5 → 9  — matches the trackers
 ```
 
-This is the layout MALSync's list sync uses — an authoritative entry
-at the top of each card, the other trackers below it as deltas — with
-the one difference ownership makes: there is no single master list, so
-the top row is **synthesized per field** from each field's own owner.
-That row is the whole point of the model, so it is the first thing on
-every card.
+Each line names the tracker, the field, both values and the rule
+behind it. An earlier revision grouped these under per-tracker
+sub-headers showing each tracker's whole entry; it read as two levels
+of expansion to find one value, and the user's verdict was blunt —
+"get rid of the show stuff, it's incredibly confusing".
 
-Each tracker row shows its **whole entry**, not only the fields about
-to change. Unchanged values are what the arrows are read against:
-"Score 5 → 9" alone leaves the reader wondering what else is about to
-move, and that uncertainty is most of what makes a bulk preview
-frightening to apply.
+The card's own tick answers the whole title at once. Both toolkits
+needed fixing for that: Qt's `ItemIsAutoTristate` derives a parent's
+state from its *checkable* direct children, and a card's rows include
+informational ones that are not checkable, so the flag overrode every
+click; GTK's cascade was one level deep.
 
-The old per-kind tabs survive as a **filter** (`CARD_CATEGORIES`),
-which is what they were actually good for: narrowing a large plan
-("just show me what gets deleted"). The count beside it says how much
-is being hidden.
+Hakubun's own copy appears as `Update Hakubun, …` — the same shape as
+a tracker row, and named. It used to open with the show's title and
+rely on a "Hakubun's copy" heading to say what it was, which stopped
+being true the moment the preview became one flat list.
 
-A card's own tick answers the whole title at once. Both toolkits had
-to be fixed to make that work — Qt's `ItemIsAutoTristate` derives a
-parent's state from its *checkable direct children*, and a card's
-children are tracker rows, which are not checkable, so the flag
-overrode every click back to unchecked; GTK's cascade was one level
-deep and stopped in the same place.
+There is **no category filter** and there are **no bulk-gate
+checkboxes**. Both asked a question the preview and the confirmation
+already answer, and a plan you must filter to understand is one you
+cannot confidently apply. Everything is preselected except deletions.
 
-Hakubun never appears as a tracker row. Local convergence still shows
-up — it can discard an unsynced local edit, so it must be visible and
-refusable — but under its own heading, named as this app's own copy.
-
-### 15.5 Applying: the bulk gates
+### 15.6 Applying: the bulk gates
 
 `engine.apply_mirror(plan, allow_adds=False, allow_removes=False)`.
 
 Both default to False, and they are enforced **in the engine**, not in
 either sync window: there are two UIs plus a headless path, and "the
-dialog asked" is not a safety property. Together with each operation's
-own selection (adds and removes are planned unticked), creating or
-deleting entries in bulk takes two independent confirmations.
+dialog asked" is not a safety property. The windows pass what the user
+confirmed in the apply dialog, which quotes the per-tracker totals.
+
+Additions and field pushes are planned **selected** — making the
+trackers agree is the entire point of Mirror, and both are
+recoverable by mirroring again. **Removals are planned unticked**,
+the one category that stays opt-in, because a deleted list entry
+cannot be recovered from here at all.
 
 Removals run **first**, and any field operation aimed at an entry being
 removed is dropped — pushing a score to an entry and then deleting it
