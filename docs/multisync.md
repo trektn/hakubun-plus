@@ -608,17 +608,21 @@ other and the app is not one of the parties. Five tabs:
    button per adoptable side. The buttons are *Fetch changes* and
    *Sync selected*; the engine keeps calling these plan and apply.
 2. **Mirror** — *make your trackers agree, according to Ownership*
-   (§15). Four categories — **Tracker membership** (the presence
-   matrix per entry: `Anilist ✓ / Mal ✓ / Kitsu ✗`, with the
-   discrepancy stated between trackers and a context menu recording
-   the membership decision), **Entries to add**, **Entries to remove**
-   and **Fields to update** — plus a Decisions pane for
-   tracker-vs-tracker disagreements. Its own preview, deliberately not
-   overloaded onto Sync's: it is a different and potentially much
-   larger operation. Applying always goes through a confirmation
-   quoting the per-tracker totals, and the two bulk gates ("Allow
-   adding entries", "Allow removing entries") are independent, both
-   default off, and are enforced by the engine regardless (§15.3).
+   (§15). **One card per title** (§15.4): what ownership says the work
+   should be, then every tracker under it with what it holds
+   (`Anilist ✓ / Mal ✓ / Kitsu ✗`), what would change (`Score: 5 →
+   9`), and the entry it would gain or lose. A card's tick answers the
+   whole title at once; a tracker row's context menu records the
+   membership decision. The per-kind divisions survive as a **filter**
+   above the list, which is what they were good for — narrowing a
+   large plan — rather than as five separate places to look for one
+   title. Alongside is a Decisions pane for tracker-vs-tracker
+   disagreements. Its own preview, deliberately not overloaded onto
+   Sync's: it is a different and potentially much larger operation.
+   Applying always goes through a confirmation quoting the per-tracker
+   totals, and the two bulk gates ("Allow adding entries", "Allow
+   removing entries") are independent, both default off, and are
+   enforced by the engine regardless (§15.5).
 3. **Configuration** — one rule picker per field, in consequences
    rather than policy syntax: "Keep the furthest progress", "Keep
    from Mal", "Ask me when they differ", "Don't sync". Serialized
@@ -836,6 +840,41 @@ Membership discrepancies become `MirrorPlan.adds` (proposals),
 `MirrorPlan.removes` (only from a recorded `absent` decision) and
 `MirrorPlan.membership` — the presence matrix the UI renders.
 
+An **add is one operation for the whole entry** (`AddOperation`,
+carrying every field's value), not one per field. `SyncEngine.apply`
+batches a creation by `(provider, entity)` and calls `adapter.add`
+once with whatever fields it was handed, so per-field operations with
+per-field `selected` flags let a user tick `score`, leave `status`,
+and get a half-formed entry on a real account. `apply_mirror` expands
+an `AddOperation` into per-field operations *after* the user's single
+yes/no, so the subset case is unrepresentable. It is also what makes
+the preview readable: 200 entries across six fields is 1200
+checkboxes describing 200 decisions.
+
+**Completed works** converge to each tracker's own total. Partial
+progress across differing episode structures genuinely cannot be
+translated and stays a structural conflict — but "finished" always
+can: the answer is that tracker's total, whatever it is. MAL listing
+two 13-episode seasons where AniList lists one run of 26 is the most
+common structural difference there is, and leaving it unanswerable on
+a finished show made Mirror look broken on exactly the entries it
+should have handled best. The rule reads the **owner's** status
+verdict (`_finished`), not a vote among trackers.
+
+The plan also carries three things purely so the preview can be
+truthful:
+
+| field | what it holds |
+|---|---|
+| `desired` | `{uuid: {field: (value, source, why)}}` — what ownership says the work should be |
+| `observed` | `{uuid: {provider: {field: value}}}` — what each tracker holds right now |
+| `ownership` | the configuration itself, so the UI can name a field's **authority** |
+
+`ownership` is carried rather than inferred from `desired`'s `source`:
+under a reconcile policy the source is whichever tracker happened to
+hold the agreed value, and labelling it the owner would put a claim on
+screen that the configuration never makes.
+
 ### 15.3 Resolving a Mirror decision
 
 A Mirror conflict is a disagreement **between trackers**, and it cannot
@@ -869,7 +908,63 @@ conversion between them. `resolve_mirror_conflict` refuses, and the UI
 points at the Sync tab, which has the local structure to resolve
 against.
 
-### 15.4 Applying: the bulk gates
+### 15.4 The preview: one card per work
+
+`present.mirror_cards(plan, adapters, category)` re-projects the plan
+into one **card per work**, and both windows render that same model —
+so the layout is tested once, without a widget, and the two UIs cannot
+drift apart.
+
+The plan's natural unit is the field operation, and the first version
+of this tab showed exactly that: five tabs of operations sorted by
+kind. That is the shape the engine needs and the wrong shape for a
+person. A user works one title at a time — "what happens to this
+show?" — and the answer was spread across three tabs, with the entry's
+membership in one, its field pushes in another, and the entry it would
+gain in a third, split into one row per field.
+
+A card is:
+
+```
+GHOST   —   add to Kitsu · 1 field(s) on Mal
+    Ownership says:  Score 9 (Anilist)   ·   Status Completed (Mal)
+    Anilist  ✓   —   owns Score   —   Score 9 · Status Completed
+    Kitsu    ✗
+        Create this entry on Kitsu with Score 9 · Status Completed
+    Mal      ✓   —   owns Status   —   Score 5 · Status Completed
+        Score: 5 → 9  — Anilist owns score
+```
+
+This is the layout MALSync's list sync uses — an authoritative entry
+at the top of each card, the other trackers below it as deltas — with
+the one difference ownership makes: there is no single master list, so
+the top row is **synthesized per field** from each field's own owner.
+That row is the whole point of the model, so it is the first thing on
+every card.
+
+Each tracker row shows its **whole entry**, not only the fields about
+to change. Unchanged values are what the arrows are read against:
+"Score 5 → 9" alone leaves the reader wondering what else is about to
+move, and that uncertainty is most of what makes a bulk preview
+frightening to apply.
+
+The old per-kind tabs survive as a **filter** (`CARD_CATEGORIES`),
+which is what they were actually good for: narrowing a large plan
+("just show me what gets deleted"). The count beside it says how much
+is being hidden.
+
+A card's own tick answers the whole title at once. Both toolkits had
+to be fixed to make that work — Qt's `ItemIsAutoTristate` derives a
+parent's state from its *checkable direct children*, and a card's
+children are tracker rows, which are not checkable, so the flag
+overrode every click back to unchecked; GTK's cascade was one level
+deep and stopped in the same place.
+
+Hakubun never appears as a tracker row. Local convergence still shows
+up — it can discard an unsynced local edit, so it must be visible and
+refusable — but under its own heading, named as this app's own copy.
+
+### 15.5 Applying: the bulk gates
 
 `engine.apply_mirror(plan, allow_adds=False, allow_removes=False)`.
 
