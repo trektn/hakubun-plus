@@ -378,6 +378,39 @@ MIRROR_TAB_HELP = (
     'review it and confirm.')
 
 
+def membership_note(want, reason=None):
+    """Why a tracker row is in the state it is, in words that are
+    actually true of how it got there.
+
+    The same `want` arrives by routes that are not the same fact, and
+    only some of them are the user's doing:
+
+        'deleted'   a fetch noticed the entry gone from the website.
+                    An OBSERVATION. Describing it as something the
+                    user chose is simply false -- they deleted an
+                    entry on a website, they never made a decision in
+                    Hakubun, and being told "you chose" about a
+                    setting they have never seen is how a UI teaches
+                    someone to distrust it.
+        'declined'  the user turned down a proposed creation. A real
+                    choice, but a narrow one: "don't add it", not
+                    "leave this tracker alone forever".
+        None        the user said so in Mirror. The only case where
+                    "you chose" is the honest word.
+    """
+    if want == 'ignore':
+        if reason == 'deleted':
+            return ('removed on the site — not offered again')
+        if reason == 'declined':
+            return ('you declined adding it here')
+        return 'you chose to leave this tracker as it is'
+    if want == 'present':
+        return 'you chose: this tracker should have it'
+    if want == 'absent':
+        return 'you chose: this tracker should not have it'
+    return ''
+
+
 def mirror_membership_lines(issue):
     """The presence matrix for one entry, as tracker rows:
 
@@ -400,13 +433,8 @@ def mirror_membership_lines(issue):
         elif provider in issue.removable:
             note = 'marked as not belonging here'
         else:
-            decision = issue.decisions.get(provider)
-            if decision == 'ignore':
-                note = "you chose to leave this tracker as it is"
-            elif decision == 'present':
-                note = 'should have this entry'
-            elif decision == 'absent':
-                note = 'should not have this entry'
+            note = membership_note(issue.decisions.get(provider),
+                                   issue.reasons.get(provider))
         rows.append((label(provider), present, note))
     return rows
 

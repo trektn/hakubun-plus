@@ -500,15 +500,23 @@ class SyncStore:
             (uid,)).fetchall()}
 
     def membership_many(self, uids):
-        """{uid: {provider: want}} in a few queries -- the planner and
-        the mirror planner both need this for every entity at once."""
+        """{uid: {provider: (want, reason)}} in a few queries -- the
+        planner and the mirror planner both need this for every entity
+        at once.
+
+        The reason travels WITH the want because the two are not
+        interchangeable to a reader: an 'ignore' the user asked for and
+        an 'ignore' a fetch inferred from a website deletion are the
+        same state but different facts, and the UI must not describe
+        the second as something the user chose."""
         out = {}
         for chunk in _chunked(uids):
             marks = ','.join('?' * len(chunk))
             for r in self._exec(
-                    'SELECT uuid, provider, want FROM membership WHERE'
-                    ' uuid IN (%s)' % marks, chunk).fetchall():
-                out.setdefault(r['uuid'], {})[r['provider']] = r['want']
+                    'SELECT uuid, provider, want, reason FROM membership'
+                    ' WHERE uuid IN (%s)' % marks, chunk).fetchall():
+                out.setdefault(r['uuid'], {})[r['provider']] = (
+                    r['want'], r['reason'])
         return out
 
     def membership_reason(self, uid, provider):

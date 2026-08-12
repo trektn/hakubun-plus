@@ -60,6 +60,13 @@ class Membership:
     state: Dict[str, str] = dc_field(default_factory=dict)
     # provider -> 'present' / 'absent' / 'ignore' (only decided ones)
     decisions: Dict[str, str] = dc_field(default_factory=dict)
+    # provider -> WHY that decision is on record. Not decoration: the
+    # same want arrives by routes that are not the same fact. 'ignore'
+    # can mean the user declined a creation ('declined'), or that a
+    # fetch noticed they deleted the entry on the website ('deleted')
+    # -- an observation nobody chose -- or that they said so in Mirror
+    # (None). Telling a user they "chose" the second is simply false.
+    reasons: Dict[str, str] = dc_field(default_factory=dict)
     # Providers a cross-id lookup already reported empty
     # (store.resolved_absent): a cache, never a decision -- it only
     # suppresses re-proposing a creation, and never justifies removal.
@@ -175,8 +182,10 @@ def build(store, providers, uids=None, snapshot=None):
             uuid=uid,
             title=ent.get('title') or uid[:8],
             state=state,
-            decisions={p: w for p, w in decisions.get(uid, {}).items()
+            decisions={p: w for p, (w, _r) in decisions.get(uid, {}).items()
                        if p in state},
+            reasons={p: r for p, (_w, r) in decisions.get(uid, {}).items()
+                     if p in state and r},
             lookup_missed=tuple(p for p in state
                                 if uid in absent.get(p, ())))
     return out

@@ -126,6 +126,10 @@ class MembershipIssue:
     # provider -> already-recorded decision, so the UI can show that a
     # discrepancy has been settled rather than re-asking.
     decisions: Dict[str, str] = dc_field(default_factory=dict)
+    # provider -> why that decision is on record (membership.Membership
+    # .reasons). Carried so the UI can say what actually happened
+    # instead of crediting the user with every recorded state.
+    reasons: Dict[str, str] = dc_field(default_factory=dict)
     # What a created entry would start with, for the preview.
     values: Dict[str, Any] = dc_field(default_factory=dict)
 
@@ -499,7 +503,8 @@ class MirrorPlanner:
             plan.membership.append(MembershipIssue(
                 uuid=uid, title=title, present=present, missing=missing,
                 addable=addable, removable=removable, unmapped=unmapped,
-                decisions=dict(member.decisions), values=dict(values)))
+                decisions=dict(member.decisions),
+                reasons=dict(member.reasons), values=dict(values)))
 
         if present and values:
             provenance = tuple(present)

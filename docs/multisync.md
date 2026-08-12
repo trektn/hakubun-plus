@@ -701,6 +701,21 @@ On top of the observation sits at most one **decision**
 No row means undecided: Mirror surfaces the discrepancy and Sync offers
 the (unticked) creation.
 
+The stored `reason` travels with the want everywhere it is read,
+because the same want arrives by routes that are not the same fact:
+
+| reason     | how it got there                        | the user's doing? |
+|------------|------------------------------------------|-------------------|
+| `declined` | they turned down a proposed creation     | yes, but narrowly — "don't add it", not "leave this tracker alone" |
+| `deleted`  | a fetch found the entry gone from the site | no — an observation |
+| *(none)*   | they said so in Mirror                   | yes |
+
+The UI phrases each accordingly (`present.membership_note`). Calling
+the middle one "you chose to leave this tracker as it is" is simply
+false — the user deleted something on a website and never made a
+decision in Hakubun — and being told "you chose" about a setting they
+have never seen is how a UI teaches someone to distrust it.
+
 ### 14.1 Why three states
 
 The engine used to have one flag, which had to stand in for two

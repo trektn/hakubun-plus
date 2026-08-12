@@ -752,3 +752,74 @@ def test_a_single_tracker_entity_still_converges_local(store):
     plan = engine.mirror_plan()
     assert [o for o in plan.local if o.field == 'score']
     assert plan.updates == []       # nothing to push: one tracker
+
+
+# -- 12. say what actually happened, not "you chose" ------------------
+
+def test_a_website_deletion_is_not_described_as_a_user_choice(store):
+    """'ignore' arrives by three routes and only two are the user's
+    doing. A fetch noticing an entry gone from the website records the
+    same want -- but the user never made a decision in Hakubun, and
+    being told "you chose" about a setting they have never seen is how
+    a UI teaches someone to distrust what it says."""
+    from hakubun.sync import present
+
+    mal = FakeLib('mal', [show('mal', 1, 'GHOST'), show('mal', 2, 'Other')])
+    kitsu = FakeLib('kitsu', [show('kitsu', 'k1', 'GHOST', mal_id=1),
+                              show('kitsu', 'k2', 'Other', mal_id=2)])
+    engine = make_engine(store, {'mal': mal, 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('kitsu', 'k1')['uuid']
+
+    del kitsu.shows['k1']                     # removed on the website
+    assert engine.fetch() == {}
+
+    issue = next(i for i in engine.mirror_plan().membership
+                 if i.uuid == uid)
+    assert issue.decisions['kitsu'] == 'ignore'
+    assert issue.reasons['kitsu'] == 'deleted'
+    note = dict((name, note) for name, _p, note
+                in present.mirror_membership_lines(issue))['Kitsu']
+    assert 'you chose' not in note
+    assert 'removed on the site' in note
+
+
+def test_a_declined_creation_says_what_was_actually_declined(store):
+    """A real choice, but a narrow one: "don't add it here", not
+    "leave this tracker alone forever"."""
+    from hakubun.sync import present
+
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.decline_create(uid, 'kitsu')
+
+    issue = next(i for i in engine.mirror_plan().membership
+                 if i.uuid == uid)
+    note = dict((name, note) for name, _p, note
+                in present.mirror_membership_lines(issue))['Kitsu']
+    assert note == 'you declined adding it here'
+
+
+def test_a_decision_made_in_mirror_is_the_one_that_says_you_chose(store):
+    """The only route where "you chose" is the honest word."""
+    from hakubun.sync import present
+
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_membership(uid, 'kitsu', 'ignore')      # from the UI
+
+    issue = next(i for i in engine.mirror_plan().membership
+                 if i.uuid == uid)
+    note = dict((name, note) for name, _p, note
+                in present.mirror_membership_lines(issue))['Kitsu']
+    assert note == 'you chose to leave this tracker as it is'
