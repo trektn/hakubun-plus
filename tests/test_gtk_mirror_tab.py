@@ -26,7 +26,8 @@ from hakubun.sync.mirror import (AddOperation,  # noqa: E402
 from hakubun.sync.models import FieldPolicy, SyncOperation  # noqa: E402
 from hakubun.sync.store import SyncStore  # noqa: E402
 from hakubun.ui.gtk.multisyncwindow import (  # noqa: E402
-    MultiSyncWindow, _C_ACTIVE, _C_CHANGE, _C_LABEL)
+    MultiSyncWindow, _C_ACTIVE, _C_CHANGE, _C_INCONSISTENT,
+    _C_LABEL)
 
 
 class _FakeEngine:
@@ -197,6 +198,47 @@ def test_ticking_a_card_ticks_everything_under_it(win):
 
     walk(store.iter_children(it))
     assert ops and all(o.selected for o in ops)
+    # And the card's OWN checkbox must read as fully ticked. Its
+    # direct children include rows that carry no operation at all
+    # (the ownership header, the "Hakubun's own copy" heading);
+    # counting their always-false checkbox made a fully-ticked card
+    # render unchecked.
+    assert store.get_value(it, _C_ACTIVE) is True
+    assert store.get_value(it, _C_INCONSISTENT) is False
+
+
+def test_informational_rows_never_draw_a_tick(win):
+    """The ownership header is not something the user can act on, so
+    ticking the card must not put a checkbox tick on it."""
+    win.r_mirror_planned(_plan(), None)
+    store = win._mirror_store
+    it = next(i for i in _iter_top(store)
+              if store.get_value(i, _C_LABEL).startswith('GHOST'))
+    win._on_change_toggled(None, store.get_path(it), store)
+
+    child = store.iter_children(it)
+    while child is not None:
+        if store.get_value(child, _C_LABEL).startswith('Ownership says'):
+            assert store.get_value(child, _C_ACTIVE) is False
+        child = store.iter_next(child)
+
+
+def test_unticking_one_operation_makes_the_card_inconsistent(win):
+    """A half-ticked card must say so rather than claim the whole
+    title is going."""
+    win.r_mirror_planned(_plan(), None)
+    store = win._mirror_store
+    it = next(i for i in _iter_top(store)
+              if store.get_value(i, _C_LABEL).startswith('GHOST'))
+    win._on_change_toggled(None, store.get_path(it), store)
+
+    path = _path_of(store, lambda label: label.startswith('Score:'),
+                    under='GHOST')
+    win._on_change_toggled(None, path, store)
+
+    it = next(i for i in _iter_top(store)
+              if store.get_value(i, _C_LABEL).startswith('GHOST'))
+    assert store.get_value(it, _C_INCONSISTENT) is True
 
 
 def test_apply_is_refused_without_confirmation(win, monkeypatch):

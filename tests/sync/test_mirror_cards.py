@@ -322,3 +322,59 @@ def test_hakubun_is_never_a_tracker_row(store):
     card = card_named(engine, engine.mirror_plan(), 'GHOST')
     assert 'local' not in {t.provider for t in card.trackers}
     assert card.local, "Hakubun's copy is stale and must be disclosed"
+
+
+# -- 6. a settled decision stays reachable ----------------------------
+
+def test_a_settled_membership_decision_still_gets_a_card(store):
+    """A decision the user has already made produces no operations --
+    that is the point of making it. But the way BACK to it ("Ask me
+    about Kitsu again") is offered from the tracker row, so dropping
+    the card for having nothing to do would make the decision
+    permanent."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
+                                       mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=9)])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, score='provider:anilist')
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_membership(uid, 'kitsu', 'ignore')
+
+    plan = engine.mirror_plan()
+    assert not plan.adds, 'the decision is settled; nothing is proposed'
+    card = next((c for c in cards(engine, plan) if c.uuid == uid), None)
+    assert card is not None, 'the decision must remain revisitable'
+    assert row(card, 'kitsu').note
+
+
+def test_the_membership_filter_can_reach_a_settled_entry(store):
+    """Otherwise that filter option shows nothing, ever."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_membership(uid, 'kitsu', 'ignore')
+
+    assert cards(engine, engine.mirror_plan(), 'membership')
+
+
+def test_a_decision_on_a_tracker_that_holds_the_entry_is_explained(store):
+    """The note is not only for trackers that LACK the entry: a
+    tracker marked as not belonging must say so on its own row, since
+    that decision is what authorizes deleting from a real account."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_membership(uid, 'mal', 'absent')
+
+    card = next(c for c in cards(engine, engine.mirror_plan())
+                if c.uuid == uid)
+    assert 'should not have it' in row(card, 'mal').note

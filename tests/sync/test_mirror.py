@@ -499,10 +499,11 @@ def test_mirror_presentation_never_names_hakubun(store):
     own(store, score='reconcile:manual')
     plan = engine.mirror_plan()
 
-    adapters = engine.adapters
-    for op in plan.updates:
-        _direction, text = present.mirror_change_line(adapters, op)
-        assert 'Hakubun' not in text
+    for card in present.mirror_cards(plan, engine.adapters):
+        for row in card.trackers:
+            assert 'Hakubun' not in row.label
+            for change in row.changes:
+                assert all('Hakubun' not in str(part) for part in change)
     assert plan.conflicts, 'expected a tracker-vs-tracker decision'
     for conflict in plan.conflicts:
         why = present.mirror_conflict_why(conflict)
@@ -521,13 +522,13 @@ def test_membership_presentation_reads_as_a_tracker_discrepancy(store):
                                  'kitsu': kitsu})
     assert engine.fetch() == {}
 
-    issue = next(i for i in engine.mirror_plan().membership
-                 if i.title == 'GHOST')
-    rows = present.mirror_membership_lines(issue)
-    assert ('Anilist', True, '') in rows
-    assert ('Kitsu', False, '') in rows
-    why = present.mirror_membership_why(issue)
-    assert 'Kitsu' in why and 'Hakubun' not in why
+    plan = engine.mirror_plan()
+    card = next(c for c in present.mirror_cards(plan, engine.adapters)
+                if c.title == 'GHOST')
+    rows = {t.label: t.present for t in card.trackers}
+    assert rows['Anilist'] is True
+    assert rows['Kitsu'] is False
+    assert 'Hakubun' not in rows
     assert present.mirror_remove_label('kitsu') == 'Remove from Kitsu'
 
 
@@ -761,6 +762,21 @@ def test_a_single_tracker_entity_still_converges_local(store):
 
 # -- 12. say what actually happened, not "you chose" ------------------
 
+def _tracker_note(engine, plan, uid, provider):
+    """The note actually RENDERED for one tracker row.
+
+    Deliberately routed through present.mirror_cards -- the path both
+    windows draw. An assertion against a helper no window calls is
+    green about nothing, and this wording is a bug a user reported
+    seeing on screen.
+    """
+    from hakubun.sync import present
+    card = next(c for c in present.mirror_cards(plan, engine.adapters)
+                if c.uuid == uid)
+    row = next(t for t in card.trackers if t.provider == provider)
+    return row.note
+
+
 def test_a_website_deletion_is_not_described_as_a_user_choice(store):
     """'ignore' arrives by three routes and only two are the user's
     doing. A fetch noticing an entry gone from the website records the
@@ -779,12 +795,11 @@ def test_a_website_deletion_is_not_described_as_a_user_choice(store):
     del kitsu.shows['k1']                     # removed on the website
     assert engine.fetch() == {}
 
-    issue = next(i for i in engine.mirror_plan().membership
-                 if i.uuid == uid)
+    plan = engine.mirror_plan()
+    issue = next(i for i in plan.membership if i.uuid == uid)
     assert issue.decisions['kitsu'] == 'ignore'
     assert issue.reasons['kitsu'] == 'deleted'
-    note = dict((name, note) for name, _p, note
-                in present.mirror_membership_lines(issue))['Kitsu']
+    note = _tracker_note(engine, plan, uid, 'kitsu')
     assert 'you chose' not in note
     assert 'removed on the site' in note
 
@@ -803,10 +818,7 @@ def test_a_declined_creation_says_what_was_actually_declined(store):
     uid = store.mapping_for('anilist', '9')['uuid']
     engine.decline_create(uid, 'kitsu')
 
-    issue = next(i for i in engine.mirror_plan().membership
-                 if i.uuid == uid)
-    note = dict((name, note) for name, _p, note
-                in present.mirror_membership_lines(issue))['Kitsu']
+    note = _tracker_note(engine, engine.mirror_plan(), uid, 'kitsu')
     assert note == 'you declined adding it here'
 
 
@@ -823,8 +835,5 @@ def test_a_decision_made_in_mirror_is_the_one_that_says_you_chose(store):
     uid = store.mapping_for('anilist', '9')['uuid']
     engine.set_membership(uid, 'kitsu', 'ignore')      # from the UI
 
-    issue = next(i for i in engine.mirror_plan().membership
-                 if i.uuid == uid)
-    note = dict((name, note) for name, _p, note
-                in present.mirror_membership_lines(issue))['Kitsu']
+    note = _tracker_note(engine, engine.mirror_plan(), uid, 'kitsu')
     assert note == 'you chose to leave this tracker as it is'

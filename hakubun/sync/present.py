@@ -411,52 +411,8 @@ def membership_note(want, reason=None):
     return ''
 
 
-def mirror_membership_lines(issue):
-    """The presence matrix for one entry, as tracker rows:
-
-        Anilist  ✓
-        Mal      ✓
-        Kitsu    ✗
-
-    Returns [(tracker label, present?, note)] so each toolkit can draw
-    its own ticks and crosses. `note` explains a row that is not simply
-    a yes/no -- a recorded decision, or a tracker identity has never
-    matched (which cannot be added to at all).
-    """
-    rows = []
-    for provider in sorted(set(issue.present) | set(issue.missing)
-                           | set(issue.unmapped)):
-        present = provider in issue.present
-        note = ''
-        if provider in issue.unmapped:
-            note = 'not matched yet -- resolve it under Identity'
-        elif provider in issue.removable:
-            note = 'marked as not belonging here'
-        else:
-            note = membership_note(issue.decisions.get(provider),
-                                   issue.reasons.get(provider))
-        rows.append((label(provider), present, note))
-    return rows
 
 
-def mirror_membership_why(issue):
-    """One sentence naming the discrepancy between trackers -- never
-    'add to Kitsu from Hakubun', which describes a synchronization the
-    user did not ask for."""
-    have = ' and '.join(label(p) for p in issue.present)
-    if issue.addable:
-        lack = ' and '.join(label(p) for p in issue.addable)
-        return ('%s %s this entry; %s %s not. Ownership says %s should '
-                'contain it.'
-                % (have, 'has' if len(issue.present) == 1 else 'have',
-                   lack, 'does' if len(issue.addable) == 1 else 'do',
-                   lack))
-    if issue.removable:
-        gone = ' and '.join(label(p) for p in issue.removable)
-        return '%s should not contain this entry.' % gone
-    return '%s %s this entry.' % (have,
-                                  'has' if len(issue.present) == 1
-                                  else 'have')
 
 
 MIRROR_STRUCTURAL_NOTE = (
@@ -502,22 +458,6 @@ def mirror_ignore_label(provider):
     return 'Leave %s as it is' % label(provider)
 
 
-def mirror_change_line(adapters, change):
-    """(direction, text) for one Mirror field operation. Always a push
-    between trackers, and always named as one: '<tracker>, <field>:
-    old → new — <rule>'."""
-    name = field_label(change.field)
-    values = '%s → %s' % (
-        fmt_target_value(adapters, change.field, change.old,
-                         change.target),
-        fmt_target_value(adapters, change.field, change.new,
-                         change.target))
-    text = '%s, %s: %s' % (label(change.target), name, values)
-    if change.field == 'score':
-        text += score_round_note(adapters, change.target, change.new)
-    if change.reason:
-        text += '  — %s' % change.reason
-    return 'push', text
 
 
 def mirror_local_line(op):
@@ -538,9 +478,6 @@ MIRROR_LOCAL_HELP = (
     'Untick anything you want to keep and sync instead.')
 
 
-def mirror_remove_line(op):
-    return 'Remove %s from %s' % (op.title or 'this entry',
-                                  label(op.provider))
 
 
 # -- Mirror, as CARDS -------------------------------------------------
@@ -628,7 +565,18 @@ class MirrorCard:
 
     @property
     def changed(self):
-        return bool(self.ops or self.conflicts or self.local)
+        """Is this card worth showing?
+
+        Operations are the obvious answer, but not the only one. An
+        entry whose membership the user has already SETTLED ("leave
+        Kitsu alone") produces no operations by design -- and dropping
+        it would make the decision unrevisitable, since "Ask me about
+        Kitsu again" is offered from the tracker row and there would be
+        no row to right-click. Same for a tracker identity has never
+        matched: nothing to do, but a gap the user should see."""
+        settled = self.issue is not None and (self.issue.decisions
+                                              or self.issue.unmapped)
+        return bool(self.ops or self.conflicts or self.local or settled)
 
     def matches(self, category):
         return category == 'all' or category in self.categories
@@ -762,8 +710,13 @@ def mirror_cards(plan, adapters, category='all'):
             elif issue is not None and provider in issue.unmapped:
                 action = 'unmapped'
                 note = 'not matched yet — resolve it under Identity'
-            elif issue is not None and provider in issue.missing:
-                note = membership_note(issue.decisions.get(provider),
+            if not note and issue is not None and provider in issue.decisions:
+                # Any recorded decision, on a tracker that holds the
+                # entry as much as on one that doesn't -- and phrased
+                # by how it actually got there. The same `want` arrives
+                # by routes that are not the same fact, and only some
+                # of them are the user's doing (see membership_note).
+                note = membership_note(issue.decisions[provider],
                                        issue.reasons.get(provider))
 
             card.trackers.append(MirrorTrackerRow(

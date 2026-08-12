@@ -369,23 +369,43 @@ class MultiSyncWindow(Gtk.Window):
     def _cascade_selection(store, parent, new_state):
         child = store.iter_children(parent)
         while child is not None:
-            store.set_value(child, _C_ACTIVE, new_state)
-            store.set_value(child, _C_INCONSISTENT, False)
             change = store.get_value(child, _C_CHANGE)
             if change is not None and hasattr(change, 'selected'):
                 change.selected = new_state
+                store.set_value(child, _C_ACTIVE, new_state)
+                store.set_value(child, _C_INCONSISTENT, False)
             MultiSyncWindow._cascade_selection(store, child, new_state)
             child = store.iter_next(child)
+
+    @staticmethod
+    def _operations_under(store, parent):
+        """Every row beneath `parent` that carries a real operation.
+
+        A Mirror card's children include rows that are pure
+        information -- the ownership header, a conflict note, the
+        "Hakubun's own copy" heading. Counting their (always false)
+        checkbox as part of the group's state made a fully-ticked card
+        read as unchecked, and ticking a card drew a tick on the
+        ownership row, which is not something the user can act on.
+        """
+        found = []
+        child = store.iter_children(parent)
+        while child is not None:
+            change = store.get_value(child, _C_CHANGE)
+            if change is not None and hasattr(change, 'selected'):
+                found.append(child)
+            found += MultiSyncWindow._operations_under(store, child)
+            child = store.iter_next(child)
+        return found
 
     @staticmethod
     def _sync_group_state(store, parent):
         if parent is None:
             return
-        child = store.iter_children(parent)
-        states = []
-        while child is not None:
-            states.append(store.get_value(child, _C_ACTIVE))
-            child = store.iter_next(child)
+        states = [store.get_value(it, _C_ACTIVE)
+                  for it in MultiSyncWindow._operations_under(store, parent)]
+        if not states:
+            return
         all_on, any_on = all(states), any(states)
         store.set_value(parent, _C_ACTIVE, all_on)
         store.set_value(parent, _C_INCONSISTENT,
