@@ -882,6 +882,9 @@ class MultiSyncWindow(Gtk.Window):
         box.set_border_width(6)
         box.pack_start(Gtk.Label(label=present.mirror_conflict_why(conflict),
                                  xalign=0, wrap=True), False, False, 0)
+        if conflict.structural:
+            box.pack_start(Gtk.Label(label=present.MIRROR_STRUCTURAL_NOTE,
+                                     xalign=0, wrap=True), False, False, 0)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         for source in sorted(conflict.values):
             if source == 'local':
@@ -889,6 +892,9 @@ class MultiSyncWindow(Gtk.Window):
             shown = self._fmt_value(conflict.field,
                                     conflict.values[source])
             if conflict.structural:
+                # Each tracker's number is in its OWN episode
+                # structure: information only, never a button. See the
+                # Qt twin.
                 row.pack_start(
                     Gtk.Label(label='%s is at %s (its own structure)'
                               % (present.label(source), shown)),
@@ -904,7 +910,10 @@ class MultiSyncWindow(Gtk.Window):
         return frame
 
     def _resolve_mirror(self, conflict, source):
-        self.engine.resolve_conflict(conflict, source)
+        # The MIRROR resolution path, not Sync's: Sync records a
+        # decision by writing local state, which Mirror never reads --
+        # the conflict would come straight back on the next preview.
+        self.engine.resolve_mirror_conflict(conflict, source)
         self._status('Resolved %s for %s, re-previewing...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field),
             conflict.title))
@@ -1036,7 +1045,15 @@ class MultiSyncWindow(Gtk.Window):
         text = present.mirror_result_status(result)
         self._append_log(text)
         self._status(text)
-        self.s_fetch()
+        # Re-fetch, then re-preview MIRROR -- see the Qt twin.
+        self._run(self._fetch_and_mirror, self.r_mirror_planned,
+                  'Refreshing after the mirror...')
+
+    def _fetch_and_mirror(self):
+        errors = self.engine.fetch(should_cancel=self._cancel.is_set)
+        plan = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
+        plan.errors.update(errors)
+        return plan
 
     # -- Configuration (simple per-field rules) ------------------------
 

@@ -530,6 +530,11 @@ identity_conflicts(id, provider, provider_id, title, candidates,
 
 ownership(field PRIMARY KEY, policy)   -- §5 serialized policies
 
+mirror_resolution(uuid, field, value, fingerprint, decided_at,
+                  PRIMARY KEY(uuid, field))
+                  -- a Mirror decision, valid while the tracker values
+                  -- it was made against still hold (§15.3)
+
 resolved_absent(uuid, provider, checked_at, reason /* 'lookup_miss' */,
                 PRIMARY KEY(uuid, provider))
                 -- the cross-id LOOKUP CACHE only (§14.1). The two
@@ -759,6 +764,12 @@ value and local matching none of them, the *next* ordinary Sync would
 read local as the side that moved and push the stale value straight
 back out (or raise a conflict over it).
 
+`MirrorPlan.clean` therefore counts `local` even though it is never
+displayed: both windows gate their apply button on it, and a plan
+whose only work is bringing Hakubun's stale copy back into line with
+trackers that already agree is still work. Omitting it left that case
+with a dead button under a summary claiming everything was fine.
+
 ### 15.2 What the planner does
 
 Per entity, over the providers that actually hold the entry:
@@ -777,11 +788,47 @@ Per entity, over the providers that actually hold the entry:
 - **INDIVIDUAL** — skipped, same as Sync. Mirror reads the same
   ownership configuration; there is no second ownership system.
 
+The desired value per field is computed **once** and used for both of
+its purposes: pushing existing entries into line, and seeding an entry
+created on a tracker that lacks one. Computing it twice is how the two
+drift — an earlier revision seeded new entries from local's working
+value, so one plan could hand an existing tracker the tracker-derived
+value and a newly created one local's. Those differ exactly when local
+is stale, i.e. in the situation Mirror exists to fix.
+
+A strategy returning `NoChange` means "nothing to push", not "no
+value": the trackers already agree, and their agreed value is still
+what a newly created entry must be seeded with.
+
 Membership discrepancies become `MirrorPlan.adds` (proposals),
 `MirrorPlan.removes` (only from a recorded `absent` decision) and
 `MirrorPlan.membership` — the presence matrix the UI renders.
 
-### 15.3 Applying: the bulk gates
+### 15.3 Resolving a Mirror decision
+
+A Mirror conflict is a disagreement **between trackers**, and it cannot
+be recorded the way Sync records one. `engine.resolve_conflict` writes
+local state and advances every provider's base — and Mirror reads
+neither, by design. A resolution stored that way is invisible to the
+next mirror, which re-raises the identical conflict: the user clicks a
+side, the preview rebuilds, and the card is still there.
+
+`engine.resolve_mirror_conflict` stores it where Mirror *does* look
+(`mirror_resolution`), together with a **fingerprint** of the tracker
+values it was decided against. The decision stands while those values
+stand. If any tracker's value later changes, the question is a new one
+— the old answer was about a state of the world that no longer holds —
+so the fingerprint stops matching and Mirror asks again rather than
+replaying a stale verdict.
+
+**Structural** conflicts (progress across differing episode structures)
+are information only in Mirror: each tracker's number is in its own
+structure, so there is no single value to adopt and no honest
+conversion between them. `resolve_mirror_conflict` refuses, and the UI
+points at the Sync tab, which has the local structure to resolve
+against.
+
+### 15.4 Applying: the bulk gates
 
 `engine.apply_mirror(plan, allow_adds=False, allow_removes=False)`.
 

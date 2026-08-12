@@ -1074,6 +1074,10 @@ class SyncWindow(QDialog):
         why = QLabel(present.mirror_conflict_why(conflict))
         why.setWordWrap(True)
         card.addWidget(why)
+        if conflict.structural:
+            note = QLabel(present.MIRROR_STRUCTURAL_NOTE)
+            note.setWordWrap(True)
+            card.addWidget(note)
         row = QHBoxLayout()
         for source in sorted(conflict.values):
             if source == 'local':
@@ -1081,6 +1085,11 @@ class SyncWindow(QDialog):
             shown = self._fmt_value(conflict.field,
                                     conflict.values[source])
             if conflict.structural:
+                # Each tracker's number is in its OWN episode
+                # structure, so there is no single value to adopt
+                # across them and no honest conversion. Information
+                # only -- the per-entry fix lives in Sync, which has
+                # the local structure to resolve against.
                 row.addWidget(QLabel('%s is at %s (its own structure)'
                                      % (present.label(source), shown)))
                 continue
@@ -1095,7 +1104,10 @@ class SyncWindow(QDialog):
         return box
 
     def _resolve_mirror(self, conflict, source):
-        self.engine.resolve_conflict(conflict, source)
+        # The MIRROR resolution path, not Sync's: Sync records a
+        # decision by writing local state, which Mirror never reads --
+        # the conflict would come straight back on the next preview.
+        self.engine.resolve_mirror_conflict(conflict, source)
         self._status('Resolved %s for %s, re-previewing...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field),
             conflict.title))
@@ -1219,7 +1231,18 @@ class SyncWindow(QDialog):
         text = present.mirror_result_status(result)
         self.apply_log.appendPlainText(text)
         self._status(text)
-        self.s_fetch()
+        # Re-fetch, then re-preview MIRROR: the user is looking at this
+        # tab, and leaving a stale plan on screen (with _mirror_plan
+        # already cleared, so the button does nothing) reads as the
+        # apply having failed.
+        self._run(self._fetch_and_mirror, self.r_mirror_planned,
+                  'Refreshing after the mirror...')
+
+    def _fetch_and_mirror(self):
+        errors = self.engine.fetch(should_cancel=self._cancel.is_set)
+        plan = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
+        plan.errors.update(errors)
+        return plan
 
     # -- Configuration (simple per-field rules) ------------------------
 

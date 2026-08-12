@@ -62,8 +62,8 @@ from hakubun.sync import membership as membership_mod
 from hakubun.sync import strategies as strategies_mod
 from hakubun.sync.models import (FieldConflict, PolicyKind, SyncCancelled,
                                  SyncOperation)
-from hakubun.sync.normalize import progress_convert, values_equal
-from hakubun.sync.planner import SyncPlanner
+from hakubun.sync.normalize import (emptyish, progress_convert,
+                                    values_equal)
 
 
 @dataclass
@@ -141,8 +141,16 @@ class MirrorPlan:
 
     @property
     def clean(self) -> bool:
+        """Nothing left to do -- INCLUDING local convergence.
+
+        `local` counts even though it is never displayed: both windows
+        gate their apply button on this, and a plan whose only work is
+        bringing Hakubun's stale copy back into line with trackers that
+        already agree is still work. Omitting it left that case with a
+        dead button and a summary claiming everything was fine, which
+        is precisely the drift `local` exists to repair."""
         return not (self.adds or self.removes or self.updates
-                    or self.conflicts)
+                    or self.local or self.conflicts)
 
     def counts(self):
         """{'add': {provider: n_entries}, 'remove': {...},
@@ -202,6 +210,7 @@ class MirrorPlanner:
             provider: self.store.absent_for_provider(provider)
             for provider in self.adapters}
         snapshot['membership'] = self.store.membership_many(uids)
+        snapshot['resolutions'] = self.store.field_resolutions_many(uids)
         memberships = membership_mod.build(
             self.store, self.adapters, uids=uids, snapshot=snapshot)
 
@@ -235,31 +244,62 @@ class MirrorPlanner:
                      m['provider_id'], {})
                  for m in mappings}
         holders = {p: r for p, r in sides.items() if r}
-
-        self._mirror_membership(plan, uid, title, ownership, sides,
-                                local, member)
-        if len(holders) < 2:
-            # Nothing to mirror BETWEEN: with fewer than two trackers
-            # actually holding the entry there is no disagreement
-            # between trackers to resolve. (A single holder's values
-            # still reach a newly created entry through the membership
-            # path above.)
-            return
-
         ent_total = ent.get('total')
+
+        # The DESIRED tracker state is computed once, from the trackers
+        # alone, and then used for both purposes it serves: pushing
+        # existing entries into line, and seeding an entry created on a
+        # tracker that lacks one. Computing it twice is how the two
+        # would drift -- and they did: seeding used to fall back to
+        # local's working value, so one plan could hand an existing
+        # tracker the tracker-reconciled value and a newly created one
+        # local's, which differ precisely when local is stale, i.e. in
+        # the situation Mirror exists to fix.
+        desired = {}
         for field, policy in ownership.items():
             if policy.kind is PolicyKind.INDIVIDUAL:
                 continue
-            self._mirror_field(plan, uid, title, field, policy, holders,
-                               local, ent_total)
+            outcome = self._desired_value(
+                plan, uid, title, field, policy, holders, ent_total,
+                snapshot['resolutions'])
+            if outcome is not None:
+                desired[field] = outcome
+
+        for field, (effective, source, reason, states, raws) in \
+                desired.items():
+            for provider, current in states.items():
+                if provider == source:
+                    continue
+                self._push_op(plan, uid, title, field, ownership[field],
+                              provider, current, effective, source,
+                              reason, raws, ent_total)
+            # Local converges too -- silently, as reconciliation state.
+            l_val = local.get(field, (None, 0))[0]
+            if not values_equal(field, l_val, effective):
+                plan.local.append(SyncOperation(
+                    uid, field, l_val, effective, target='local',
+                    source=source, reason=reason, title=title,
+                    remote_raw=(raws[source][0]
+                                if field == 'progress' and source in raws
+                                else None)))
+
+        self._mirror_membership(plan, uid, title, sides, member, desired)
 
     # -- fields --------------------------------------------------------
 
-    def _mirror_field(self, plan, uid, title, field, policy, holders,
-                      local, ent_total):
-        """One field across the trackers that hold this entry. Local is
-        not a participant; it only receives the result."""
-        l_val = local.get(field, (None, 0))[0]
+    def _desired_value(self, plan, uid, title, field, policy, holders,
+                       ent_total, resolutions):
+        """What this field SHOULD be across the trackers.
+
+        Returns (effective, source, reason, states, raws), or None when
+        there is nothing to assert (no tracker can represent the field,
+        the owner doesn't hold the entry, a strategy said NoChange, or
+        the question needs a human -- in which case a conflict has been
+        appended to the plan).
+
+        Local is not a participant anywhere in here. It only receives
+        the result.
+        """
         progress_field = field == 'progress'
         states, raws, mismatched = {}, {}, {}
         for provider, remote in holders.items():
@@ -293,34 +333,54 @@ class MirrorPlanner:
                 # The authoritative tracker doesn't hold this entry (or
                 # can't represent the field): there is no authoritative
                 # value, and synthesizing one from a non-authority is
-                # exactly the thing ownership exists to prevent.
+                # exactly the thing ownership exists to prevent. That
+                # applies to seeding a new entry too -- better a field
+                # left unset than one filled in from a tracker the
+                # configuration says does not decide it.
                 return
             effective, source = states[owner], owner
             reason = '%s owns %s' % (owner.capitalize(), field)
         else:
-            resolved = self._reconcile(field, policy, states, ent_total)
-            if resolved is None:
-                return
-            if isinstance(resolved, FieldConflict):
-                resolved.uuid, resolved.title = uid, title
-                plan.conflicts.append(resolved)
-                return
-            effective, source, reason = resolved
+            # A resolution the user already gave for exactly this
+            # disagreement outranks the strategy: they answered the
+            # question the strategy could not.
+            settled = self._settled(uid, field, states, resolutions)
+            if settled is not None:
+                effective, source, reason = settled
+            else:
+                resolved = self._reconcile(field, policy, states,
+                                           ent_total)
+                if resolved is None:
+                    return
+                if isinstance(resolved, FieldConflict):
+                    resolved.uuid, resolved.title = uid, title
+                    plan.conflicts.append(resolved)
+                    return
+                effective, source, reason = resolved
+        return effective, source, reason, states, raws
 
-        for provider, current in states.items():
-            if provider == source:
-                continue
-            self._push_op(plan, uid, title, field, policy, provider,
-                          current, effective, source, reason, raws,
-                          ent_total)
-        # Local converges too -- silently, as reconciliation state.
-        if not values_equal(field, l_val, effective):
-            plan.local.append(SyncOperation(
-                uid, field, l_val, effective, target='local',
-                source=source, reason=reason, title=title,
-                remote_raw=(raws[source][0]
-                            if progress_field and source in raws
-                            else None)))
+    @staticmethod
+    def fingerprint(states):
+        """The tracker values a resolution was decided against, in a
+        stable form. A decision is an answer about a state of the
+        world; when that state changes the answer no longer applies,
+        and Mirror must ask again rather than replay a stale verdict."""
+        return sorted((p, v) for p, v in states.items())
+
+    def _settled(self, uid, field, states, resolutions):
+        """A stored resolution for this exact disagreement, or None."""
+        stored = resolutions.get((uid, field))
+        if stored is None:
+            return None
+        value, fingerprint = stored
+        # JSON round-trips tuples as lists; compare in one shape.
+        if [list(pair) for pair in fingerprint] != \
+                [list(pair) for pair in self.fingerprint(states)]:
+            return None     # the trackers moved: it is a new question
+        source = next((p for p in sorted(states)
+                       if values_equal(field, states[p], value)),
+                      'resolve')
+        return value, source, 'you chose this value for these trackers'
 
     def _reconcile(self, field, policy, states, ent_total):
         """Run a RECONCILE field's strategy over the TRACKERS only.
@@ -342,7 +402,14 @@ class MirrorPlanner:
             entity_total=ent_total)
         result = strategy.reconcile(field, dict(states), context)
         if isinstance(result, strategies_mod.NoChange):
-            return None
+            # "Nothing to PUSH", not "no value". The trackers already
+            # agree, so their agreed value IS this field's desired
+            # value -- and a created entry must be seeded with it. The
+            # pushes it generates are all no-ops by construction.
+            winner = sorted(states)[0]
+            return (states[winner], winner,
+                    '%s reconciliation: %s' % (strategy.label,
+                                               result.reason))
         if isinstance(result, strategies_mod.Conflict):
             return FieldConflict(
                 '', field, dict(states), policy=policy,
@@ -384,8 +451,8 @@ class MirrorPlanner:
 
     # -- membership ----------------------------------------------------
 
-    def _mirror_membership(self, plan, uid, title, ownership, sides,
-                           local, member):
+    def _mirror_membership(self, plan, uid, title, sides, member,
+                           desired):
         """Turn this entity's tracker-membership discrepancies into
         proposals, and record the discrepancy itself for the UI.
 
@@ -401,10 +468,14 @@ class MirrorPlanner:
         removable = member.removable()
         unmapped = member.unmapped()
 
-        values = {}
-        if present and addable:
-            values = SyncPlanner.entry_values(
-                ownership, {p: (r, {}) for p, r in sides.items()}, local)
+        # A created entry starts with exactly the values Mirror is
+        # asserting for the trackers that already have it -- the same
+        # numbers, from the same computation. Never local's working
+        # value: local is not a tracker, and seeding from it is how a
+        # single plan ended up carrying two different answers for one
+        # field.
+        values = {field: outcome[0] for field, outcome in desired.items()
+                  if not emptyish(outcome[0])}
 
         missing = sorted(p for p, s in member.state.items()
                          if s == membership_mod.MISSING)

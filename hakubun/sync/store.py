@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS resolved_absent(
     provider TEXT NOT NULL,
     checked_at REAL NOT NULL,
     PRIMARY KEY(uuid, provider));
+CREATE TABLE IF NOT EXISTS mirror_resolution(
+    uuid TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT,
+    fingerprint TEXT NOT NULL,
+    decided_at REAL NOT NULL,
+    PRIMARY KEY(uuid, field));
 CREATE TABLE IF NOT EXISTS membership(
     uuid TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -407,6 +414,47 @@ class SyncStore:
         return {r['uuid'] for r in self._exec(
             'SELECT uuid FROM resolved_absent WHERE provider=?',
             (provider,)).fetchall()}
+
+    # -- mirror field resolutions --------------------------------------
+    #
+    # A Mirror conflict is a disagreement BETWEEN TRACKERS that no
+    # policy could settle, so the user settles it. That decision cannot
+    # be recorded the way Sync records one (write local state, advance
+    # every base): Mirror reads neither local state nor base state, by
+    # design -- ignoring history is the whole point of it. A resolution
+    # stored that way would be invisible to the next mirror, which
+    # would re-raise the identical conflict forever.
+    #
+    # So it is stored where Mirror does look: per (entity, field),
+    # together with a FINGERPRINT of the tracker values it was decided
+    # against. The decision stands while those values stand. If any
+    # tracker's value later changes, the question is a genuinely new
+    # one -- the old answer was about a state of the world that no
+    # longer holds -- so the fingerprint stops matching and Mirror asks
+    # again rather than silently applying a stale verdict.
+
+    def set_field_resolution(self, uid, field, value, fingerprint):
+        self._exec(
+            'INSERT OR REPLACE INTO mirror_resolution(uuid, field,'
+            ' value, fingerprint, decided_at) VALUES(?,?,?,?,?)',
+            (uid, field, _dump(value), _dump(fingerprint), time.time()))
+
+    def clear_field_resolution(self, uid, field):
+        self._exec('DELETE FROM mirror_resolution WHERE uuid=? AND'
+                   ' field=?', (uid, field))
+
+    def field_resolutions_many(self, uids):
+        """{(uuid, field): (value, fingerprint)} in a few queries."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, field, value, fingerprint FROM'
+                    ' mirror_resolution WHERE uuid IN (%s)' % marks,
+                    chunk).fetchall():
+                out[(r['uuid'], r['field'])] = (_load(r['value']),
+                                                _load(r['fingerprint']))
+        return out
 
     # -- membership decisions ------------------------------------------
     #

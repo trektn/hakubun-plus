@@ -431,6 +431,13 @@ def mirror_membership_why(issue):
                                   else 'have')
 
 
+MIRROR_STRUCTURAL_NOTE = (
+    'These trackers list this work with different episode counts, so '
+    'there is no single progress value to give them all. Mirror cannot '
+    'convert between the structures — set this title\'s progress from '
+    'the Sync tab instead.')
+
+
 def mirror_conflict_why(conflict):
     """Explain a MIRROR decision: what each tracker holds, then the
     rule that could not settle it.
@@ -497,6 +504,13 @@ def mirror_plan_summary(plan):
     removals = sum(counts['remove'].values())
     fields = sum(counts['update'].values())
     if not (entries or removals or fields or plan.conflicts):
+        if plan.local:
+            # The trackers genuinely agree; it is Hakubun's own copy
+            # that drifted. Still worth applying -- left alone, the
+            # next ordinary Sync would read Hakubun as the side that
+            # moved and push the stale value back out to everyone.
+            return ('Your trackers already agree — %d Hakubun value(s) '
+                    'to bring into line with them.' % len(plan.local))
         return 'Your trackers already agree.'
     parts = []
     if entries:

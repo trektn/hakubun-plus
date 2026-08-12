@@ -540,3 +540,162 @@ def test_bulk_confirmation_quotes_per_tracker_numbers(store):
     text = present.mirror_confirmation(engine.mirror_plan())
     assert 'Add:' in text and 'Kitsu: 1 entries' in text
     assert 'Update:' in text
+
+
+# -- 8. resolving a mirror decision actually settles it ---------------
+
+def test_resolving_a_mirror_conflict_settles_it_and_syncs_trackers(store):
+    """The failure this guards: Sync records a resolution by writing
+    local state and advancing bases, and Mirror reads NEITHER. Resolved
+    that way, the identical conflict comes back on every preview -- the
+    user clicks a side, the card reappears, forever."""
+    engine, _al, mal, kitsu = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 5})
+    assert engine.fetch() == {}
+    own(store, score='reconcile:manual')
+
+    conflict = next(c for c in engine.mirror_plan().conflicts
+                    if c.field == 'score')
+    engine.resolve_mirror_conflict(conflict, 'anilist')
+
+    plan = engine.mirror_plan()
+    assert [c for c in plan.conflicts if c.field == 'score'] == [], \
+        'the resolved conflict must not come back'
+    targets = {o.target: o.new for o in plan.updates if o.field == 'score'}
+    assert targets['kitsu'] == pytest.approx(9.0)
+    assert targets['mal'] == pytest.approx(9.0)
+
+    engine.apply_mirror(plan)
+    assert kitsu.shows['k1']['my_score'] == pytest.approx(4.5)
+    assert mal.shows['77']['my_score'] == 9
+
+
+def test_a_resolution_lapses_when_a_tracker_moves(store):
+    """The decision answered a question about a particular state of the
+    world. When that changes it is a new question, and replaying the
+    old verdict silently would be wrong."""
+    engine, _al, mal, _kitsu = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 5})
+    assert engine.fetch() == {}
+    own(store, score='reconcile:manual')
+
+    conflict = next(c for c in engine.mirror_plan().conflicts
+                    if c.field == 'score')
+    engine.resolve_mirror_conflict(conflict, 'anilist')
+    assert not [c for c in engine.mirror_plan().conflicts
+                if c.field == 'score']
+
+    mal.shows['77']['my_score'] = 3          # changed on the website
+    assert engine.fetch() == {}
+    assert [c for c in engine.mirror_plan().conflicts
+            if c.field == 'score'], 'a moved tracker reopens the question'
+
+
+def test_explicit_value_resolution_is_honoured(store):
+    engine, *_ = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 5})
+    assert engine.fetch() == {}
+    own(store, score='reconcile:manual')
+
+    conflict = next(c for c in engine.mirror_plan().conflicts
+                    if c.field == 'score')
+    engine.resolve_mirror_conflict(conflict, 'value', value=6.0)
+    plan = engine.mirror_plan()
+    assert not [c for c in plan.conflicts if c.field == 'score']
+    assert all(o.new == pytest.approx(6.0) for o in plan.updates
+               if o.field == 'score')
+
+
+def test_structural_mirror_conflicts_are_information_only(store):
+    """Each tracker's progress is in its own episode structure: there
+    is no single value to adopt and no honest conversion, so Mirror
+    refuses rather than inventing one."""
+    from hakubun.sync.models import FieldConflict, FieldPolicy, PolicyKind
+
+    engine = make_engine(store, {})
+    conflict = FieldConflict(
+        'u1', 'progress', {'kitsu': 1, 'mal': 4},
+        policy=FieldPolicy(PolicyKind.RECONCILE, strategy='progress'),
+        structural=True)
+    with pytest.raises(ValueError):
+        engine.resolve_mirror_conflict(conflict, 'kitsu')
+
+
+# -- 9. one plan, one answer per field --------------------------------
+
+def test_a_created_entry_is_seeded_from_the_trackers_not_local(store):
+    """A single plan must not carry two different answers for one
+    field: the trackers that have the entry got the tracker-reconciled
+    value while a newly created one got local's. They differ exactly
+    when local is stale -- the case Mirror exists to fix."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
+                                       mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=7)])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, score='reconcile:max')
+    uid = store.mapping_for('anilist', '9')['uuid']
+    store.local_set(uid, 'score', 1.0, source='local')   # stale
+
+    plan = engine.mirror_plan()
+    add = next(o for o in plan.adds
+               if o.target == 'kitsu' and o.field == 'score')
+    assert add.new == pytest.approx(9.0), \
+        'the new entry must carry the tracker-derived value, not local'
+    issue = next(i for i in plan.membership if i.title == 'GHOST')
+    assert issue.values['score'] == pytest.approx(9.0)
+
+
+def test_an_owned_field_the_owner_lacks_seeds_nothing(store):
+    """No authoritative value means none is asserted -- for a created
+    entry as much as for an existing one. Better a field left unset
+    than one filled in from a tracker the configuration says does not
+    decide it."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', score=90,
+                                       mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=7)])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, score='provider:annict')     # a tracker that isn't here
+
+    plan = engine.mirror_plan()
+    assert [o for o in plan.adds
+            if o.target == 'kitsu' and o.field == 'score'] == []
+
+
+# -- 10. local-only convergence is reachable --------------------------
+
+def test_a_local_only_mirror_is_not_reported_as_clean(store):
+    """Both windows gate their apply button on `clean`. A plan whose
+    only work is bringing Hakubun's stale copy back into line is still
+    work -- reported clean, it had a dead button and a summary claiming
+    all was well."""
+    from hakubun.sync import present
+
+    engine, *_ = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=4.5, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 9})
+    assert engine.fetch() == {}
+    own(store, score='provider:anilist')
+    uid = store.mapping_for('anilist', '9')['uuid']
+    store.local_set(uid, 'score', 1.0, source='local')
+
+    plan = engine.mirror_plan()
+    assert plan.updates == [] and plan.adds == [] and plan.removes == []
+    assert plan.local, 'only Hakubun is out of line'
+    assert not plan.clean
+    assert 'Hakubun' in present.mirror_plan_summary(plan)
+
+    engine.apply_mirror(plan)
+    assert store.local_get(uid)['score'][0] == pytest.approx(9.0)

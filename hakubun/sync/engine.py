@@ -319,6 +319,56 @@ class SyncEngine:
             for adapter in frozen:
                 adapter.thaw_mediainfo()
 
+    def resolve_mirror_conflict(self, conflict, choice, value=_UNSET):
+        """Resolve a MIRROR conflict: a disagreement between trackers
+        that no policy could settle.
+
+        Deliberately NOT resolve_conflict(). That one records the
+        decision by writing local state and advancing every provider's
+        base -- and Mirror reads neither, by design, since ignoring
+        history is the whole point of it. A resolution recorded that
+        way is invisible to the next mirror, which re-raises the
+        identical conflict: the user clicks a side, the preview
+        rebuilds, and the card is still there.
+
+        So the decision is stored where Mirror does look
+        (store.set_field_resolution), fingerprinted against the tracker
+        values it was made against: it stands while those stand, and
+        lapses if any tracker moves, because then it is a new question.
+
+        `choice` is a tracker name from conflict.values, or 'value'
+        with an explicit value=.
+        """
+        if getattr(conflict, 'structural', False):
+            # Progress across differing episode structures: the tracker
+            # numbers are each in their OWN structure, so there is no
+            # single value to adopt across them and no conversion that
+            # would be honest. Nothing Mirror can do -- it is reported
+            # as information, and the per-entry fix belongs in Sync,
+            # which has the local structure to resolve against.
+            raise ValueError(
+                'episode structures differ between these trackers; '
+                'Mirror cannot convert between them -- resolve this '
+                "entry's progress from the Sync tab")
+        if choice == 'value':
+            if value is _UNSET:
+                raise ValueError("choice 'value' needs value=")
+            chosen = value
+        else:
+            if choice not in conflict.values:
+                raise ValueError('unknown tracker: %s' % choice)
+            chosen = conflict.values[choice]
+        from hakubun.sync.mirror import MirrorPlanner
+        self.store.set_field_resolution(
+            conflict.uuid, conflict.field, chosen,
+            MirrorPlanner.fingerprint(conflict.values))
+        return chosen
+
+    def clear_mirror_resolution(self, uid, field):
+        """Forget a mirror resolution so the disagreement is asked
+        about again."""
+        self.store.clear_field_resolution(uid, field)
+
     def apply_mirror(self, plan, allow_adds=False, allow_removes=False,
                      progress=None, should_cancel=None):
         """Commit a MirrorPlan.
