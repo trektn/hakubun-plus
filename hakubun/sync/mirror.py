@@ -27,7 +27,19 @@ Three properties follow from that, and they are the whole design:
    the user asked for.
 
    Local state is still WRITTEN (see MirrorPlan.local below) -- just
-   never displayed as a tracker, and never consulted as an authority.
+   never displayed as a TRACKER, and never consulted as an authority.
+
+   That has a consequence worth stating plainly, because it follows
+   from "Mirror ignores history" and is easy to meet by surprise: a
+   PENDING LOCAL EDIT is overwritten. Sync would route it to the
+   field's owner (set_local_field advances the bases precisely so it
+   reads as "local moved"); Mirror does not read those bases, sees
+   only that local disagrees with the trackers, and converges it. So
+   local operations are shown in their own category and are
+   individually untickable -- disclosed as what they are, rather than
+   applied invisibly. They are deliberately NOT a tracker row: the
+   category is labelled as this app's own copy, not as a peer of
+   AniList and Kitsu.
 
 2. **Ownership is the master.** `score = anilist` means AniList's score
    is the value, and Kitsu's and MAL's converge to it. Not "AniList
@@ -165,7 +177,8 @@ class MirrorPlan:
         updates = {}
         for op in self.updates:
             updates[op.target] = updates.get(op.target, 0) + 1
-        return {'add': adds, 'remove': removes, 'update': updates}
+        return {'add': adds, 'remove': removes, 'update': updates,
+                'local': len(self.local)}
 
     def selected_adds(self):
         return [o for o in self.adds if o.selected]
@@ -175,6 +188,9 @@ class MirrorPlan:
 
     def selected_updates(self):
         return [o for o in self.updates if o.selected]
+
+    def selected_local(self):
+        return [o for o in self.local if o.selected]
 
 
 class MirrorPlanner:

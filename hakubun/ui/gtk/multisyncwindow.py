@@ -603,7 +603,8 @@ class MultiSyncWindow(Gtk.Window):
             self._mirror_page_labels[key].set_text(
                 {'membership': 'Tracker membership',
                  'add': 'Entries to add', 'remove': 'Entries to remove',
-                 'update': 'Fields to update'}[key])
+                 'update': 'Fields to update',
+                 'local': "Hakubun's copy"}[key])
         self._set_mirror_decisions([])
         self.mirror_apply_button.set_sensitive(False)
         self.mirror_summary.set_text('Preview a mirror to see what '
@@ -701,12 +702,18 @@ class MultiSyncWindow(Gtk.Window):
         for key, text in (('membership', 'Tracker membership'),
                           ('add', 'Entries to add'),
                           ('remove', 'Entries to remove'),
-                          ('update', 'Fields to update')):
+                          ('update', 'Fields to update'),
+                          # Last, and named as this app's own copy
+                          # rather than a tracker -- see the Qt twin.
+                          ('local', "Hakubun's copy")):
             if key == 'membership':
                 store, widget = self._make_membership_tree()
             else:
                 store, widget = self._make_changes_tree()
-                self._mirror_views[key] = self._last_changes_view
+                view = self._last_changes_view
+                self._mirror_views[key] = view
+                view.connect('button-press-event',
+                             self._on_mirror_op_button, key)
             self._mirror_stores[key] = store
             label = Gtk.Label(label=text)
             self._mirror_page_labels[key] = label
@@ -820,6 +827,35 @@ class MultiSyncWindow(Gtk.Window):
         menu.show_all()
         menu.popup_at_pointer(event)
         return True
+
+    def _on_mirror_op_button(self, view, event, key):
+        """Right-click a row produced by a stored Mirror decision: the
+        field is settled and so no longer appears as a conflict card,
+        which without this leaves no way back to it."""
+        if event.button != 3:
+            return False
+        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
+        if pathinfo is None:
+            return False
+        store = self._mirror_stores[key]
+        op = store.get_value(store.get_iter(pathinfo[0]), _C_CHANGE)
+        if op is None or 'you chose this' not in getattr(op, 'reason', ''):
+            return False
+        menu = Gtk.Menu()
+        item = Gtk.MenuItem(label='Ask me about %s again'
+                            % present.field_label(op.field))
+        item.connect('activate', lambda *_a:
+                     self._clear_mirror_resolution(op))
+        menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _clear_mirror_resolution(self, op):
+        self.engine.clear_mirror_resolution(op.uuid, op.field)
+        self._status('%s: %s will be asked about again.'
+                     % (op.title, present.field_label(op.field)))
+        self.s_mirror_preview()
 
     def _confirm_membership_removal(self, issue, provider):
         """Marking a tracker 'absent' is what authorizes a deletion, so
@@ -953,6 +989,10 @@ class MultiSyncWindow(Gtk.Window):
             lambda o: (present.mirror_change_line(
                 self.engine.adapters, o)[1], _PUSH_COLOR),
             lambda o: o.title)
+        self._populate_mirror_ops(
+            self._mirror_stores['local'], plan.local,
+            lambda o: (present.mirror_local_line(o), _PULL_COLOR),
+            lambda o: present.local_label())
 
         for key, text, n in (
                 ('membership', 'Tracker membership', len(plan.membership)),
@@ -960,7 +1000,8 @@ class MultiSyncWindow(Gtk.Window):
                 ('remove', 'Entries to remove',
                  sum(counts['remove'].values())),
                 ('update', 'Fields to update',
-                 sum(counts['update'].values()))):
+                 sum(counts['update'].values())),
+                ('local', "Hakubun's copy", counts['local'])):
             self._mirror_page_labels[key].set_text('%s (%d)' % (text, n))
 
         self._set_mirror_decisions(plan.conflicts)
@@ -1046,14 +1087,27 @@ class MultiSyncWindow(Gtk.Window):
         self._append_log(text)
         self._status(text)
         # Re-fetch, then re-preview MIRROR -- see the Qt twin.
-        self._run(self._fetch_and_mirror, self.r_mirror_planned,
+        self._run(self._fetch_and_mirror, self.r_refreshed_after_mirror,
                   'Refreshing after the mirror...')
 
     def _fetch_and_mirror(self):
+        """One fetch feeding BOTH previews -- see the Qt twin: left
+        alone, the Sync tab keeps a stale plan and an enabled Sync
+        button describing changes the mirror already made."""
         errors = self.engine.fetch(should_cancel=self._cancel.is_set)
-        plan = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
-        plan.errors.update(errors)
-        return plan
+        mirror = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
+        sync = self.engine.plan(should_cancel=self._cancel.is_set)
+        mirror.errors.update(errors)
+        sync.errors.update(errors)
+        return mirror, sync
+
+    def r_refreshed_after_mirror(self, plans, error):
+        if error is not None or plans is None:
+            self.r_mirror_planned(None, error)
+            return
+        mirror, sync = plans
+        self.r_mirror_planned(mirror, None)
+        self.r_planned(sync, None)
 
     # -- Configuration (simple per-field rules) ------------------------
 

@@ -82,7 +82,8 @@ def test_categories_are_counted_separately(window):
     titles = [window.mirror_tabs.tabText(i)
               for i in range(window.mirror_tabs.count())]
     assert titles == ['Tracker membership (1)', 'Entries to add (1)',
-                      'Entries to remove (1)', 'Fields to update (1)']
+                      'Entries to remove (1)', 'Fields to update (1)',
+                      "Hakubun's copy (1)"]
 
 
 def test_membership_view_shows_the_tracker_matrix(window):
@@ -97,17 +98,41 @@ def test_membership_view_shows_the_tracker_matrix(window):
     assert not any('Hakubun' in r for r in rows)
 
 
+def _texts(tree):
+    out = []
+    for i in range(tree.topLevelItemCount()):
+        group = tree.topLevelItem(i)
+        out.append(group.text(0))
+        out += [group.child(j).text(0)
+                for j in range(group.childCount())]
+    return out
+
+
 def test_local_convergence_is_never_shown_as_a_tracker_row(window):
-    """MirrorPlan.local is applied but not displayed: it is
-    reconciliation state, not one of the trackers being mirrored."""
+    """Local convergence is disclosed, but never as a TRACKER: it gets
+    its own category, named as this app's own copy, and appears in none
+    of the tracker-facing views."""
     window.r_mirror_planned(_plan(), None)
-    for tree in window._mirror_trees.values():
-        for i in range(tree.topLevelItemCount()):
-            group = tree.topLevelItem(i)
-            texts = [group.text(0)] + [group.child(j).text(0)
-                                       for j in range(group.childCount())]
-            assert not any('Hakubun' in t for t in texts)
-            assert not any('local' in t for t in texts)
+    for key in ('membership', 'add', 'remove', 'update'):
+        for text in _texts(window._mirror_trees[key]):
+            assert 'Hakubun' not in text
+            assert 'local' not in text
+
+
+def test_local_convergence_is_disclosed_and_untickable(window):
+    """Mirror overwrites a pending local edit -- it does not read the
+    bases that would tell it one was made. That must be visible and
+    refusable, not silent."""
+    window.r_mirror_planned(_plan(), None)
+    tree = window._mirror_trees['local']
+    texts = _texts(tree)
+    assert any('Hakubun' in t for t in texts)
+    group = tree.topLevelItem(0)
+    item = group.child(0)
+    op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+    assert op.target == 'local'
+    item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+    assert op.selected is False
 
 
 def test_adds_and_removes_start_unticked(window):

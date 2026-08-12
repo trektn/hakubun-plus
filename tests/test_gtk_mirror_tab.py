@@ -106,13 +106,22 @@ def test_membership_view_shows_the_tracker_matrix(win):
 
 
 def test_no_tracker_view_ever_names_hakubun(win):
-    """Local state converges (MirrorPlan.local) but is never shown: it
-    is reconciliation state, not one of the trackers being mirrored."""
+    """Local convergence is disclosed, but never as a TRACKER: it gets
+    its own category and appears in none of the tracker-facing ones."""
     win.r_mirror_planned(_plan(), None)
-    for store in win._mirror_stores.values():
-        for row in _rows(store):
+    for key in ('membership', 'add', 'remove', 'update'):
+        for row in _rows(win._mirror_stores[key]):
             assert 'Hakubun' not in row
             assert 'local' not in row
+
+
+def test_local_convergence_is_disclosed_in_its_own_category(win):
+    """Mirror overwrites a pending local edit; that must be visible."""
+    win.r_mirror_planned(_plan(), None)
+    rows = _rows(win._mirror_stores['local'])
+    assert any('Hakubun' in r for r in rows)
+    assert win._mirror_page_labels['local'].get_text() \
+        == "Hakubun's copy (1)"
 
 
 def test_adds_and_removes_start_unticked(win):

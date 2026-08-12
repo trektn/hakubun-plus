@@ -699,3 +699,56 @@ def test_a_local_only_mirror_is_not_reported_as_clean(store):
 
     engine.apply_mirror(plan)
     assert store.local_get(uid)['score'][0] == pytest.approx(9.0)
+
+
+# -- 11. Mirror overwrites pending local edits, visibly --------------
+
+def test_mirror_overwrites_a_pending_local_edit_but_discloses_it(store):
+    """A real consequence of "Mirror ignores history": Sync would route
+    an unsynced local edit to the field's owner (set_local_field
+    advances the bases precisely so it reads as "local moved"). Mirror
+    does not read those bases -- it sees only that local disagrees with
+    the trackers, and converges it.
+
+    That is correct for a convergence operation, but it must be
+    DISCLOSED and refusable, not silent."""
+    from hakubun.sync import present
+
+    engine, *_ = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=4.5, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 9})
+    assert engine.fetch() == {}
+    own(store, score='provider:anilist')
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_local_field(uid, 'score', 7.0)   # a deliberate edit
+
+    plan = engine.mirror_plan()
+    overwrite = [o for o in plan.local if o.field == 'score']
+    assert overwrite, 'the edit is about to be replaced'
+    assert overwrite[0].old == pytest.approx(7.0)
+    assert overwrite[0].new == pytest.approx(9.0)
+    # Disclosed: counted, summarized, and named in the confirmation.
+    assert plan.counts()['local'] == len(plan.local)
+    assert 'Hakubun' in present.mirror_confirmation(plan)
+
+    # Refusable: unticking it leaves the edit alone.
+    for op in plan.local:
+        op.selected = False
+    engine.apply_mirror(plan)
+    assert store.local_get(uid)['score'][0] == pytest.approx(7.0)
+
+
+def test_a_single_tracker_entity_still_converges_local(store):
+    """Most of a typical list exists on one tracker only. Those still
+    produce local convergence -- which is why it had to become visible
+    rather than stay an invisible side effect."""
+    mal = FakeLib('mal', [show('mal', 1, 'GHOST', score=8)])
+    engine = make_engine(store, {'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('mal', '1')['uuid']
+    store.local_set(uid, 'score', 2.0, source='local')
+
+    plan = engine.mirror_plan()
+    assert [o for o in plan.local if o.field == 'score']
+    assert plan.updates == []       # nothing to push: one tracker

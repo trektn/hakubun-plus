@@ -412,7 +412,7 @@ class SyncEngine:
         # already agree and only local is stale -- still converges.
         held_back = {(o.uuid, o.field)
                      for o in plan.updates if not o.selected}
-        local = [o for o in plan.local
+        local = [o for o in plan.selected_local()
                  if (o.uuid, o.field) not in held_back]
 
         result = {'txn': None, 'local': 0, 'pushed': 0, 'errors': {},

@@ -764,11 +764,28 @@ value and local matching none of them, the *next* ordinary Sync would
 read local as the side that moved and push the stale value straight
 back out (or raise a conflict over it).
 
-`MirrorPlan.clean` therefore counts `local` even though it is never
-displayed: both windows gate their apply button on it, and a plan
-whose only work is bringing Hakubun's stale copy back into line with
-trackers that already agree is still work. Omitting it left that case
-with a dead button under a summary claiming everything was fine.
+This has a consequence worth stating plainly, because it follows from
+"Mirror ignores history" and is easy to meet by surprise: **a pending
+local edit is overwritten.** Sync would route it to the field's owner
+(`set_local_field` advances the bases precisely so it reads as "local
+moved"); Mirror does not read those bases, sees only that local
+disagrees with the trackers, and converges it.
+
+That is correct for a convergence operation, but it must not be
+silent. Local operations therefore get their own Mirror category —
+labelled as *this app's own copy*, never as a peer of AniList and
+Kitsu — are counted in `counts()['local']` and named in the
+confirmation, and are individually untickable, so an edit the user
+wants to keep can be held back and synced instead.
+
+It also means `MirrorPlan.clean` counts `local`: both windows gate
+their apply button on it, and a plan whose only work is bringing
+Hakubun's copy back into line is still work. Omitting it left that
+case with a dead button under a summary claiming everything was fine.
+
+Most of a typical list exists on **one** tracker only, and those
+entities produce local convergence and nothing else — which is exactly
+why it had to become visible rather than remain a side effect.
 
 ### 15.2 What the planner does
 
@@ -820,6 +837,11 @@ stand. If any tracker's value later changes, the question is a new one
 — the old answer was about a state of the world that no longer holds —
 so the fingerprint stops matching and Mirror asks again rather than
 replaying a stale verdict.
+
+A resolved field stops appearing as a conflict card, so the rows it
+produces carry the way back: right-clicking one offers "Ask me about
+<field> again" (`engine.clear_mirror_resolution`), the same shape as
+the membership rows' "Ask me about <tracker> again".
 
 **Structural** conflicts (progress across differing episode structures)
 are information only in Mirror: each tracker's number is in its own

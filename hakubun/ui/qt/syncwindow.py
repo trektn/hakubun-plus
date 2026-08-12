@@ -867,7 +867,15 @@ class SyncWindow(QDialog):
         for key, label_text in (('membership', 'Tracker membership'),
                                 ('add', 'Entries to add'),
                                 ('remove', 'Entries to remove'),
-                                ('update', 'Fields to update')):
+                                ('update', 'Fields to update'),
+                                # Last, and named as this app's own
+                                # copy rather than a tracker: Hakubun
+                                # is not a peer of AniList and Kitsu,
+                                # but converging it is still a change
+                                # the user is making, and it can
+                                # discard an unsynced local edit. Shown
+                                # so it can be unticked.
+                                ('local', "Hakubun's copy")):
             tree = QTreeWidget()
             tree.setHeaderHidden(True)
             tree.itemChanged.connect(self._on_mirror_item_toggled)
@@ -987,6 +995,18 @@ class SyncWindow(QDialog):
         item = tree.itemAt(pos)
         if item is None:
             return
+        op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if op is not None and 'you chose this' in getattr(op, 'reason', ''):
+            # This row exists because of a stored Mirror decision --
+            # the field is settled and so no longer appears as a
+            # conflict card. Without this there is no way back to it.
+            menu = QMenu(self)
+            act = menu.addAction('Ask me about %s again'
+                                 % present.field_label(op.field))
+            act.triggered.connect(
+                lambda _c=False: self._clear_mirror_resolution(op))
+            menu.exec(tree.viewport().mapToGlobal(pos))
+            return
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 1)
         provider_label = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 2)
         if issue is None or not provider_label:
@@ -1014,6 +1034,12 @@ class SyncWindow(QDialog):
                 lambda _c=False: self._set_membership(issue, provider,
                                                       None))
         menu.exec(tree.viewport().mapToGlobal(pos))
+
+    def _clear_mirror_resolution(self, op):
+        self.engine.clear_mirror_resolution(op.uuid, op.field)
+        self._status('%s: %s will be asked about again.'
+                     % (op.title, present.field_label(op.field)))
+        self.s_mirror_preview()
 
     def _confirm_membership_removal(self, issue, provider):
         """Marking a tracker 'absent' is what authorizes a deletion, so
@@ -1155,6 +1181,11 @@ class SyncWindow(QDialog):
             self._PUSH_COLOR,
             lambda o: o.title,
             lambda key, ops: '%s (%d change(s))' % (key, len(ops)))
+        self._populate_mirror_ops(
+            self._mirror_trees['local'], plan.local,
+            present.mirror_local_line, self._PULL_COLOR,
+            lambda o: present.local_label(),
+            lambda key, ops: '%s (%d value(s))' % (key, len(ops)))
 
         for index, (key, label_text, n) in enumerate((
                 ('membership', 'Tracker membership', len(plan.membership)),
@@ -1162,7 +1193,8 @@ class SyncWindow(QDialog):
                 ('remove', 'Entries to remove',
                  sum(counts['remove'].values())),
                 ('update', 'Fields to update',
-                 sum(counts['update'].values())))):
+                 sum(counts['update'].values())),
+                ('local', "Hakubun's copy", counts['local']))):
             self.mirror_tabs.setTabText(index, '%s (%d)' % (label_text, n))
 
         self._set_mirror_decisions(plan.conflicts)
@@ -1235,14 +1267,27 @@ class SyncWindow(QDialog):
         # tab, and leaving a stale plan on screen (with _mirror_plan
         # already cleared, so the button does nothing) reads as the
         # apply having failed.
-        self._run(self._fetch_and_mirror, self.r_mirror_planned,
+        self._run(self._fetch_and_mirror, self.r_refreshed_after_mirror,
                   'Refreshing after the mirror...')
 
     def _fetch_and_mirror(self):
+        """One fetch feeding BOTH previews. The Sync tab must be
+        rebuilt too: left alone it keeps a stale plan and an enabled
+        Sync button describing changes the mirror already made."""
         errors = self.engine.fetch(should_cancel=self._cancel.is_set)
-        plan = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
-        plan.errors.update(errors)
-        return plan
+        mirror = self.engine.mirror_plan(should_cancel=self._cancel.is_set)
+        sync = self.engine.plan(should_cancel=self._cancel.is_set)
+        mirror.errors.update(errors)
+        sync.errors.update(errors)
+        return mirror, sync
+
+    def r_refreshed_after_mirror(self, plans, error):
+        if error is not None or plans is None:
+            self.r_mirror_planned(None, error)
+            return
+        mirror, sync = plans
+        self.r_mirror_planned(mirror, None)
+        self.r_planned(sync, None)
 
     # -- Configuration (simple per-field rules) ------------------------
 

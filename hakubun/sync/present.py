@@ -492,6 +492,24 @@ def mirror_change_line(adapters, change):
     return 'push', text
 
 
+def mirror_local_line(op):
+    """One row in Mirror's Hakubun category. Phrased as the app's own
+    copy being brought into line with the trackers -- never as a
+    tracker-to-tracker change, which it is not."""
+    return '%s, %s: %s → %s  — %s' % (
+        op.title, field_label(op.field),
+        fmt_value(op.field, op.old), fmt_value(op.field, op.new),
+        op.reason or 'matches the trackers')
+
+
+MIRROR_LOCAL_HELP = (
+    "These update Hakubun's own copy of your list so it matches what "
+    'the trackers will hold. Hakubun is not a tracker and does not vote '
+    'on any of this — but if you changed a value here and have not '
+    'synced it yet, mirroring replaces it with the trackers\' value. '
+    'Untick anything you want to keep and sync instead.')
+
+
 def mirror_remove_line(op):
     return 'Remove %s from %s' % (op.title or 'this entry',
                                   label(op.provider))
@@ -543,6 +561,15 @@ def mirror_confirmation(plan):
         for provider in sorted(group):
             lines.append('    %s: %d %s' % (label(provider),
                                             group[provider], verb))
+        lines.append('')
+    if counts.get('local'):
+        # Listed apart from the trackers, and named as this app's own
+        # copy: Hakubun is not a tracker, but converging it IS a change
+        # the user is about to make, and one that can discard an edit
+        # they made here and had not synced yet.
+        lines.append("Update %s's own copy:" % local_label())
+        lines.append('    %d value(s), to match the trackers'
+                     % counts['local'])
         lines.append('')
     if sum(counts['remove'].values()):
         lines.append('Removing an entry deletes it from that tracker '
