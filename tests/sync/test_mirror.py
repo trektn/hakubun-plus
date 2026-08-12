@@ -1050,3 +1050,40 @@ def test_an_atlas_triple_reaches_the_third_tracker(store):
     plan = engine.mirror_plan()
     assert [o.provider for o in plan.adds] == ['kitsu'], \
         'the third tracker must be offered the entry'
+
+
+def test_the_migration_clears_a_mass_marking_already_on_disk(store):
+    """The engine now refuses to conclude 250 deletions from one bad
+    fetch, but databases written by the version that did still carry
+    the rows -- and 'ignore' means nothing would ever offer those
+    entries again. Cleared by the signature that identifies them: many
+    rows, one provider, one timestamp."""
+    import time
+    from hakubun.sync.store import SyncStore
+
+    now = time.time()
+    for i in range(30):
+        store._conn.execute(
+            'INSERT INTO membership(uuid, provider, want, reason,'
+            ' decided_at) VALUES(?,?,?,?,?)',
+            ('u%d' % i, 'anilist', 'ignore', 'deleted', now))
+    # A handful of genuine ones, and a real decline, on other stamps.
+    for i in range(3):
+        store._conn.execute(
+            'INSERT INTO membership(uuid, provider, want, reason,'
+            ' decided_at) VALUES(?,?,?,?,?)',
+            ('k%d' % i, 'kitsu', 'ignore', 'deleted', now + 1 + i))
+    store._conn.execute(
+        'INSERT INTO membership(uuid, provider, want, reason,'
+        ' decided_at) VALUES(?,?,?,?,?)',
+        ('d1', 'mal', 'ignore', 'declined', now))
+
+    SyncStore._migrate_mass_deletions(store)
+
+    left = store._conn.execute(
+        'SELECT provider, reason, COUNT(*) AS n FROM membership'
+        ' GROUP BY provider, reason').fetchall()
+    got = {(r['provider'], r['reason']): r['n'] for r in left}
+    assert ('anilist', 'deleted') not in got, 'the mass marking goes'
+    assert got[('kitsu', 'deleted')] == 3, 'real deletions stay'
+    assert got[('mal', 'declined')] == 1, 'a real click stays'

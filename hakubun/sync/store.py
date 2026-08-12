@@ -147,6 +147,36 @@ class SyncStore:
         self._ensure_column('local_state', 'source', 'TEXT')
         self._ensure_column('resolved_absent', 'reason', 'TEXT')
         self._migrate_membership()
+        self._migrate_mass_deletions()
+
+    def _migrate_mass_deletions(self):
+        """Undo the mass 'deleted' markings a single bad fetch could
+        write before the engine learned to distrust one.
+
+        SyncEngine._forget_unlisted recorded 'ignore'/'deleted' per
+        entry with no sense of scale, so one AniList response that came
+        back short marked 250 entries in the same instant -- and
+        'ignore' means "stop offering this", so nothing would ever
+        propose restoring them. The engine now refuses to draw that
+        conclusion from a mass disappearance; this clears the rows
+        already written by the version that did.
+
+        Identified by exactly that signature: many rows for one
+        provider sharing a single timestamp, which is one fetch, not
+        someone's afternoon. Declines are untouched (a real click), as
+        are ordinary handfuls of website deletions. Clearing a row only
+        makes the entry PROPOSABLE again -- Mirror still asks before
+        anything is created.
+        """
+        rows = self._conn.execute(
+            "SELECT provider, decided_at, COUNT(*) AS n FROM membership"
+            " WHERE want='ignore' AND reason='deleted'"
+            " GROUP BY provider, decided_at HAVING n >= 25").fetchall()
+        for row in rows:
+            self._conn.execute(
+                "DELETE FROM membership WHERE want='ignore'"
+                " AND reason='deleted' AND provider=? AND decided_at=?",
+                (row['provider'], row['decided_at']))
 
     def _migrate_membership(self):
         """Move the two resolved_absent reasons that were always USER
