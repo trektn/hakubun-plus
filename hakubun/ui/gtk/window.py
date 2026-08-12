@@ -44,6 +44,7 @@ class HakubunWindow(Gtk.ApplicationWindow):
     btn_airing_schedule = Gtk.Template.Child()
     btn_now_playing = Gtk.Template.Child()
     switch_subminer = Gtk.Template.Child()
+    subminer_box = Gtk.Template.Child()
     mediatype_box = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
 
@@ -111,6 +112,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self.search_entry = Gtk.SearchEntry()
             self.search_entry.set_placeholder_text('Filter shows...')
             self.search_entry.set_width_chars(48)
+            # Whether the filter bar was open when the user left the show
+            # list for Now Playing, so it can be put back as it was.
+            self._search_was_revealed = False
             self.search_bar = Gtk.SearchBar()
             self.search_bar.add(self.search_entry)
             self.search_bar.connect_entry(self.search_entry)
@@ -205,7 +209,14 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self.reveal_search()
 
     def reveal_search(self):
-        """Shows (or focuses, if already shown) the show-list filter bar."""
+        """Shows (or focuses, if already shown) the show-list filter bar.
+
+        Filtering only ever affects the show list, so asking for the
+        filter bar from Now Playing switches back to the list first
+        rather than typing at something the user can't see.
+        """
+        if self.btn_now_playing.get_active():
+            self.btn_now_playing.set_active(False)
         self.search_bar.set_search_mode(True)
         self.search_entry.grab_focus()
 
@@ -239,6 +250,17 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._apply_subminer_state()
 
     def _apply_subminer_state(self):
+        # Settings > User Interface can hide the header-bar toggle
+        # outright (Qt already honours the same key). The whole box goes,
+        # not just the switch, or the 'SubMiner' label is left stranded.
+        # no_show_all is what makes hiding stick: the box is visible=True
+        # in window.ui and the window show_all()s its tree at startup.
+        self.subminer_box.set_no_show_all(True)
+        if not self._config.get('show_subminer_toggle', True):
+            self.subminer_box.hide()
+            return
+        self.subminer_box.show()
+
         available = utils.subminer_available()
         self.switch_subminer.set_sensitive(available)
         if available:
@@ -434,6 +456,17 @@ class HakubunWindow(Gtk.ApplicationWindow):
         self._on_modal_destroy(modal_window)
 
     def _on_now_playing_toggled(self, button):
+        # The filter bar sits above the whole content stack, so it stayed
+        # revealed over Now Playing -- where typing in it narrowed a list
+        # that wasn't on screen, and (with "Switch to the All category
+        # when filtering" on) silently changed which tab you'd come back
+        # to. It belongs to the list, so it goes away with the list and
+        # comes back in the state it was left in, query included.
+        if button.get_active():
+            self._search_was_revealed = self.search_bar.get_search_mode()
+            self.search_bar.set_search_mode(False)
+        else:
+            self.search_bar.set_search_mode(self._search_was_revealed)
         self._content_stack.set_visible_child_name(
             'now_playing' if button.get_active() else 'list')
 

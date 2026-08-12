@@ -8,11 +8,23 @@ from hakubun.ui.qt.util import IN_LIST_COLOR, getColor
 MARGIN = 5
 PADDING = 5
 WIDTH = 450
-# Actually a cap (see sizeHint's min()), not a floor -- raised from 200 so
-# a card showing every optional row at once (Score, Popularity, Airs, In
-# List, on top of the always-present Season/Type/Episodes) has room
-# before the synopsis text below it starts getting squeezed out.
+# A floor, not a target: sizeHint() measures the rows a card will
+# actually draw and grows past this when it needs to. Keeps a card with
+# few facts and a short synopsis from collapsing to less than the
+# thumbnail's height.
 MIN_HEIGHT = 250
+# Fact rows every card draws: Season, Type, Episodes.
+FIXED_ROWS = 3
+# Rows drawn only when the entry has them: Score, Popularity, Airs, In
+# List. Cards are sized as if all four are present (see sizeHint).
+OPTIONAL_ROWS = 4
+# Lines of synopsis a card is sized to fit under its fact rows. The
+# synopsis is the last thing painted, into whatever vertical space is
+# left over, so without reserving room for it the optional rows (Score,
+# Popularity, Airs, In List) push it off the bottom of the card -- which
+# is exactly what happened on the Seasons page, where every one of those
+# rows is populated.
+SYNOPSIS_LINES = 5
 COLUMN_A = 100
 COLUMN_B = 290
 
@@ -162,6 +174,14 @@ class AddListDelegate(QStyledItemDelegate):
         textRect.translate(0, self.fh + 5)
         textRect.setBottomRight(baseRect.bottomRight())
 
+        # Reclaim the poster's column once the synopsis has cleared the
+        # bottom of the poster. AddListModel caps thumbnails at 100x140
+        # while a card is comfortably taller than that, so the left
+        # column below the poster is dead space -- and the full width
+        # fits noticeably more synopsis per line.
+        if not thumb or textRect.top() >= baseRect.top() + thumb.height():
+            textRect.setLeft(baseRect.left() + 5)
+
         if 'extra' in data:
             painter.drawText(textRect, QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.TextFlag.TextWordWrap, self._get_extra(
                 data['extra'], 'Synopsis'))
@@ -175,7 +195,20 @@ class AddListDelegate(QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option, index):
-        return QtCore.QSize(WIDTH, min(MIN_HEIGHT, self.fh*10+15))
+        # Mirrors paint()'s vertical layout: a title band of fh+10, one
+        # fh+5 line per fact row, then the synopsis into whatever is
+        # left. Sized for a card drawing EVERY optional row, not for the
+        # rows this particular entry has, because AddCardView sets
+        # uniformItemSizes -- Qt asks once and reuses the answer, so a
+        # per-entry height would clip every card taller than the first.
+        # Costs nothing on sparser cards: the synopsis is painted into
+        # the leftover space, so unused fact rows become extra synopsis
+        # lines rather than blank card.
+        content = ((self.fh + 10)
+                   + (FIXED_ROWS + OPTIONAL_ROWS) * (self.fh + 5)
+                   + SYNOPSIS_LINES * self.fh)
+        return QtCore.QSize(
+            WIDTH, max(MIN_HEIGHT, content + 2 * (PADDING + MARGIN)))
 
 
 class ShowsTableDelegate(QStyledItemDelegate):

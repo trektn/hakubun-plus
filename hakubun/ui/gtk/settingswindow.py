@@ -125,6 +125,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_remember_geometry = Gtk.Template.Child()
     checkbox_classic_progress = Gtk.Template.Child()
     checkbox_filter_global = Gtk.Template.Child()
+    checkbox_show_subminer_toggle = Gtk.Template.Child()
     checkbox_add_mal_scores = Gtk.Template.Child()
     btn_load_mal_scores = Gtk.Template.Child()
 
@@ -348,6 +349,8 @@ class SettingsWindow(Gtk.Window):
         self.checkbox_classic_progress.set_active(
             not self.config['episodebar_style'])
         self.checkbox_filter_global.set_active(self.config['filter_global'])
+        self.checkbox_show_subminer_toggle.set_active(
+            self.config['show_subminer_toggle'])
 
         for color_key, color_button in self._color_buttons.items():
             color = getColor(self.config['colors'][color_key])
@@ -651,6 +654,8 @@ class SettingsWindow(Gtk.Window):
         self.config['episodebar_style'] = int(
             not self.checkbox_classic_progress.get_active())
         self.config['filter_global'] = self.checkbox_filter_global.get_active()
+        self.config['show_subminer_toggle'] = \
+            self.checkbox_show_subminer_toggle.get_active()
         self.config['multisync_enabled'] = \
             self.checkbox_multisync_enabled.get_active()
         # Retire any legacy multisync_mode so settings_plan_only's

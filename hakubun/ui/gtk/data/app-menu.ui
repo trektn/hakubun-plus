@@ -13,7 +13,7 @@
       </item>
       <item>
         <attribute name="action">win.filter</attribute>
-        <attribute name="label" translatable="yes">Filter</attribute>
+        <attribute name="label" translatable="yes">Filter list</attribute>
       </item>
       <item>
         <attribute name="action">win.accounts</attribute>
@@ -88,7 +88,7 @@
         </item>
         <item>
           <attribute name="action">win.filter</attribute>
-          <attribute name="label" translatable="yes">_Filter</attribute>
+          <attribute name="label" translatable="yes">_Filter list</attribute>
         </item>
         <section>
           <attribute name="id">play</attribute>
