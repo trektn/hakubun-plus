@@ -9,10 +9,21 @@ The one-sentence model:
 > **Identity determines what entries represent the same work. Field
 > policies determine where each field gets its authoritative value.
 > Strategies determine how fields without a single authority behave.
+> Membership determines which trackers should hold an entry at all.
 > History records what happened.**
 
-Those are four separate responsibilities, and the architecture's core
+Those are five separate responsibilities, and the architecture's core
 rule is that they never collapse into one generic merge resolver.
+
+Two things follow that are easy to lose sight of:
+
+- **Hakubun's local state is not a tracker.** It is the app's working,
+  reconciled copy — reconciliation state. It never owns a field and,
+  in tracker-to-tracker reconciliation (§15), it is not one of the
+  sides being compared.
+- **Ownership decides values; membership decides existence.** No
+  ownership policy can say whether a list entry belongs on a tracker,
+  and no observation can say the user wants one deleted.
 
 ## 1. Why the provider-centric sync isn't sufficient
 
@@ -33,7 +44,7 @@ The sync subsystem therefore keeps its own **SQLite database** (one per
 media type, `multisync-<mediatype>.db`, WAL mode), global across
 accounts and separate from the per-account pickles.
 
-## 2. The four layers
+## 2. The layers
 
 ```
 identity          "what is this?"        (provider, id) -> entity UUID
@@ -41,10 +52,13 @@ policy            "what should this      provider-owned / individual /
                    field be?"            reconcile
 strategy          "how do we reconcile   manual / union / max / min /
                    without an owner?"    progress
+membership        "should this entry     present / absent / ignore,
+                   exist on this          per (entity, provider)
+                   tracker at all?"
 history           "what happened?"       append-only event log; undo
 ```
 
-The old architecture answered all four questions with one mechanism —
+The old architecture answered all of these with one mechanism —
 a git-style three-way merge (`merge_base` vs `local` vs `remote`, a
 divergence classifier, and mode switches). That resolver, and its
 concepts (`NO_BASE`, `IN_SYNC`, `PULL`, `PUSH`, `BOTH`, `three_way()`,
@@ -388,41 +402,33 @@ conflict never re-raises. Structural conflicts (§8) only accept
 
 Whether an entry should **exist** on a provider is a separate question
 from where its fields sync from — field ownership answers "where does
-this *value* come from", never "should this *entry* be there". The
-planner answers existence from **provenance**: the providers whose
-fetches actually list the work. Per entity it distinguishes:
+this *value* come from", never "should this *entry* be there". That
+second question is its own model, **membership** (§14); the planner
+only *reads* it, so ordinary Sync and Mirror can never drift into
+disagreeing about whether an entry belongs somewhere.
 
-- **exists** — the provider's fetch lists the entry (non-empty remote
-  snapshot);
-- **missing** — a mapping with an empty remote snapshot: identity
-  knows the id (a published cross-id, the atlas, a reverse lookup) but
-  that provider has never actually listed the entry;
-- **explicitly excluded** (`resolved_absent`, by reason) — a cross-id
-  lookup answered "no entry there" (`lookup_miss`), the user deleted
-  the entry on the website (`deleted`), or the user declined a
-  proposed creation (`declined`, via `engine.decline_create`;
-  reversible with `engine.allow_create`). None of these are ever
-  re-proposed on the next fetch — an unticked checkbox is transient,
-  an exclusion is durable;
-- **local-only** — *no* provider lists the entity. Nothing establishes
-  that it should exist elsewhere (Hakubun's own state is not a
-  provider), so no creation is ever proposed;
-- **provider-only** (`entities.provider_only`) — the user pinned the
-  entity to one provider: it is isolated from cross-provider sync
-  entirely (planning sees only that provider's mapping), which also
-  means no creations anywhere. It does **not** change field policies
-  or make that provider authoritative — it only bounds *which
-  providers participate*.
-
-For each missing (and not excluded) provider, the planner offers a
+For each provider `Membership.addable()` names, the planner offers a
 creation whose operations carry `provenance` — the tuple of providers
 that establish existence — and a reason in those terms ("exists on
-AniList and Kitsu; Mal has no entry"). Field values initialize the new
-entry (provider-owned → the owner's value; reconcile → local's working
-value; individual → nothing); apply() batches them into a single
-`adapter.add` call per entity. Planned **unselected**
+AniList and Kitsu; Mal has no entry"). Nothing but an actual provider
+entry can justify a creation: an entity *no* provider lists
+(local-only) is never offered for creation at all, because Hakubun's
+own state is not a provider.
+
+`SyncPlanner.entry_values` decides what a new entry starts with
+(provider-owned → the owner's value; reconcile → local's working value;
+individual → nothing) and is shared with Mirror, so a created entry is
+seeded identically either way. apply() batches an entity's creations
+into a single `adapter.add` call. Planned **unselected**
 (`SyncOperation.creates_entry`): adding a library entry to a real
 account is opted into per show, never applied by a headless Sync.
+
+**provider-only** (`entities.provider_only`) is a separate mechanism:
+the user pinned the entity to one provider, isolating it from
+cross-provider sync entirely (planning and membership see only that
+provider), which also means no creations anywhere. It does **not**
+change field policies or make that provider authoritative — it only
+bounds *which providers participate*.
 
 ### 7.7 Equality
 
@@ -513,7 +519,9 @@ base_state(uuid, provider, field, value, synced_at,
            -- historical data for strategies (§6), not an algorithm
 
 events(id, ts, txn, uuid, field, old_value, new_value, source,
-       op /* 'set' | 'undo' | 'push' | 'add' */)
+       op /* 'set' | 'undo' | 'push' | 'add' | 'remove' */)
+       -- 'remove' (a Mirror deletion, field '_entry') is logged but
+       -- deliberately not undoable: see §15.3
 
 identity_conflicts(id, provider, provider_id, title, candidates,
                    status /* open|resolved|ignored|provider_only|
@@ -522,9 +530,19 @@ identity_conflicts(id, provider, provider_id, title, candidates,
 
 ownership(field PRIMARY KEY, policy)   -- §5 serialized policies
 
-resolved_absent(uuid, provider, checked_at,
-                reason /* 'lookup_miss' | 'deleted' | 'declined' */,
+resolved_absent(uuid, provider, checked_at, reason /* 'lookup_miss' */,
                 PRIMARY KEY(uuid, provider))
+                -- the cross-id LOOKUP CACHE only (§14.1). The two
+                -- reasons that were user decisions ('declined',
+                -- 'deleted') migrate to membership as 'ignore'.
+
+membership(uuid, provider,
+           want /* 'present' | 'absent' | 'ignore' */,
+           reason, decided_at,
+           PRIMARY KEY(uuid, provider))
+           -- does this entry belong on this tracker (§14)? 'absent'
+           -- is the only state that can produce a DELETION, and is
+           -- only ever written from an explicit user action.
 ```
 
 Values are JSON-encoded. The event log is append-only.
@@ -538,6 +556,8 @@ hakubun/sync/models.py       PolicyKind, FieldPolicy, SyncOperation,
 hakubun/sync/strategies.py   ReconcileStrategy interface + built-ins,
                              Resolved/Conflict/NoChange
 hakubun/sync/planner.py      SyncPlanner: policies -> SyncOperations
+hakubun/sync/membership.py   which trackers should hold an entry (§14)
+hakubun/sync/mirror.py       MirrorPlanner: converge the trackers (§15)
 hakubun/sync/engine.py       SyncEngine: fetch/apply/edits/undo
 hakubun/sync/store.py        SQLite store (schema above, transactions)
 hakubun/sync/history.py      event log: record, undo, stats
@@ -563,7 +583,9 @@ around the user's questions rather than the engine's internals. The
 engine's `local` is always presented as **Hakubun** — the app's own
 reconciled state — never as a provider or as the signed-in account
 (which is shown separately, as an icon, and carries no sync
-authority). Four tabs:
+authority) — except in Mirror, where nothing is presented as
+Hakubun at all, because that tab reconciles trackers against each
+other and the app is not one of the parties. Five tabs:
 
 1. **Sync** — a headline of the three numbers that matter ("3
    change(s) · 1 decision(s) needed · 2 new entries"), then the plan
@@ -580,15 +602,27 @@ authority). Four tabs:
    language why it couldn't be decided automatically, and offers one
    button per adoptable side. The buttons are *Fetch changes* and
    *Sync selected*; the engine keeps calling these plan and apply.
-2. **Configuration** — one rule picker per field, in consequences
+2. **Mirror** — *make your trackers agree, according to Ownership*
+   (§15). Four categories — **Tracker membership** (the presence
+   matrix per entry: `Anilist ✓ / Mal ✓ / Kitsu ✗`, with the
+   discrepancy stated between trackers and a context menu recording
+   the membership decision), **Entries to add**, **Entries to remove**
+   and **Fields to update** — plus a Decisions pane for
+   tracker-vs-tracker disagreements. Its own preview, deliberately not
+   overloaded onto Sync's: it is a different and potentially much
+   larger operation. Applying always goes through a confirmation
+   quoting the per-tracker totals, and the two bulk gates ("Allow
+   adding entries", "Allow removing entries") are independent, both
+   default off, and are enforced by the engine regardless (§15.3).
+3. **Configuration** — one rule picker per field, in consequences
    rather than policy syntax: "Keep the furthest progress", "Keep
    from Mal", "Ask me when they differ", "Don't sync". Serialized
    policies never surface here; `present.policy_choices` maps each
    field to its sensible options and appends the current policy when
    the advanced matrix set something the simple list doesn't offer.
-3. **Identity** — "N title(s) need matching", with the resolution
+4. **Identity** — "N title(s) need matching", with the resolution
    workflow of §3.
-4. **Advanced** — the full policy matrix of §5 (kept in agreement
+5. **Advanced** — the full policy matrix of §5 (kept in agreement
    with Configuration — both views write the same store rows), the
    identity **Inspector** (one entry by provider id: mappings, via,
    atlas opinion, and separately the per-field data with each field's
@@ -628,3 +662,147 @@ notes:     individual            → no operation
 
 No `PULL`/`PUSH`/`BOTH` classification exists anywhere in that plan —
 each field's policy directly determined what the planner did.
+
+## 14. Membership (`sync/membership.py`)
+
+Ownership decides where a field's **value** comes from. It can never
+decide whether a whole list **entry** belongs on a tracker — that is a
+question about a different thing, so it gets its own model, its own
+persisted state and its own user decisions.
+
+For one entity, each connected provider is in exactly one **observed**
+state:
+
+| state      | meaning                                                     |
+|------------|-------------------------------------------------------------|
+| `PRESENT`  | the provider's own fetch lists an entry — the only evidence that actually establishes existence |
+| `MISSING`  | a mapping exists (identity knows this provider's id) but no fetch has ever listed an entry there — an add is addressable |
+| `UNMAPPED` | identity has no id for this provider at all |
+
+`UNMAPPED` is deliberately **not** an add candidate. `adapter.add`
+needs an id, and finding one is identity resolution's job (§3), not
+membership's — so it is surfaced as an *identity gap* rather than as a
+button that would quietly do nothing.
+
+On top of the observation sits at most one **decision**
+(`membership` table; `engine.set_membership`):
+
+| want      | meaning                                                       |
+|-----------|---------------------------------------------------------------|
+| `present` | the entry belongs here → propose creating it                  |
+| `absent`  | the entry does **not** belong here → propose **removing** it  |
+| `ignore`  | whatever is here is fine → never propose either, stop asking  |
+
+No row means undecided: Mirror surfaces the discrepancy and Sync offers
+the (unticked) creation.
+
+### 14.1 Why three states
+
+The engine used to have one flag, which had to stand in for two
+genuinely different things:
+
+```
+"never add this to Kitsu"      →  Kitsu should remain absent
+                               →  Kitsu is wrong and should be removed
+```
+
+Those have opposite consequences, and only the second may ever delete
+anything. Hence `ignore` (leave it alone) and `absent` (take it away)
+are separate, and:
+
+> **`absent` is only ever written from an explicit user action.** No
+> observation, ownership policy or heuristic produces one.
+
+`resolved_absent` is now purely the cross-id **lookup cache**
+(`lookup_miss`): "we asked this provider and it said no", superseded
+automatically the moment a real mapping appears. The two reasons that
+were always user decisions — `declined` (the user rejected a proposed
+creation) and `deleted` (the user removed the entry on the website) —
+migrate to `ignore`, never to `absent`. Promoting either into a
+deletion proposal would let a stale row destroy an entry the user has
+since re-added on purpose, and a deletion on a real account is the one
+thing this subsystem cannot undo.
+
+## 15. Mirror (`sync/mirror.py`)
+
+Sync and Mirror answer different questions.
+
+**Sync** is incremental: *what changed since the last sync?* It uses
+base state to attribute each change to the side that made it, and
+leaves a tracker alone when nothing about it moved. That is the right
+model for day-to-day use.
+
+**Mirror** ignores history: *given the ownership configuration, what
+should each tracker contain right now?*
+
+```
+AniList ─┐
+Kitsu    ├─ ownership policy → desired tracker state
+MAL     ─┘
+```
+
+Mirror is therefore useful exactly when change history is stale,
+missing or wrong — after changing an ownership rule, or when a tracker
+has drifted and incremental sync has nothing left to go on.
+
+### 15.1 Trackers only
+
+Hakubun's local state is **not** a participant in the comparison. It
+never votes, is never an owner, and never appears as a side in a mirror
+row or a mirror conflict. A plan that said "Hakubun → AniList" would be
+describing a synchronization the user did not ask for.
+
+Local state is still **written** (`MirrorPlan.local`) — just never
+displayed and never consulted as an authority. Skipping it would be a
+bug with a delayed fuse: with every provider's base advanced to the new
+value and local matching none of them, the *next* ordinary Sync would
+read local as the side that moved and push the stale value straight
+back out (or raise a conflict over it).
+
+### 15.2 What the planner does
+
+Per entity, over the providers that actually hold the entry:
+
+- **PROVIDER** — the owner's current value is the value; every other
+  tracker converges to it. No base-state check, no pending-local-edit
+  routing: the owner's value is authoritative, full stop. If the owner
+  doesn't hold the entry, nothing is asserted — synthesizing a value
+  from a non-authority is precisely what ownership exists to prevent.
+- **RECONCILE** — the field's strategy runs over the **trackers'**
+  values alone, with no local participant and no `changed` flags. A
+  strategy that needs history to avoid asking (Manual) therefore asks,
+  which is correct here: during a mirror, two trackers genuinely
+  disagreeing is a decision, not something to settle from a base the
+  user may have reached for Mirror to escape.
+- **INDIVIDUAL** — skipped, same as Sync. Mirror reads the same
+  ownership configuration; there is no second ownership system.
+
+Membership discrepancies become `MirrorPlan.adds` (proposals),
+`MirrorPlan.removes` (only from a recorded `absent` decision) and
+`MirrorPlan.membership` — the presence matrix the UI renders.
+
+### 15.3 Applying: the bulk gates
+
+`engine.apply_mirror(plan, allow_adds=False, allow_removes=False)`.
+
+Both default to False, and they are enforced **in the engine**, not in
+either sync window: there are two UIs plus a headless path, and "the
+dialog asked" is not a safety property. Together with each operation's
+own selection (adds and removes are planned unticked), creating or
+deleting entries in bulk takes two independent confirmations.
+
+Removals run **first**, and any field operation aimed at an entry being
+removed is dropped — pushing a score to an entry and then deleting it
+is wasted API calls and a confusing partial state. A removal that
+*failed* does not suppress its field updates: the entry is still there,
+and still wrong.
+
+Deletion is logged as `op='remove'`, which `History.undo` ignores by
+design. Undo replays local `set`s and rewinds pushed bases; a deleted
+list entry is not something this app can honestly restore, and the log
+should not pretend otherwise.
+
+Provider support is read from `mediainfo['can_delete']`, defaulting to
+**False** when a lib says nothing — an optimistic default would turn a
+silently unimplemented delete into a Mirror that reports removals it
+never performed.
