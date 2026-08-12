@@ -125,7 +125,8 @@ class SyncWindow(QDialog):
         self.tabs.addTab(self._build_sync_tab(), 'Sync')
         self.tabs.addTab(self._build_mirror_tab(), 'Mirror')
         self.tabs.addTab(self._build_config_tab(), 'Configuration')
-        self.tabs.addTab(self._build_identity_tab(), 'Identity')
+        self._identity_tab = self._build_identity_tab()
+        self.tabs.addTab(self._identity_tab, 'Identity')
         self.tabs.addTab(self._build_advanced_tab(), 'Advanced')
         layout.addWidget(self.tabs)
         self.status_label = QLabel()
@@ -1652,7 +1653,13 @@ class SyncWindow(QDialog):
             + 'Certain matches (exact ID links, single exact-title '
             'matches) are linked automatically and never appear here. '
             'Right-click a row to inspect it or open it on its site.')
-        self.tabs.setTabText(2, 'Identity (%d)' % count)
+        # Found by index, never hardcoded: this said `2`, which was
+        # Identity's slot until the Mirror tab was inserted at 1 and
+        # pushed everything down. After that it stamped "Identity (N)"
+        # over the CONFIGURATION tab, leaving two tabs called Identity
+        # and no way to tell which was which.
+        self.tabs.setTabText(self.tabs.indexOf(self._identity_tab),
+                             'Identity (%d)' % count)
 
     def _identity_selected(self, item, _previous=None):
         self.identity_box.setEnabled(item is not None)

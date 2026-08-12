@@ -192,3 +192,21 @@ def test_config_combo_and_matrix_stay_in_agreement(qapp):
     assert win.store.ownership()['progress'].serialize() \
         == 'reconcile:progress'
     assert combo.currentData() == 'reconcile:progress'
+
+
+def test_tab_names_stay_correct_after_the_identity_count_lands(qapp):
+    """The identity count is stamped onto a tab found BY INDEX, and the
+    index was hardcoded. Inserting the Mirror tab at position 1 pushed
+    Configuration into the old slot, so the count landed on it: two
+    tabs called Identity, and no way to tell which was which."""
+    win = SyncWindow(None, None, engine=_FakeEngine(), active_api=None,
+                     media_type='anime')
+    try:
+        win._refresh_identity()
+        names = [win.tabs.tabText(i).split(' (')[0]
+                 for i in range(win.tabs.count())]
+        assert names == ['Sync', 'Mirror', 'Configuration', 'Identity',
+                         'Advanced']
+        assert names.count('Identity') == 1
+    finally:
+        win.close()
