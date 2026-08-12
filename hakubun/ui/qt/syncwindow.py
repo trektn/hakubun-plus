@@ -20,6 +20,11 @@ Organized around the user's questions, not the engine's architecture:
 
 * Sync -- what will change (Changes / New entries side by side with
   the Decisions pane), how much needs the user, and the Sync button.
+* Mirror -- make the TRACKERS agree according to Ownership: tracker
+  membership, entries to add, entries to remove, fields to update.
+  A deliberate, potentially large operation, kept separate from
+  ordinary incremental Sync and gated behind an explicit confirmation
+  with independent add/remove approval.
 * Configuration -- one friendly rule picker per field ("Keep furthest
   progress", "Ask me when they differ", ...).
 * Identity -- titles that need matching across providers.
@@ -34,7 +39,8 @@ import threading
 import traceback
 
 from PyQt6 import QtCore, QtGui
-from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
+from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog,
+                             QGridLayout,
                              QGroupBox, QHBoxLayout, QInputDialog, QLabel,
                              QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
                              QProgressBar, QPushButton, QRadioButton,
@@ -117,6 +123,7 @@ class SyncWindow(QDialog):
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_sync_tab(), 'Sync')
+        self.tabs.addTab(self._build_mirror_tab(), 'Mirror')
         self.tabs.addTab(self._build_config_tab(), 'Configuration')
         self.tabs.addTab(self._build_identity_tab(), 'Identity')
         self.tabs.addTab(self._build_advanced_tab(), 'Advanced')
@@ -769,6 +776,16 @@ class SyncWindow(QDialog):
         self._category_order = None
         self._prev_change_index = {}
         self._set_decisions([])
+        # The Mirror tab's preview describes the database that was just
+        # wiped -- membership decisions included. Clear it too, or its
+        # rows would offer to act on entities that no longer exist.
+        self._mirror_plan = None
+        for tree in self._mirror_trees.values():
+            tree.clear()
+        self._set_mirror_decisions([])
+        self.mirror_apply_button.setEnabled(False)
+        self.mirror_summary.setText('Preview a mirror to see what '
+                                    'would change.')
         self.apply_progress.setVisible(False)
         self.apply_log.clear()
         self.apply_log.setVisible(False)
@@ -779,6 +796,430 @@ class SyncWindow(QDialog):
         self._refresh_policy_widgets()
         self._status('Sync database reset. Run Fetch changes to '
                      're-derive it.')
+
+    # -- Mirror ---------------------------------------------------------
+    #
+    # Sync is incremental; Mirror converges the TRACKERS onto what
+    # Ownership says (sync/mirror.py). Its own tab, its own preview and
+    # its own apply path -- deliberately not overloaded onto the Sync
+    # preview, because it is a different, potentially much larger
+    # operation and the two must not be confusable.
+    #
+    # Hakubun never appears here as a tracker side. Local state still
+    # converges (MirrorPlan.local) but is not shown: it is
+    # reconciliation state, not one of the things being mirrored.
+
+    def _build_mirror_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        bar = QHBoxLayout()
+        self.mirror_summary = QLabel('Preview a mirror to see what '
+                                     'would change.')
+        bar.addWidget(self.mirror_summary)
+        bar.addStretch()
+        self.mirror_preview_button = QPushButton('Preview mirror')
+        self.mirror_preview_button.setToolTip(
+            'Work out what each tracker should contain according to '
+            'Ownership. Nothing is written anywhere until you apply.')
+        self.mirror_preview_button.clicked.connect(self.s_mirror_preview)
+        self.mirror_apply_button = QPushButton('Apply mirror…')
+        self.mirror_apply_button.setToolTip(
+            'Review the totals, then carry out the ticked changes.')
+        self.mirror_apply_button.setEnabled(False)
+        self.mirror_apply_button.clicked.connect(self.s_mirror_apply)
+        self.mirror_cancel_button = QPushButton('Cancel')
+        self.mirror_cancel_button.setVisible(False)
+        self.mirror_cancel_button.clicked.connect(self.s_cancel_apply)
+        bar.addWidget(self.mirror_preview_button)
+        bar.addWidget(self.mirror_apply_button)
+        bar.addWidget(self.mirror_cancel_button)
+        layout.addLayout(bar)
+
+        help_label = QLabel(present.MIRROR_TAB_HELP.replace('\n\n', '<br>'))
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        # The bulk gates. Unticked by default and enforced in the
+        # engine (SyncEngine.apply_mirror), not here: these two boxes
+        # are how the user expresses the choice, not what makes it
+        # safe. Additions and removals are approved independently --
+        # "yes to adds, no to deletes" is the common answer.
+        gates = QHBoxLayout()
+        self.mirror_allow_adds = QCheckBox(
+            'Allow adding entries')
+        self.mirror_allow_adds.setToolTip(
+            'Permit Mirror to create new entries on trackers that are '
+            'missing them. Each entry must still be ticked.')
+        self.mirror_allow_removes = QCheckBox(
+            'Allow removing entries')
+        self.mirror_allow_removes.setToolTip(
+            'Permit Mirror to DELETE entries from trackers you marked '
+            'as not needing them. This cannot be undone from Hakubun.')
+        gates.addWidget(self.mirror_allow_adds)
+        gates.addWidget(self.mirror_allow_removes)
+        gates.addStretch()
+        layout.addLayout(gates)
+
+        splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.mirror_tabs = QTabWidget()
+        self._mirror_trees = {}
+        for key, label_text in (('membership', 'Tracker membership'),
+                                ('add', 'Entries to add'),
+                                ('remove', 'Entries to remove'),
+                                ('update', 'Fields to update')):
+            tree = QTreeWidget()
+            tree.setHeaderHidden(True)
+            tree.itemChanged.connect(self._on_mirror_item_toggled)
+            tree.setContextMenuPolicy(
+                QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+            tree.customContextMenuRequested.connect(
+                lambda pos, t=tree: self._mirror_context_menu(t, pos))
+            self._mirror_trees[key] = tree
+            self.mirror_tabs.addTab(tree, label_text)
+        splitter.addWidget(self.mirror_tabs)
+
+        self.mirror_decisions_box = QGroupBox('Decisions')
+        outer = QVBoxLayout(self.mirror_decisions_box)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        holder = QWidget()
+        self.mirror_decisions_layout = QVBoxLayout(holder)
+        self.mirror_decisions_layout.addStretch()
+        scroll.setWidget(holder)
+        outer.addWidget(scroll)
+        splitter.addWidget(self.mirror_decisions_box)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([620, 380])
+        layout.addWidget(splitter, 1)
+
+        self._mirror_plan = None
+        self._set_mirror_decisions([])
+        return page
+
+    # -- mirror preview rendering --------------------------------------
+
+    def _mirror_op_item(self, op, text, color):
+        item = QTreeWidgetItem([text])
+        item.setForeground(0, color)
+        item.setFlags(item.flags()
+                      | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(0, QtCore.Qt.CheckState.Checked if op.selected
+                           else QtCore.Qt.CheckState.Unchecked)
+        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, op)
+        return item
+
+    def _on_mirror_item_toggled(self, item, column):
+        if column != 0:
+            return
+        op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if op is None or not hasattr(op, 'selected'):
+            return
+        op.selected = (item.checkState(0)
+                       == QtCore.Qt.CheckState.Checked)
+
+    def _populate_mirror_membership(self, tree, issues):
+        """One box per entry: the tracker presence matrix, then the
+        discrepancy in tracker terms. This is the presentation the old
+        'Add to Kitsu from Hakubun' row got wrong -- what the user
+        needs to see is which trackers have the entry and which don't,
+        so they can answer whether it belongs there at all."""
+        tree.clear()
+        bold = QtGui.QFont()
+        bold.setBold(True)
+        for issue in sorted(issues, key=lambda i: i.title.casefold()):
+            group = QTreeWidgetItem([issue.title])
+            group.setFont(0, bold)
+            group.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
+            for name, present_here, note in \
+                    present.mirror_membership_lines(issue):
+                text = '%s  %s' % (name, '✓' if present_here else '✗')
+                if note:
+                    text += '   — %s' % note
+                row = QTreeWidgetItem([text])
+                row.setForeground(0, self._PULL_COLOR if present_here
+                                  else self._CREATE_COLOR)
+                row.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
+                row.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2, name)
+                group.addChild(row)
+            why = QTreeWidgetItem([present.mirror_membership_why(issue)])
+            why.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1, issue)
+            group.addChild(why)
+            tree.addTopLevelItem(group)
+        tree.expandAll()
+
+    def _populate_mirror_ops(self, tree, ops, line_fn, color,
+                             group_key, group_label):
+        tree.clear()
+        groups = {}
+        for op in ops:
+            groups.setdefault(group_key(op), []).append(op)
+        bold = QtGui.QFont()
+        bold.setBold(True)
+        for key in sorted(groups):
+            ops_here = groups[key]
+            group = QTreeWidgetItem([group_label(key, ops_here)])
+            group.setFont(0, bold)
+            group.setFlags(group.flags()
+                           | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                           | QtCore.Qt.ItemFlag.ItemIsAutoTristate)
+            for op in ops_here:
+                group.addChild(self._mirror_op_item(op, line_fn(op),
+                                                    color))
+            states = {o.selected for o in ops_here}
+            group.setCheckState(0, QtCore.Qt.CheckState.Checked
+                                if states == {True} else
+                                QtCore.Qt.CheckState.Unchecked
+                                if states == {False} else
+                                QtCore.Qt.CheckState.PartiallyChecked)
+            tree.addTopLevelItem(group)
+        tree.expandAll()
+
+    def _mirror_context_menu(self, tree, pos):
+        """Right-click a tracker row in the membership view: record what
+        should be true of this entry on that tracker.
+
+        These are the three membership decisions (sync/membership.py),
+        and they persist -- the next mirror does not rediscover a
+        discrepancy the user has already settled. 'Remove from' is the
+        ONLY way a deletion is ever proposed."""
+        item = tree.itemAt(pos)
+        if item is None:
+            return
+        issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 1)
+        provider_label = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 2)
+        if issue is None or not provider_label:
+            return
+        provider = provider_label.lower()
+        menu = QMenu(self)
+        has_entry = provider in issue.present
+        if not has_entry:
+            act = menu.addAction(present.mirror_add_label(issue, provider))
+            act.triggered.connect(
+                lambda _c=False: self._set_membership(issue, provider,
+                                                      'present'))
+        else:
+            act = menu.addAction(present.mirror_remove_label(provider))
+            act.triggered.connect(
+                lambda _c=False: self._confirm_membership_removal(
+                    issue, provider))
+        act = menu.addAction(present.mirror_ignore_label(provider))
+        act.triggered.connect(
+            lambda _c=False: self._set_membership(issue, provider,
+                                                  'ignore'))
+        if provider in issue.decisions:
+            act = menu.addAction('Ask me about %s again' % provider_label)
+            act.triggered.connect(
+                lambda _c=False: self._set_membership(issue, provider,
+                                                      None))
+        menu.exec(tree.viewport().mapToGlobal(pos))
+
+    def _confirm_membership_removal(self, issue, provider):
+        """Marking a tracker 'absent' is what authorizes a deletion, so
+        it is confirmed at the moment it is recorded as well as at the
+        moment it is applied."""
+        answer = QMessageBox.question(
+            self, 'Remove from %s' % present.label(provider),
+            'Mark "%s" as not belonging on %s?\n\nMirror will then '
+            'offer to DELETE that entry from your %s account. Nothing '
+            'is deleted until you tick it, allow removals, and apply.'
+            % (issue.title, present.label(provider),
+               present.label(provider)))
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._set_membership(issue, provider, 'absent')
+
+    def _set_membership(self, issue, provider, want):
+        if want is None:
+            self.engine.clear_membership(issue.uuid, provider)
+            self._status('%s: %s will be asked about again.'
+                         % (issue.title, present.label(provider)))
+        else:
+            self.engine.set_membership(issue.uuid, provider, want)
+            self._status('%s: recorded "%s" for %s.'
+                         % (issue.title, want, present.label(provider)))
+        self.s_mirror_preview()
+
+    def _set_mirror_decisions(self, conflicts):
+        while self.mirror_decisions_layout.count() > 1:
+            item = self.mirror_decisions_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        if conflicts:
+            for conflict in sorted(conflicts,
+                                   key=lambda c: c.title.casefold()):
+                self.mirror_decisions_layout.insertWidget(
+                    self.mirror_decisions_layout.count() - 1,
+                    self._mirror_decision_card(conflict))
+        else:
+            placeholder = QLabel(
+                'Nothing needs your decision. When two trackers hold '
+                'different values for a field whose rule cannot settle '
+                'it on its own, the choice appears here.')
+            placeholder.setWordWrap(True)
+            self.mirror_decisions_layout.insertWidget(
+                self.mirror_decisions_layout.count() - 1, placeholder)
+        self.mirror_decisions_box.setTitle('Decisions (%d)'
+                                           % len(conflicts))
+
+    def _mirror_decision_card(self, conflict):
+        """A mirror decision is between TRACKERS -- the card lists only
+        tracker sides, and resolving one adopts that tracker's value as
+        the entry's value everywhere."""
+        box = QGroupBox('%s: %s' % (
+            conflict.title,
+            _FIELD_LABELS.get(conflict.field, conflict.field)))
+        card = QVBoxLayout(box)
+        why = QLabel(present.mirror_conflict_why(conflict))
+        why.setWordWrap(True)
+        card.addWidget(why)
+        row = QHBoxLayout()
+        for source in sorted(conflict.values):
+            if source == 'local':
+                continue
+            shown = self._fmt_value(conflict.field,
+                                    conflict.values[source])
+            if conflict.structural:
+                row.addWidget(QLabel('%s is at %s (its own structure)'
+                                     % (present.label(source), shown)))
+                continue
+            button = QPushButton('Use %s: %s' % (present.label(source),
+                                                 shown))
+            button.clicked.connect(
+                lambda _c=False, cf=conflict, s=source:
+                self._resolve_mirror(cf, s))
+            row.addWidget(button)
+        row.addStretch()
+        card.addLayout(row)
+        return box
+
+    def _resolve_mirror(self, conflict, source):
+        self.engine.resolve_conflict(conflict, source)
+        self._status('Resolved %s for %s, re-previewing...' % (
+            _FIELD_LABELS.get(conflict.field, conflict.field),
+            conflict.title))
+        self.s_mirror_preview()
+
+    def s_mirror_preview(self):
+        self._cancel.clear()
+        self._run(self.engine.mirror_plan, self.r_mirror_planned,
+                  'Working out what each tracker should contain...',
+                  should_cancel=self._cancel.is_set)
+
+    def r_mirror_planned(self, plan, error):
+        if isinstance(error, SyncCancelled):
+            self._status('Mirror cancelled.')
+            return
+        if error is not None:
+            self._status('Mirror preview failed: %s' % error)
+            return
+        self._mirror_plan = plan
+        counts = plan.counts()
+
+        self._populate_mirror_membership(self._mirror_trees['membership'],
+                                         plan.membership)
+        self._populate_mirror_ops(
+            self._mirror_trees['add'], plan.adds,
+            lambda o: '%s, %s: %s' % (
+                present.label(o.target),
+                present.field_label(o.field),
+                self._fmt_target_value(o.field, o.new, o.target)),
+            self._CREATE_COLOR,
+            lambda o: (o.target, o.title),
+            lambda key, ops: '%s → %s (%d field(s))'
+            % (key[1], present.label(key[0]), len(ops)))
+        self._populate_mirror_ops(
+            self._mirror_trees['remove'], plan.removes,
+            present.mirror_remove_line, self._CONFLICT_COLOR,
+            lambda o: o.provider,
+            lambda key, ops: '%s (%d entr%s)'
+            % (present.label(key), len(ops),
+               'y' if len(ops) == 1 else 'ies'))
+        self._populate_mirror_ops(
+            self._mirror_trees['update'], plan.updates,
+            lambda o: present.mirror_change_line(
+                self.engine.adapters, o)[1],
+            self._PUSH_COLOR,
+            lambda o: o.title,
+            lambda key, ops: '%s (%d change(s))' % (key, len(ops)))
+
+        for index, (key, label_text, n) in enumerate((
+                ('membership', 'Tracker membership', len(plan.membership)),
+                ('add', 'Entries to add', sum(counts['add'].values())),
+                ('remove', 'Entries to remove',
+                 sum(counts['remove'].values())),
+                ('update', 'Fields to update',
+                 sum(counts['update'].values())))):
+            self.mirror_tabs.setTabText(index, '%s (%d)' % (label_text, n))
+
+        self._set_mirror_decisions(plan.conflicts)
+        self.mirror_apply_button.setEnabled(not plan.clean)
+        self.mirror_summary.setText('<b>%s</b>'
+                                    % present.mirror_plan_summary(plan))
+        self._status(present.mirror_plan_summary(plan))
+
+    def s_mirror_apply(self):
+        """Never applies silently: the totals are shown first, per
+        tracker, and the two bulk gates must be ticked for the
+        corresponding category to run at all."""
+        if self._mirror_plan is None:
+            return
+        plan = self._mirror_plan
+        allow_adds = self.mirror_allow_adds.isChecked()
+        allow_removes = self.mirror_allow_removes.isChecked()
+
+        text = present.mirror_confirmation(plan)
+        notes = []
+        if plan.selected_adds() and not allow_adds:
+            notes.append('Additions are ticked but "Allow adding '
+                         'entries" is off — they will be skipped.')
+        if plan.selected_removes() and not allow_removes:
+            notes.append('Removals are ticked but "Allow removing '
+                         'entries" is off — they will be skipped.')
+        if notes:
+            text += '\n\n' + '\n'.join(notes)
+
+        box = QMessageBox(self)
+        box.setWindowTitle('Apply mirror')
+        box.setText(text)
+        apply_button = box.addButton('Apply',
+                                     QMessageBox.ButtonRole.AcceptRole)
+        box.addButton('Cancel', QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not apply_button:
+            self._status('Mirror cancelled.')
+            return
+
+        self._mirror_plan = None
+        self.mirror_apply_button.setEnabled(False)
+        self._cancel.clear()
+        self.mirror_cancel_button.setVisible(True)
+        self.mirror_cancel_button.setEnabled(True)
+        self.apply_log.clear()
+        self.apply_log.appendPlainText('Mirroring...')
+        self.apply_log.setVisible(True)
+        self.apply_progress.setRange(0, 0)
+        self.apply_progress.setVisible(True)
+        self._run(self.engine.apply_mirror, self.r_mirror_applied,
+                  'Applying the mirror...', plan,
+                  allow_adds=allow_adds, allow_removes=allow_removes,
+                  should_cancel=self._cancel.is_set,
+                  forward_progress=True)
+
+    def r_mirror_applied(self, result, error):
+        self.mirror_cancel_button.setVisible(False)
+        if error is not None:
+            self.apply_progress.setVisible(False)
+            self.apply_log.appendPlainText('Mirror failed: %s' % error)
+            self._status('Mirror failed: %s' % error)
+            return
+        self.apply_progress.setRange(0, 1)
+        self.apply_progress.setValue(1)
+        text = present.mirror_result_status(result)
+        self.apply_log.appendPlainText(text)
+        self._status(text)
+        self.s_fetch()
 
     # -- Configuration (simple per-field rules) ------------------------
 
