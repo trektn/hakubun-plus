@@ -2305,57 +2305,14 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkBox">
-                    <property name="visible">True</property>
-                    <property name="can_focus">False</property>
-                    <property name="margin_start">12</property>
-                    <property name="orientation">horizontal</property>
-                    <property name="spacing">9</property>
-                    <child>
-                      <object class="GtkLabel">
-                        <property name="visible">True</property>
-                        <property name="can_focus">False</property>
-                        <property name="label" translatable="yes">Mode:</property>
-                        <property name="xalign">0</property>
-                      </object>
-                      <packing>
-                        <property name="expand">False</property>
-                        <property name="fill">True</property>
-                        <property name="position">0</property>
-                      </packing>
-                    </child>
-                    <child>
-                      <object class="GtkComboBoxText" id="combo_multisync_mode">
-                        <property name="visible">True</property>
-                        <property name="can_focus">False</property>
-                        <items>
-                          <item id="merge" translatable="yes">Merge (reconcile every provider)</item>
-                          <item id="pull" translatable="yes">Pull (providers update local)</item>
-                          <item id="push" translatable="yes">Push (local overwrites providers)</item>
-                        </items>
-                      </object>
-                      <packing>
-                        <property name="expand">False</property>
-                        <property name="fill">True</property>
-                        <property name="position">1</property>
-                      </packing>
-                    </child>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">2</property>
-                  </packing>
-                </child>
-                <child>
                   <object class="GtkCheckButton" id="checkbox_multisync_plan_only">
-                    <property name="label" translatable="yes">Fetch &amp; plan only (review before applying)</property>
+                    <property name="label" translatable="yes">Always review changes before syncing</property>
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">False</property>
                     <property name="margin_start">12</property>
                     <property name="draw_indicator">True</property>
-                    <property name="tooltip_text" translatable="yes">Sync fetches every provider and works out what would change in the mode above, then always opens the sync window so you can review and apply it yourself. Turn this off to let Sync apply clean changes headlessly -- conflicts and first-time syncs still always stop for review either way.</property>
+                    <property name="tooltip_text" translatable="yes">Sync fetches every provider and works out what would change per each field's sync rule, then always opens the sync window so you can review and sync it yourself. Turn this off to let Sync carry out clean changes headlessly -- decisions and new-entry adds still always stop for review either way.</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>

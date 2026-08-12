@@ -1,17 +1,21 @@
-"""Multisync: local-first, reconciliation-based multi-provider sync.
+"""Multisync: local-first, field-strategy multi-provider sync.
 
-See docs/multisync.md for the authoritative design. Mental model: git.
-The local database is the repository, providers are remotes, fetch
-snapshots remote state, a 3-way diff against the last-synced base feeds
-per-field ownership policies, conflicts go to the user, applying is a
-commit (event log) followed by pushes to the providers.
+See docs/multisync.md for the authoritative design. Mental model:
+identity answers "what is this?" (entries map to internal entity
+UUIDs); field policies answer "what should this field be?" (a provider
+owns it, it stays individual, or a reconciliation strategy decides);
+strategies answer "how do we reconcile fields without a single
+authority?"; history answers "what happened?" (append-only event log).
+The planner turns policies into explicit SyncOperations; applying
+commits them locally and pushes to the providers.
 """
 
-from hakubun.sync.models import (FieldChange, FieldConflict, FieldPolicy,
-                                 NormalizedEntry, SyncMode, SyncPlan,
-                                 USER_FIELDS)
+from hakubun.sync.models import (FieldConflict, FieldPolicy,
+                                 NormalizedEntry, PolicyKind,
+                                 SyncOperation, SyncPlan, USER_FIELDS)
 from hakubun.sync.store import SyncStore
 from hakubun.sync.engine import SyncEngine
 
-__all__ = ['FieldChange', 'FieldConflict', 'FieldPolicy', 'NormalizedEntry',
-           'SyncMode', 'SyncPlan', 'SyncStore', 'SyncEngine', 'USER_FIELDS']
+__all__ = ['FieldConflict', 'FieldPolicy', 'NormalizedEntry',
+           'PolicyKind', 'SyncOperation', 'SyncPlan', 'SyncStore',
+           'SyncEngine', 'USER_FIELDS']

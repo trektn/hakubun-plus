@@ -19,7 +19,7 @@ pytest.importorskip('PyQt6')
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication
 
-from hakubun.sync.models import FieldChange, SyncMode, SyncPlan
+from hakubun.sync.models import SyncOperation, SyncPlan
 from hakubun.sync.store import SyncStore
 from hakubun.ui.qt.syncwindow import SyncWindow
 
@@ -39,7 +39,7 @@ class _FakeEngine:
 
 def _score_changes(n, bump_uuid=None):
     return [
-        FieldChange(uuid='u%d' % i, field='score', old=1,
+        SyncOperation(uuid='u%d' % i, field='score', old=1,
                    new=(3 if bump_uuid == 'u%d' % i else 2),
                    target='mal', source='local', title='Show %d' % i)
         for i in range(n)
@@ -48,7 +48,7 @@ def _score_changes(n, bump_uuid=None):
 
 def _progress_changes(n):
     return [
-        FieldChange(uuid='p%d' % i, field='progress', old=1, new=2,
+        SyncOperation(uuid='p%d' % i, field='progress', old=1, new=2,
                    target='mal', source='local', title='Prog %d' % i)
         for i in range(n)
     ]
@@ -63,7 +63,7 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
     win = _make_window(qapp)
     score = _score_changes(5)
     progress = _progress_changes(3)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=score + progress),
+    win.r_planned(SyncPlan(changes=score + progress),
                   None)
 
     score_tree = win._category_trees['score']
@@ -73,7 +73,7 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
 
     # A replan producing content-identical but freshly-allocated objects
     # (exactly what SyncEngine.plan() does every time).
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
 
     assert win._category_trees['score'] is score_tree
@@ -84,14 +84,14 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
 
 def test_changed_category_rebuilds_only_itself(qapp):
     win = _make_window(qapp)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
     score_items_1 = {id(it) for it, _c
                      in win._iter_tree_changes(win._category_trees['score'])}
     progress_items_1 = {id(it) for it, _c in win._iter_tree_changes(
         win._category_trees['progress'])}
 
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5, bump_uuid='u0') + _progress_changes(3))), None)
 
     score_items_2 = {id(it) for it, _c
@@ -104,9 +104,9 @@ def test_changed_category_rebuilds_only_itself(qapp):
 
 def test_change_items_registration_stays_consistent(qapp):
     win = _make_window(qapp)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5, bump_uuid='u2') + _progress_changes(3))), None)
 
     all_tree = win._category_trees['__all__']
@@ -125,13 +125,70 @@ def test_change_items_registration_stays_consistent(qapp):
     assert score_item.checkState(0) == QtCore.Qt.CheckState.Unchecked
 
 
+def _create_changes(n):
+    return [
+        SyncOperation(uuid='n%d' % i, field='progress', old=None, new=5,
+                      target='mal', source='kitsu', title='New %d' % i,
+                      selected=False, creates_entry=True)
+        for i in range(n)
+    ]
+
+
+def test_new_entries_get_their_own_category(qapp):
+    win = _make_window(qapp)
+    win.r_planned(SyncPlan(changes=(
+        _score_changes(2) + _create_changes(2))), None)
+    assert win._category_order == ['__all__', 'score', '__new__']
+
+    # Creates live only in the New entries tree, never in Changes.
+    ordinary = [c for _it, c in win._iter_tree_changes(
+        win._category_trees['__all__'])]
+    assert ordinary and not any(c.creates_entry for c in ordinary)
+    creates = [c for _it, c in win._iter_tree_changes(
+        win._category_trees['__new__'])]
+    assert len(creates) == 2 and all(c.creates_entry for c in creates)
+    assert all(not c.selected for c in creates)   # stays opt-in
+
+    # The apply path iterates BOTH trees, so an opted-in create is
+    # seen -- and a tick made in the New entries tab lands on the
+    # change object itself.
+    assert sum(1 for _ in win._iter_change_items()) == 4
+    item, change = next(win._iter_tree_changes(
+        win._category_trees['__new__']))
+    item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+    assert change.selected is True
+
+    # The headline summarizes in the user's terms.
+    assert '2 change(s)' in win.summary_label.text()
+    assert '2 new entries' in win.summary_label.text()
+
+
 def test_category_appearing_or_vanishing_falls_back_to_full_rebuild(qapp):
     win = _make_window(qapp)
     score = _score_changes(5)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=score), None)
-    assert win.preview_tabs.count() == 2   # All, Score
+    win.r_planned(SyncPlan(changes=score), None)
+    assert win.preview_tabs.count() == 2   # Changes, Score
 
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         score + _progress_changes(2))), None)
-    assert win.preview_tabs.count() == 3   # All, Score, Watched Episodes
+    # Changes, Score, Watched Episodes
+    assert win.preview_tabs.count() == 3
     assert win._category_order == ['__all__', 'score', 'progress']
+
+
+def test_config_combo_and_matrix_stay_in_agreement(qapp):
+    win = _make_window(qapp)
+    combo = win._policy_combos['progress']
+    combo.setCurrentIndex(combo.findData('reconcile:manual'))
+    assert win.store.ownership()['progress'].serialize() \
+        == 'reconcile:manual'
+    group = win._ownership_groups['progress']
+    checked = [r for r in group.buttons() if r.isChecked()]
+    assert checked and checked[0].property('policy') == 'reconcile:manual'
+    # And the other way round: the Advanced matrix updates the combo.
+    radio = next(r for r in group.buttons()
+                 if r.property('policy') == 'reconcile:progress')
+    radio.setChecked(True)
+    assert win.store.ownership()['progress'].serialize() \
+        == 'reconcile:progress'
+    assert combo.currentData() == 'reconcile:progress'

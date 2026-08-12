@@ -14,15 +14,18 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-"""GTK multi-provider Sync window (docs/multisync.md 8) -- the GTK twin
+"""GTK multi-provider Sync window (docs/multisync.md §12) -- the GTK twin
 of hakubun.ui.qt.syncwindow, over the same, UI-agnostic SyncEngine.
 
-Four tabs: the sync Preview (changes / conflicts / apply), the field-
-ownership matrix ("Where should hakubun sync to?"), the identity-conflict
-workflow, and an identity Inspector. Two deliberate simplifications from
-the Qt window: the Preview shows one changes tree grouped by show rather
-than a tab per field, and the Inspector renders text/markup rather than
-an HTML table -- the workflow and the engine calls are identical.
+Same information architecture as the Qt window: Sync (Changes and New
+entries side by side with the Decisions pane), Configuration (one
+friendly rule picker per field), Identity (titles needing matching) and
+Advanced (full policy matrix, inspector, reset). 'Hakubun' is the app's
+own reconciled state (the engine's 'local'); it is always labeled as
+the app, never as a provider. Two deliberate simplifications from the
+Qt window: no per-field change category tabs (one Changes tree grouped
+by show), and the Inspector renders text/markup rather than an HTML
+table -- the workflow and the engine calls are identical.
 """
 
 import threading
@@ -34,17 +37,17 @@ from hakubun import utils
 from hakubun.sync import adapters, present
 from hakubun.sync.models import (FieldPolicy, NormalizedEntry, SyncCancelled,
                                  USER_FIELDS)
+from hakubun.sync.inspect import atlas_label
 from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
-from hakubun.sync.present import MODES as _MODES
 from hakubun.sync.store import SyncStore
 
 _PULL_COLOR = '#4caf50'
 _PUSH_COLOR = '#42a5f5'
 _CONFLICT_COLOR = '#e5a400'
-# First-sync overwrites: planned and previewed, but unticked.
-_FIRST_SYNC_COLOR = _CONFLICT_COLOR
+# New-entry creates: planned and previewed, but unticked.
+_CREATE_COLOR = _CONFLICT_COLOR
 
-# ShowListStore-style column indices for the Preview changes tree.
+# ShowListStore-style column indices for the change trees.
 _C_ACTIVE, _C_INCONSISTENT, _C_LABEL, _C_COLOR, _C_CHANGE = range(5)
 
 
@@ -62,6 +65,9 @@ class MultiSyncWindow(Gtk.Window):
         self._thread = None
         self._cancel = threading.Event()
         self._inspect_url = None
+        # Guards the two policy views (Configuration combos, Advanced
+        # matrix) against feedback loops while one refreshes the other.
+        self._policy_updating = False
 
         if engine is not None:
             # Injection seam for tests: a prebuilt SyncEngine.
@@ -75,11 +81,11 @@ class MultiSyncWindow(Gtk.Window):
             self.store = SyncStore(uibridge.store_path(media_type))
             self.engine, self._adapter_errors = present.build_engine(
                 self.store, accountman, media_type)
-        # The signed-in account is the working tree: its changes fold in
-        # as local intent. Kept as an attribute (not just
-        # engine.primary, which stays None when the account has no
-        # adapter) so the caller can tell whether a cached window still
-        # belongs to the loaded account.
+        # The signed-in account, kept for display (icons/labels) and
+        # so the caller can tell whether a cached window still belongs
+        # to the loaded account (engine.primary stays None when the
+        # account has no adapter). It carries no sync authority --
+        # field policies do.
         self.active_api = active_api
         if active_api and active_api in self.engine.adapters:
             self.engine.primary = active_api
@@ -87,15 +93,15 @@ class MultiSyncWindow(Gtk.Window):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         outer.set_border_width(8)
         self._notebook = Gtk.Notebook()
-        self._notebook.append_page(self._build_preview_tab(),
-                                   Gtk.Label(label='Preview'))
-        self._notebook.append_page(self._build_ownership_tab(),
-                                   Gtk.Label(label='Ownership'))
+        self._notebook.append_page(self._build_sync_tab(),
+                                   Gtk.Label(label='Sync'))
+        self._notebook.append_page(self._build_config_tab(),
+                                   Gtk.Label(label='Configuration'))
         self._identity_label = Gtk.Label(label='Identity')
         self._notebook.append_page(self._build_identity_tab(),
                                    self._identity_label)
-        self._notebook.append_page(self._build_inspector_tab(),
-                                   Gtk.Label(label='Inspector'))
+        self._notebook.append_page(self._build_advanced_tab(),
+                                   Gtk.Label(label='Advanced'))
         outer.pack_start(self._notebook, True, True, 0)
         self._status_label = Gtk.Label(xalign=0)
         outer.pack_start(self._status_label, False, False, 0)
@@ -116,88 +122,96 @@ class MultiSyncWindow(Gtk.Window):
                          % media_type)
         self._refresh_identity()
 
-    # -- Preview -------------------------------------------------------
+    # -- Sync ----------------------------------------------------------
 
-    def _build_preview_tab(self):
+    def _build_sync_tab(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_border_width(6)
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        # The signed-in tracker's icon -- an at-a-glance answer to "whose
-        # state feeds 'local' here?".
+        # The signed-in tracker's icon. Signed-in is shown as a fact
+        # about accounts, never as what 'Hakubun' means.
         if self.engine.primary:
             lib_info = utils.available_libs.get(self.engine.primary)
             if lib_info:
                 icon = Gtk.Image.new_from_file(lib_info[1])
-                icon.set_tooltip_text('Signed into %s: its changes count '
-                                      'as your local edits.' % lib_info[0])
+                icon.set_tooltip_text(
+                    'Signed into %s. Hakubun keeps its own state; the '
+                    'signed-in site gets no special say in the sync.'
+                    % lib_info[0])
                 bar.pack_start(icon, False, False, 0)
-        bar.pack_start(Gtk.Label(label='Mode:'), False, False, 0)
-        self.mode_combo = Gtk.ComboBoxText()
-        for _mode, label in _MODES:
-            self.mode_combo.append_text(label)
-        self.mode_combo.set_active(0)
-        self.mode_combo.connect('changed', self._update_mode_context)
-        bar.pack_start(self.mode_combo, False, False, 0)
+        # The headline: how much will change, how much needs a human,
+        # what would create entries -- the first thing to read.
+        self.summary_label = Gtk.Label(xalign=0)
+        self.summary_label.set_text('Fetch changes to see what would '
+                                    'sync.')
+        bar.pack_start(self.summary_label, False, False, 0)
 
-        self.fetch_button = Gtk.Button(label='Fetch & Plan')
+        self.fetch_button = Gtk.Button(label='Fetch changes')
+        self.fetch_button.set_tooltip_text(
+            'Download each site\'s list and work out what would sync. '
+            'Nothing is written anywhere until you press Sync.')
         self.fetch_button.connect('clicked', lambda *_a: self.s_fetch())
-        self.apply_button = Gtk.Button(label='Apply')
+        self.apply_button = Gtk.Button(label='Sync selected')
+        self.apply_button.set_tooltip_text(
+            'Carry out every ticked change: update Hakubun and push to '
+            'the sites.')
         self.apply_button.set_sensitive(False)
         self.apply_button.connect('clicked', lambda *_a: self.s_apply())
         self.cancel_button = Gtk.Button(label='Cancel')
         self.cancel_button.set_tooltip_text(
             'Stop the sync after the current push. Whatever was already '
-            'pushed stays; the rest re-plans.')
+            'pushed stays; the rest is offered again next time.')
         self.cancel_button.set_no_show_all(True)
         self.cancel_button.connect('clicked', lambda *_a: self.s_cancel_apply())
-        self.reset_button = Gtk.Button(label='Reset database...')
-        self.reset_button.set_tooltip_text(
-            'Wipe the sync database (identities, mappings, history, '
-            'ownership) and start clean. Your provider lists are never '
-            'touched; the next Fetch re-derives everything.')
-        self.reset_button.connect('clicked', lambda *_a: self.s_reset())
         # pack_end lays widgets out from the box's end inward, so the
         # first one packed ends up at the outer edge: pack in reverse of
-        # the intended left-to-right (workflow) order -- Fetch & Plan,
-        # Apply, Cancel, Reset database.
-        for b in (self.reset_button, self.cancel_button, self.apply_button,
+        # the intended left-to-right (workflow) order -- Fetch changes,
+        # Sync selected, Cancel.
+        for b in (self.cancel_button, self.apply_button,
                   self.fetch_button):
             bar.pack_end(b, False, False, 0)
         page.pack_start(bar, False, False, 0)
 
-        self.mode_context = Gtk.Label(xalign=0, wrap=True)
-        page.pack_start(self.mode_context, False, False, 0)
+        # How the plan is decided (field rules), so the list below
+        # never reads as magic.
+        plan_context = Gtk.Label(xalign=0, wrap=True)
+        plan_context.set_markup(present.plan_context())
+        page.pack_start(plan_context, False, False, 0)
         legend = Gtk.Label(xalign=0)
         legend.set_markup(
-            '<span foreground="%s">↑ push to a site</span>  ·  '
-            '<span foreground="%s">↓ pull into Hakubun</span>  ·  '
+            '<span foreground="%s">↑ updates a site</span>  ·  '
+            '<span foreground="%s">↓ updates Hakubun</span>  ·  '
             'uncheck anything to skip it' % (_PUSH_COLOR, _PULL_COLOR))
         page.pack_start(legend, False, False, 0)
 
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        # Left: the bulk transaction plan, grouped by show.
-        self._changes_store = Gtk.TreeStore(bool, bool, str, str,
-                                            GObject.TYPE_PYOBJECT)
-        self._changes_view = Gtk.TreeView(model=self._changes_store)
-        self._changes_view.set_headers_visible(False)
-        toggle = Gtk.CellRendererToggle()
-        toggle.connect('toggled', self._on_change_toggled)
-        col_toggle = Gtk.TreeViewColumn('', toggle, active=_C_ACTIVE,
-                                        inconsistent=_C_INCONSISTENT)
-        self._changes_view.append_column(col_toggle)
-        text = Gtk.CellRendererText()
-        col_text = Gtk.TreeViewColumn('Change', text, text=_C_LABEL,
-                                      foreground=_C_COLOR)
-        self._changes_view.append_column(col_text)
-        left_scroll = Gtk.ScrolledWindow()
-        left_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
-                               Gtk.PolicyType.AUTOMATIC)
-        left_scroll.add(self._changes_view)
-        paned.pack1(left_scroll, True, True)
+        # Left: an inner notebook -- ordinary Changes, and (separately,
+        # because "create this title on another site" is a different
+        # kind of act than a field update) New entries. Both grouped by
+        # show, both with opt-out/opt-in checkboxes.
+        inner = Gtk.Notebook()
+        self._changes_store, changes_widget = self._make_changes_tree()
+        self._changes_view = self._last_changes_view
+        self._changes_page_label = Gtk.Label(label='Changes')
+        inner.append_page(changes_widget, self._changes_page_label)
+
+        creates_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                              spacing=4)
+        creates_help = Gtk.Label(xalign=0, wrap=True,
+                                 label=present.CREATES_ENTRY_HELP)
+        creates_box.pack_start(creates_help, False, False, 0)
+        self._creates_store, creates_widget = self._make_changes_tree()
+        self._creates_view = self._last_changes_view
+        self._creates_view.connect('button-press-event',
+                                   self._on_creates_button)
+        creates_box.pack_start(creates_widget, True, True, 0)
+        self._creates_page_label = Gtk.Label(label='New entries')
+        inner.append_page(creates_box, self._creates_page_label)
+        paned.pack1(inner, True, True)
 
         # Right: what needs a human (conflicts).
-        decisions_frame = Gtk.Frame(label='Needs your decision')
+        decisions_frame = Gtk.Frame(label='Decisions')
         self._decisions_scroll = Gtk.ScrolledWindow()
         self._decisions_scroll.set_policy(Gtk.PolicyType.NEVER,
                                           Gtk.PolicyType.AUTOMATIC)
@@ -206,6 +220,7 @@ class MultiSyncWindow(Gtk.Window):
         self._decisions_box.set_border_width(6)
         self._decisions_scroll.add(self._decisions_box)
         decisions_frame.add(self._decisions_scroll)
+        self._decisions_frame = decisions_frame
         paned.pack2(decisions_frame, True, True)
         paned.set_position(500)
         page.pack_start(paned, True, True, 0)
@@ -228,30 +243,11 @@ class MultiSyncWindow(Gtk.Window):
         self._apply_log_scroll.add(self.apply_log)
         page.pack_start(self._apply_log_scroll, False, False, 0)
 
-        self.preview_summary = Gtk.Label(xalign=0, wrap=True)
-        page.pack_start(self.preview_summary, False, False, 0)
-        self._update_mode_context()
         return page
-
-    def _current_mode(self):
-        return _MODES[max(self.mode_combo.get_active(), 0)][0]
-
-    def set_mode(self, mode):
-        """Select a SyncMode in the mode combo (used by the main
-        window's headless Sync-button flow to apply the configured
-        multisync_mode before planning)."""
-        for i, (m, _label) in enumerate(_MODES):
-            if m is mode:
-                self.mode_combo.set_active(i)
-                return
 
     def is_busy(self):
         """True while a fetch/plan/apply worker is running."""
         return self._thread is not None and self._thread.is_alive()
-
-    def _update_mode_context(self, *_a):
-        self.mode_context.set_markup(
-            present.mode_context(self._current_mode(), self.engine.primary))
 
     def _fmt_value(self, field, value):
         return present.fmt_value(field, value)
@@ -268,60 +264,112 @@ class MultiSyncWindow(Gtk.Window):
         # ignores the foreground colour and breaks the push/pull coding.
         arrow, color = (('↓', _PULL_COLOR) if direction == 'pull'
                         else ('↑', _PUSH_COLOR))
-        if change.first_sync or change.creates_entry:
-            color = _FIRST_SYNC_COLOR
+        if change.creates_entry:
+            color = _CREATE_COLOR
         return ('%s %s' % (arrow, text), color)
 
-    def _populate_changes(self, changes):
-        self._changes_store.clear()
+    def _make_changes_tree(self):
+        """(TreeStore, scrolled widget) for one show-grouped, checkbox
+        change list -- built twice, once for Changes and once for New
+        entries, both over the same column scheme and toggle logic.
+        The TreeView itself lands in self._last_changes_view."""
+        store = Gtk.TreeStore(bool, bool, str, str, GObject.TYPE_PYOBJECT)
+        view = Gtk.TreeView(model=store)
+        view.set_headers_visible(False)
+        toggle = Gtk.CellRendererToggle()
+        toggle.connect('toggled', self._on_change_toggled, store)
+        view.append_column(Gtk.TreeViewColumn(
+            '', toggle, active=_C_ACTIVE, inconsistent=_C_INCONSISTENT))
+        text = Gtk.CellRendererText()
+        view.append_column(Gtk.TreeViewColumn(
+            'Change', text, text=_C_LABEL, foreground=_C_COLOR))
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                          Gtk.PolicyType.AUTOMATIC)
+        scroll.add(view)
+        self._last_changes_view = view
+        return store, scroll
+
+    def _populate_changes(self, store, changes):
+        store.clear()
         groups = {}
         for change in changes:
             groups.setdefault(change.uuid, [change.title, []])[1].append(change)
         for _uid, (title, group_changes) in sorted(
                 groups.items(), key=lambda kv: kv[1][0].casefold()):
-            # Honour the plan's own selection: a first-sync overwrite is
+            # Honour the plan's own selection: a new-entry create is
             # planned unticked, and ticking it must be a deliberate act.
             states = {c.selected for c in group_changes}
-            parent = self._changes_store.append(
+            parent = store.append(
                 None, [states == {True}, len(states) > 1,
                        '%s (%d change(s))'
                        % (title, len(group_changes)), None, None])
             for change in group_changes:
                 label, color = self._change_label(change)
-                self._changes_store.append(
+                store.append(
                     parent, [change.selected, False, label, color, change])
 
-    def _on_change_toggled(self, _renderer, path):
-        it = self._changes_store.get_iter(path)
-        change = self._changes_store.get_value(it, _C_CHANGE)
-        new_state = not self._changes_store.get_value(it, _C_ACTIVE)
-        self._changes_store.set_value(it, _C_ACTIVE, new_state)
+    def _on_change_toggled(self, _renderer, path, store):
+        it = store.get_iter(path)
+        change = store.get_value(it, _C_CHANGE)
+        new_state = not store.get_value(it, _C_ACTIVE)
+        store.set_value(it, _C_ACTIVE, new_state)
         if change is None:
             # A show-group header: cascade to its children.
-            child = self._changes_store.iter_children(it)
+            child = store.iter_children(it)
             while child is not None:
-                self._changes_store.set_value(child, _C_ACTIVE, new_state)
-                child_change = self._changes_store.get_value(child, _C_CHANGE)
+                store.set_value(child, _C_ACTIVE, new_state)
+                child_change = store.get_value(child, _C_CHANGE)
                 if child_change is not None:
                     child_change.selected = new_state
-                child = self._changes_store.iter_next(child)
-            self._changes_store.set_value(it, _C_INCONSISTENT, False)
+                child = store.iter_next(child)
+            store.set_value(it, _C_INCONSISTENT, False)
         else:
             change.selected = new_state
-            self._sync_group_state(self._changes_store.iter_parent(it))
+            self._sync_group_state(store, store.iter_parent(it))
 
-    def _sync_group_state(self, parent):
+    def _on_creates_button(self, view, event):
+        """Right-click on a new-entry row: durably decline the creation
+        (engine.decline_create), as opposed to leaving it unticked --
+        which only skips it for this plan."""
+        if event.button != 3:
+            return False
+        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
+        if pathinfo is None:
+            return False
+        it = self._creates_store.get_iter(pathinfo[0])
+        change = self._creates_store.get_value(it, _C_CHANGE)
+        if change is None or not change.creates_entry:
+            return False
+        menu = Gtk.Menu()
+        item = Gtk.MenuItem(label='Never create this on %s'
+                            % present.label(change.target))
+        item.connect('activate',
+                     lambda *_a, c=change: self._decline_create(c))
+        menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _decline_create(self, change):
+        self.engine.decline_create(change.uuid, change.target)
+        self._status('%s will not be offered for creation on %s again.'
+                     % (change.title, present.label(change.target)))
+        self._run(self.engine.plan, self.r_planned, 'Planning...')
+
+    @staticmethod
+    def _sync_group_state(store, parent):
         if parent is None:
             return
-        child = self._changes_store.iter_children(parent)
+        child = store.iter_children(parent)
         states = []
         while child is not None:
-            states.append(self._changes_store.get_value(child, _C_ACTIVE))
-            child = self._changes_store.iter_next(child)
+            states.append(store.get_value(child, _C_ACTIVE))
+            child = store.iter_next(child)
         all_on, any_on = all(states), any(states)
-        self._changes_store.set_value(parent, _C_ACTIVE, all_on)
-        self._changes_store.set_value(parent, _C_INCONSISTENT,
-                                      any_on and not all_on)
+        store.set_value(parent, _C_ACTIVE, all_on)
+        store.set_value(parent, _C_INCONSISTENT,
+                        any_on and not all_on)
 
     # -- conflicts (decisions pane) -----------------------------------
 
@@ -378,18 +426,19 @@ class MultiSyncWindow(Gtk.Window):
                                                False, False, 0)
         else:
             placeholder = Gtk.Label(
-                label='Nothing needs your attention right now. Conflicts '
-                '(a field changed in more than one place since the last '
-                'sync) show up here after Fetch & Plan.', xalign=0, wrap=True)
+                label='Nothing needs your decision right now. When a '
+                'value changed in more than one place and Hakubun '
+                'cannot choose on its own, the choice appears here '
+                'after Fetch changes.', xalign=0, wrap=True)
             self._decisions_box.pack_start(placeholder, False, False, 0)
+        self._decisions_frame.set_label('Decisions (%d)' % len(conflicts))
         self._decisions_box.show_all()
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
         self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
-        self._run(self.engine.plan, self.r_planned, 'Planning...',
-                  self._current_mode())
+        self._run(self.engine.plan, self.r_planned, 'Planning...')
 
     def _resolve_structural(self, conflict):
         """Resolve a differing-episode-structures conflict with an
@@ -416,8 +465,7 @@ class MultiSyncWindow(Gtk.Window):
         self.engine.resolve_conflict(conflict, 'value', value=value)
         self._status('Resolved %s for %s, replanning...' % (
             _FIELD_LABELS.get(conflict.field, conflict.field), conflict.title))
-        self._run(self.engine.plan, self.r_planned, 'Planning...',
-                  self._current_mode())
+        self._run(self.engine.plan, self.r_planned, 'Planning...')
 
     # -- fetch / plan / apply -----------------------------------------
 
@@ -431,8 +479,7 @@ class MultiSyncWindow(Gtk.Window):
         # between providers/entries, so a close never stays parked
         # behind three full list downloads.
         errors = self.engine.fetch(should_cancel=self._cancel.is_set)
-        plan = self.engine.plan(self._current_mode(),
-                                should_cancel=self._cancel.is_set)
+        plan = self.engine.plan(should_cancel=self._cancel.is_set)
         plan.errors.update(errors)
         return plan
 
@@ -444,37 +491,22 @@ class MultiSyncWindow(Gtk.Window):
             self._status('Sync failed: %s' % error)
             return
         self._plan = plan
-        self._populate_changes(plan.changes)
+        ordinary = [c for c in plan.changes if not c.creates_entry]
+        creates = [c for c in plan.changes if c.creates_entry]
+        self._populate_changes(self._changes_store, ordinary)
         self._changes_view.expand_all()
+        self._populate_changes(self._creates_store, creates)
+        self._creates_view.expand_all()
+        self._changes_page_label.set_text('Changes (%d)' % len(ordinary))
+        self._creates_page_label.set_text('New entries (%d)'
+                                          % len(creates))
         self._set_decisions(plan.conflicts)
         self.apply_progress.hide()
         self.apply_button.set_sensitive(bool(plan.changes))
-        groups = {c.uuid for c in plan.changes}
-        if plan.clean:
-            self.preview_summary.set_text('Everything is in sync.')
-        else:
-            self.preview_summary.set_text(
-                '%d show(s): %d change(s), %d conflict(s)'
-                % (len(groups), len(plan.changes), len(plan.conflicts)))
-        first_sync = sum(1 for c in plan.changes if c.first_sync)
-        if first_sync:
-            self.preview_summary.set_text(
-                '%s %d first-sync overwrite(s) left unticked. %s'
-                % (self.preview_summary.get_text(), first_sync,
-                   present.FIRST_SYNC_HELP))
-        creates = sum(1 for c in plan.changes if c.creates_entry)
-        if creates:
-            self.preview_summary.set_text(
-                '%s %d new-entry add(s) left unticked. %s'
-                % (self.preview_summary.get_text(), creates,
-                   present.CREATES_ENTRY_HELP))
-        parts = ['%d change(s)' % len(plan.changes),
-                 '%d conflict(s)' % len(plan.conflicts),
-                 '%d identity issue(s)' % len(plan.identity)]
-        if plan.errors:
-            parts.append('errors: %s' % ', '.join('%s (%s)' % kv
-                                                  for kv in plan.errors.items()))
-        self._status('Planned: ' + ', '.join(parts))
+        self.summary_label.set_markup(
+            '<b>%s</b>' % GLib.markup_escape_text(
+                present.plan_summary(plan)))
+        self._status(present.plan_status(plan))
         self._refresh_identity()
 
     def s_apply(self):
@@ -486,13 +518,14 @@ class MultiSyncWindow(Gtk.Window):
         self.cancel_button.show()
         self.cancel_button.set_sensitive(True)
         selected = sum(1 for c in plan.changes if c.selected)
-        self._set_log('Applying %d change(s)...' % selected)
+        self._set_log('Syncing %d selected change(s)...' % selected)
         self._apply_log_scroll.show()
         self.apply_progress.set_fraction(0)
-        self.apply_progress.set_text('Applying...')
+        self.apply_progress.set_text('Syncing...')
         self.apply_progress.show()
-        self._run(self.engine.apply, self.r_applied, 'Applying changes...',
-                  plan, should_cancel=self._cancel.is_set,
+        self._run(self.engine.apply, self.r_applied,
+                  'Syncing selected changes...', plan,
+                  should_cancel=self._cancel.is_set,
                   forward_progress=True)
 
     def s_cancel_apply(self):
@@ -515,12 +548,14 @@ class MultiSyncWindow(Gtk.Window):
             self._status('Apply failed: %s' % error)
             return
         self.apply_progress.set_fraction(1.0)
-        verb = 'Cancelled after' if result.get('cancelled') else 'Applied:'
-        text = '%s %d local change(s), %d push(es)' % (
+        verb = 'Cancelled after' if result.get('cancelled') else 'Synced:'
+        text = '%s %d Hakubun update(s), %d site update(s)' % (
             verb, result['local'], result['pushed'])
         if result['errors']:
-            text += '. Failed: %s (their changes stay planned)' % ', '.join(
-                '%s (%s)' % kv for kv in result['errors'].items())
+            text += ('. Failed: %s (their changes will be offered '
+                     'again)' % ', '.join(
+                         '%s (%s)' % kv
+                         for kv in result['errors'].items()))
         self._append_log(text)
         self._status(text)
         self.s_fetch()
@@ -533,8 +568,8 @@ class MultiSyncWindow(Gtk.Window):
             text='Reset sync database?')
         dialog.format_secondary_text(
             'Identities, mappings, sync history, resolved decisions and '
-            'ownership choices are deleted and re-derived on the next fetch. '
-            'Your provider lists are NOT touched.')
+            'per-field sync rules are deleted and re-derived on the next '
+            'fetch. Your provider lists are NOT touched.')
         answer = dialog.run()
         dialog.destroy()
         if answer != Gtk.ResponseType.YES:
@@ -550,14 +585,20 @@ class MultiSyncWindow(Gtk.Window):
         self.store.reset()
         self._plan = None
         self._changes_store.clear()
+        self._creates_store.clear()
+        self._changes_page_label.set_text('Changes')
+        self._creates_page_label.set_text('New entries')
         self._set_decisions([])
         self.apply_progress.hide()
         self._set_log('')
         self._apply_log_scroll.hide()
-        self.preview_summary.set_text('')
+        self.summary_label.set_text('Fetch changes to see what would '
+                                    'sync.')
         self.apply_button.set_sensitive(False)
         self._refresh_identity()
-        self._status('Sync database reset. Run Fetch & Plan to re-derive it.')
+        self._refresh_policy_widgets()
+        self._status('Sync database reset. Run Fetch changes to '
+                     're-derive it.')
 
     def _set_log(self, text):
         self.apply_log.get_buffer().set_text(text)
@@ -567,40 +608,115 @@ class MultiSyncWindow(Gtk.Window):
         buf.insert(buf.get_end_iter(), ('' if buf.get_char_count() == 0
                                         else '\n') + text)
 
-    # -- Ownership -----------------------------------------------------
+    # -- Configuration (simple per-field rules) ------------------------
 
-    def _build_ownership_tab(self):
+    def _build_config_tab(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_border_width(8)
         head = Gtk.Label(xalign=0)
-        head.set_markup('<b>Where should hakubun sync to?</b>')
+        head.set_markup('<b>How should each field sync?</b>')
         page.pack_start(head, False, False, 0)
         page.pack_start(Gtk.Label(
-            label='Ownership decides who wins when a field changed in two '
-            'places. Single-sided changes always propagate; "Individual" '
-            'keeps a field per-site; "Ask" asks every time. Scores pushed to '
-            'coarser sites are rounded to their scale.', xalign=0, wrap=True),
-            False, False, 0)
-        if self.engine.primary:
-            active = Gtk.Label(xalign=0, wrap=True)
-            active.set_markup('You are signed into <b>%s</b>: changes you make '
-                              'in the app belong to it and count as your local '
-                              'edits.' % self.engine.primary.capitalize())
-            page.pack_start(active, False, False, 0)
+            label='Pick one rule per field: follow one site, keep the '
+            'best value, ask you when sites disagree, or don\'t sync it '
+            'at all. Scores pushed to sites with a coarser scale are '
+            'rounded to fit. The full policy matrix lives in the '
+            'Advanced tab; both views control the same settings.',
+            xalign=0, wrap=True), False, False, 0)
 
         providers = list(self.engine.adapters)
-        columns = ([('local', 'Local')]
-                   + [('provider:%s' % p, p.capitalize()
-                       + (' (active)' if p == self.engine.primary else ''))
-                      for p in providers]
-                   + [('merge', 'Merge'), ('individual', 'Individual'),
-                      ('ask', 'Ask')])
+        grid = Gtk.Grid(column_spacing=18, row_spacing=8)
+        grid.set_border_width(6)
+        self._policy_combos = {}
+        ownership = self.store.ownership()
+        for row, field in enumerate(USER_FIELDS):
+            grid.attach(Gtk.Label(label=_FIELD_LABELS.get(field, field),
+                                  xalign=0), 0, row, 1, 1)
+            combo = Gtk.ComboBoxText()
+            current = ownership[field].serialize()
+            for key, choice_label in present.policy_choices(
+                    field, providers, current):
+                combo.append(key, choice_label)
+            combo.set_active_id(current)
+            combo.connect('changed', self._on_policy_combo, field)
+            grid.attach(combo, 1, row, 1, 1)
+            self._policy_combos[field] = combo
+        page.pack_start(grid, False, False, 0)
+        return page
+
+    def _on_policy_combo(self, combo, field):
+        if self._policy_updating:
+            return
+        serialized = combo.get_active_id()
+        if serialized:
+            self._set_policy(field, serialized)
+
+    def _set_policy(self, field, serialized):
+        policy = FieldPolicy.parse(serialized)
+        self.store.set_ownership(field, policy)
+        self._status('%s now syncs as: %s'
+                     % (_FIELD_LABELS.get(field, field),
+                        present.policy_label(policy)))
+        self._refresh_policy_widgets()
+
+    def _refresh_policy_widgets(self):
+        """Reflect the store's current per-field policies into BOTH the
+        simple Configuration combos and the Advanced matrix -- either
+        one can change them, and the other must never show stale
+        state."""
+        self._policy_updating = True
+        try:
+            ownership = self.store.ownership()
+            for field, combo in getattr(self, '_policy_combos',
+                                        {}).items():
+                current = ownership[field].serialize()
+                if not combo.set_active_id(current):
+                    # Set through the matrix to something the simple
+                    # list doesn't offer for this field -- show the
+                    # truth rather than misreport it.
+                    combo.append(current, present.policy_label(
+                        FieldPolicy.parse(current)))
+                    combo.set_active_id(current)
+            for (field, policy_text), radio in getattr(
+                    self, '_matrix_radios', {}).items():
+                if policy_text == ownership[field].serialize():
+                    radio.set_active(True)
+        finally:
+            self._policy_updating = False
+
+    # -- Advanced: the full policy matrix ------------------------------
+
+    def _build_matrix_widget(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        head = Gtk.Label(xalign=0)
+        head.set_markup('<b>Full policy matrix</b>')
+        box.pack_start(head, False, False, 0)
+        box.pack_start(Gtk.Label(
+            label='Every combination, including ones the simple view '
+            'does not offer. A provider column makes that tracker '
+            'authoritative: its value wins everywhere, always. The rule '
+            'columns: Manual asks you when sides genuinely disagree, '
+            'Union combines sets, Highest/Lowest pick an extreme, '
+            'Progress favours the furthest episode. "Individual" keeps '
+            'a field per-site and never syncs it.',
+            xalign=0, wrap=True), False, False, 0)
+
+        providers = list(self.engine.adapters)
+        columns = ([('provider:%s' % p, p.capitalize())
+                    for p in providers]
+                   + [('reconcile:manual', 'Manual'),
+                      ('reconcile:union', 'Union'),
+                      ('reconcile:max', 'Highest'),
+                      ('reconcile:min', 'Lowest'),
+                      ('reconcile:progress', 'Progress'),
+                      ('individual', 'Individual')])
         grid = Gtk.Grid(column_spacing=18, row_spacing=10)
         grid.set_border_width(6)
         for col, (_policy, label) in enumerate(columns, start=1):
             header = Gtk.Label()
             header.set_markup('<b>%s</b>' % label)
             grid.attach(header, col, 0, 1, 1)
+        self._matrix_radios = {}
         ownership = self.store.ownership()
         for row, field in enumerate(USER_FIELDS, start=1):
             grid.attach(Gtk.Label(label=_FIELD_LABELS.get(field, field),
@@ -617,27 +733,22 @@ class MultiSyncWindow(Gtk.Window):
                 radio.connect('toggled', self._on_ownership_toggled,
                               field, policy_text)
                 grid.attach(radio, col, row, 1, 1)
-        page.pack_start(grid, False, False, 0)
-        return page
+                self._matrix_radios[(field, policy_text)] = radio
+        box.pack_start(grid, False, False, 0)
+        return box
 
     def _on_ownership_toggled(self, radio, field, policy_text):
-        if not radio.get_active():
+        if not radio.get_active() or self._policy_updating:
             return
-        policy = FieldPolicy.parse(policy_text)
-        self.store.set_ownership(field, policy)
-        self._status('Ownership: %s -> %s'
-                     % (_FIELD_LABELS.get(field, field), policy))
+        self._set_policy(field, policy_text)
 
     # -- Identity ------------------------------------------------------
 
     def _build_identity_tab(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_border_width(8)
-        page.pack_start(Gtk.Label(
-            label='Unresolved identities: entries with ambiguous matches '
-            'only. Exact ID links and single exact-title matches are linked '
-            'automatically and never appear here.', xalign=0, wrap=True),
-            False, False, 0)
+        self._identity_intro = Gtk.Label(xalign=0, wrap=True)
+        page.pack_start(self._identity_intro, False, False, 0)
 
         # Columns: provider, type, title, aka, status, py-object issue.
         self._identity_store = Gtk.ListStore(str, str, str, str, str,
@@ -716,8 +827,15 @@ class MultiSyncWindow(Gtk.Window):
                 media_type.capitalize() if media_type else '?',
                 self._display_title(issue['title'], aliases),
                 ' / '.join(others[:2]), issue['status'], issue])
-        self._identity_label.set_text(
-            'Identity (%d)' % len(self._identity_store))
+        count = len(self._identity_store)
+        self._identity_intro.set_markup(
+            ('<b>%d title(s) need matching:</b> Hakubun could not '
+             'decide on its own which entry on your other sites each '
+             'of these is. ' % count if count else
+             '<b>No titles need matching right now.</b> ')
+            + 'Certain matches (exact ID links, single exact-title '
+            'matches) are linked automatically and never appear here.')
+        self._identity_label.set_text('Identity (%d)' % count)
 
     def _selected_identity(self):
         model, it = self._identity_view.get_selection().get_selected()
@@ -833,15 +951,23 @@ class MultiSyncWindow(Gtk.Window):
         self._refresh_identity()
         self._status('Identity updated; fetch again to sync the entry.')
 
-    # -- Inspector -----------------------------------------------------
+    # -- Advanced (matrix, inspector, reset) ---------------------------
 
-    def _build_inspector_tab(self):
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    def _build_advanced_tab(self):
+        """Technical and destructive tools, deliberately out of the
+        main workflow: the full policy matrix, the identity inspector,
+        and the database reset."""
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         page.set_border_width(8)
+        page.pack_start(self._build_matrix_widget(), False, False, 0)
+
+        head = Gtk.Label(xalign=0)
+        head.set_markup('<b>Identity inspector</b>')
+        page.pack_start(head, False, False, 0)
         page.pack_start(Gtk.Label(
-            label='Identity inspector: enter one entry by its provider ID '
-            'and see how multisync resolved it: what it maps to on your '
-            'other providers, how each link was made, and its raw data.',
+            label='Enter one entry by its provider ID and see how '
+            'multisync resolved it: what it maps to on your other '
+            'providers, how each link was made, and its raw data.',
             xalign=0, wrap=True), False, False, 0)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         bar.pack_start(Gtk.Label(label='Provider:'), False, False, 0)
@@ -873,6 +999,19 @@ class MultiSyncWindow(Gtk.Window):
         out_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         out_scroll.add(self._inspect_output)
         page.pack_start(out_scroll, True, True, 0)
+
+        # Destructive, so it lives here rather than next to the Sync
+        # button -- same semantics and confirmation as before.
+        reset_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.reset_button = Gtk.Button(label='Reset sync database...')
+        self.reset_button.set_tooltip_text(
+            'Wipe the sync database (identities, mappings, history, '
+            'sync rules) and start clean. Your provider lists are '
+            'never touched; the next Fetch changes re-derives '
+            'everything.')
+        self.reset_button.connect('clicked', lambda *_a: self.s_reset())
+        reset_row.pack_start(self.reset_button, False, False, 0)
+        page.pack_start(reset_row, False, False, 0)
         return page
 
     def s_inspect(self):
@@ -916,9 +1055,11 @@ class MultiSyncWindow(Gtk.Window):
                         ' (%s)' % c['year'] if c.get('year') else '',
                         provs, esc(c.get('via', ''))))
             if r.atlas_hint:
-                p.append('\n\n<b>anime-relations atlas says:</b> %s'
-                         % self._mono(esc(', '.join(
-                             '%s=%s' % kv for kv in r.atlas_hint.items()))))
+                p.append('\n\n<b>%s says:</b> %s'
+                         % (esc(atlas_label(r)),
+                            self._mono(esc(', '.join(
+                                '%s=%s' % kv
+                                for kv in r.atlas_hint.items())))))
             return ''.join(p)
 
         p.append('\n<b>%s</b>%s%s' % (
@@ -938,7 +1079,7 @@ class MultiSyncWindow(Gtk.Window):
         rows = [row for row in r.fields
                 if row.per_provider or row.local not in (None, [], 0)]
         if rows and providers:
-            p.append('\n\n<b>Field data</b> (local | %s)'
+            p.append('\n\n<b>Field data</b> (policy; local | %s)'
                      % ' | '.join(prov.capitalize() for prov in providers))
             for row in rows:
                 cells = [self._fmt_value(row.field, row.local)]
@@ -947,8 +1088,10 @@ class MultiSyncWindow(Gtk.Window):
                     cells.append('-' if pv is None else '%s / %s' % (
                         self._fmt_value(row.field, pv['remote']),
                         self._fmt_value(row.field, pv['base'])))
-                p.append('\n  %s: %s' % (
+                p.append('\n  %s (<i>%s</i>): %s' % (
                     _FIELD_LABELS.get(row.field, row.field),
+                    esc(present.policy_label(row.policy))
+                    if row.policy else '-',
                     self._mono(esc(' | '.join(cells)))))
         return ''.join(p)
 

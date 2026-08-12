@@ -5,7 +5,6 @@ whose MAL id is already known from elsewhere but that provider has no
 mapping for yet -- the 'Kitsu knows the MAL id, but nothing ever
 checked whether AniList has it too' gap.
 """
-from hakubun.sync.models import SyncMode
 from conftest import FakeLib, show, make_engine
 
 
@@ -31,10 +30,12 @@ def test_discovery_links_a_provider_that_never_independently_matched(store):
     assert store.remote_get('anilist', '165159') == {}   # never fetched
     assert anilist.mal_id_lookups == ['56566']
 
-    # Rebase now sees AniList as a create target too, not just MAL.
-    plan = engine.plan(mode=SyncMode.REBASE)
+    # The plan now offers AniList as a create target too, not just MAL
+    # (unselected: creating an entry is an opt-in).
+    plan = engine.plan()
     creates = {c.target for c in plan.changes if c.creates_entry}
     assert creates == {'mal', 'anilist'}
+    assert all(not c.selected for c in plan.changes if c.creates_entry)
 
 
 def test_discovery_remembers_a_genuine_miss(store):

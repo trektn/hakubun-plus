@@ -7,6 +7,8 @@ def test_known_providers_anime():
     assert web_url('mal', 'anime', '1') == 'https://myanimelist.net/anime/1'
     assert web_url('anilist', 'anime', '1') == 'https://anilist.co/anime/1'
     assert web_url('kitsu', 'anime', '1') == 'https://kitsu.app/anime/1'
+    # Annict is anime-only; its URLs carry no media type.
+    assert web_url('annict', 'anime', '1') == 'https://annict.com/works/1'
 
 
 def test_known_providers_manga():

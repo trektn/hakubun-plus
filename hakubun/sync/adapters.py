@@ -24,7 +24,9 @@ class AdapterError(Exception):
 # 1.5s (~40/min) stays well clear of the former, and the retry loop
 # below absorbs the occasional 429 from the latter. MAL/Kitsu are more
 # lenient. (Values are conservative and easily tuned.)
-_PUSH_INTERVAL = {'anilist': 1.5, 'mal': 0.5, 'kitsu': 1.0}
+# Annict publishes no limit and returns no rate-limit headers at all, so
+# it gets the same conservative spacing as AniList rather than a guess.
+_PUSH_INTERVAL = {'anilist': 1.5, 'mal': 0.5, 'kitsu': 1.0, 'annict': 1.5}
 _DEFAULT_PUSH_INTERVAL = 1.0
 _RATE_LIMIT_RETRIES = 5
 _RATE_LIMIT_DEFAULT_WAIT = 60   # AniList's rate window is 60s
@@ -40,7 +42,7 @@ def is_rate_limited(error):
     return '429' in text or 'Too Many Requests' in text
 
 
-# Web URL templates, %-formatted with (mediatype, provider_id). MAL and
+# Web URL templates, %-formatted with the 'mt' and 'id' keys. MAL and
 # AniList route canonically by numeric id -- matches the exact patterns
 # hakubun/lib/libmal.py and libanilist.py already build for their own
 # 'url' fields. Kitsu's *canonical* URL uses a title slug (which the
@@ -49,9 +51,11 @@ def is_rate_limited(error):
 # numeric id directly, so that's used here as a pragmatic fallback
 # rather than requiring a slug just to open a page in a browser.
 _WEB_URL_TEMPLATES = {
-    'mal': 'https://myanimelist.net/%s/%s',
-    'anilist': 'https://anilist.co/%s/%s',
-    'kitsu': 'https://kitsu.app/%s/%s',
+    'mal': 'https://myanimelist.net/%(mt)s/%(id)s',
+    'anilist': 'https://anilist.co/%(mt)s/%(id)s',
+    'kitsu': 'https://kitsu.app/%(mt)s/%(id)s',
+    # Annict is anime-only and routes everything through /works.
+    'annict': 'https://annict.com/works/%(id)s',
 }
 
 
@@ -65,7 +69,7 @@ def web_url(provider, media_type, provider_id):
     if not template or not provider_id:
         return None
     mt = 'manga' if media_type == 'manga' else 'anime'
-    return template % (mt, provider_id)
+    return template % {'mt': mt, 'id': provider_id}
 
 
 class ProviderAdapter:
@@ -336,11 +340,11 @@ class ProviderAdapter:
 
     def add(self, provider_id, changes, title=None, on_wait=None,
            cancel=None):
-        """Create a NEW library entry (see SyncEngine._plan_rebase_add:
-        REBASE additionally creates the show on any connected, mapped
-        provider that doesn't have it yet). Same shape as push(), but
-        calls the lib's add_show(); no my_id since there's no existing
-        entry to address.
+        """Create a NEW library entry on a provider that has none (see
+        membership.py: whether an entry belongs on a tracker is its own
+        question, answered there). Same shape as push(), but calls the
+        lib's add_show(); no my_id since there's no existing entry to
+        address.
 
         Returns (sent, my_id): `my_id` is the provider's new
         library-entry id when it reports one (Kitsu, both backends),
@@ -354,6 +358,37 @@ class ProviderAdapter:
         new_id = self._send(self.lib.add_show, item, cancel, on_wait)
         return sent, (str(new_id) if new_id is not None else None)
 
+    def can_remove(self):
+        """Whether this provider supports deleting a library entry.
+
+        Defaults to FALSE when the lib says nothing: every lib that can
+        really delete declares `can_delete` in its mediatypes dict, and
+        the base lib.delete_show only raises NotImplementedError. An
+        optimistic default would turn a silently unimplemented delete
+        into a Mirror that reports removals it never performed."""
+        return bool(self.mediainfo.get('can_delete', False))
+
+    def remove(self, provider_id, title=None, my_id=None, on_wait=None,
+               cancel=None):
+        """Delete an EXISTING library entry from this provider.
+
+        `my_id` is the provider's library-entry id, persisted from the
+        last fetch as remote-state '_my_id': AniList and both Kitsu
+        backends address a delete by it, MAL by the media id. Paced and
+        rate-limited exactly like push()/add(); a real failure raises
+        AdapterError so the engine can isolate it to this provider.
+
+        Returns True when the delete was sent, False when the provider
+        cannot delete at all (see can_remove) -- never a silent no-op
+        reported as success.
+        """
+        if not self.can_remove():
+            return False
+        item = {'id': self._coerce_id(provider_id), 'my_id': my_id,
+                'title': title or ''}
+        self._send(self.lib.delete_show, item, cancel, on_wait)
+        return True
+
     def values_equivalent(self, field, a, b):
         """True when two canonical values project to the same value on
         this provider's scale. Keeps quantization residue from looping:
@@ -365,8 +400,7 @@ class ProviderAdapter:
             step = self.mediainfo.get('score_step', 1)
             return (normalize.provider_score(a, smax, step)
                     == normalize.provider_score(b, smax, step))
-        from hakubun.sync.diff import eq
-        return eq(a, b)
+        return normalize.values_equal(field, a, b)
 
     @staticmethod
     def _coerce_id(provider_id):

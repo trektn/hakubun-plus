@@ -298,7 +298,9 @@ def test_atlas_never_consulted_for_manga_entries(store, tmp_path):
     anime_ids = resolver._external_ids(
         NormalizedEntry(provider='mal', provider_id='1', title='X',
                         media_type='anime'))
-    assert 'kitsu' in anime_ids and anime_ids['kitsu'][1] == 'atlas'
+    # The source names the specific database, not a generic 'atlas':
+    # a link's authority depends on which one said it.
+    assert 'kitsu' in anime_ids and anime_ids['kitsu'][1] == 'anime-relations'
 
     # But NOT for manga, even with the identical provider+id.
     manga_ids = resolver._external_ids(

@@ -42,22 +42,26 @@ class IdentityResolver:
     def _external_ids(self, entry):
         """{provider: (id, source)}. Provider-published ids ('published'
         -- e.g. AniList/Kitsu-GraphQL's own idMal) take priority; the
-        community anime-relations atlas ('atlas') fills in anything the
-        provider itself doesn't publish. The source is kept (not just
-        the id) so a mapping created from this can record exactly how
-        it was linked, for the Inspector.
+        community id atlas fills in anything the provider itself doesn't
+        publish. The source is kept (not just the id) so a mapping
+        created from this can record exactly how it was linked, for the
+        Inspector -- and it names the specific database ('anime-
+        relations', 'arm'), since they are not equally authoritative and
+        an Annict link can only have come from arm.
 
-        The atlas is anime-only (it is erengy/anime-relations -- every
-        rule is a MAL|Kitsu|AniList *anime* id triple) and must never
-        be consulted for a manga entry: the same numeric id space means
-        a manga id would silently collide with an unrelated anime's
-        rule and produce a nonsense cross-reference.
+        The atlas is anime-only -- every anime-relations rule is a
+        MAL|Kitsu|AniList *anime* id triple, and arm relates anime too
+        -- and must never be consulted for a manga entry: the same
+        numeric id space means a manga id would silently collide with an
+        unrelated anime's rule and produce a nonsense cross-reference.
         """
         ids = {p: (pid, 'published') for p, pid in entry.external_ids.items()}
         if self._atlas is not None and entry.media_type == 'anime':
+            sources = self._atlas.lookup_sources(
+                entry.provider, entry.provider_id)
             for provider, pid in self._atlas.lookup(
                     entry.provider, entry.provider_id).items():
-                ids.setdefault(provider, (pid, 'atlas'))
+                ids.setdefault(provider, (pid, sources.get(provider, 'atlas')))
         ids.pop(entry.provider, None)
         return ids
 
@@ -201,8 +205,7 @@ class IdentityResolver:
             if not m:
                 continue
             ent = store.get_entity(m['uuid']) or {}
-            source_desc = ('published' if source == 'published' else
-                           'anime-relations')
+            source_desc = 'published' if source == 'published' else source
             if ent.get('media_type') != entry.media_type:
                 mismatched.append((m['uuid'], source_desc, other_provider,
                                    other_id, ent.get('media_type')))
@@ -347,7 +350,7 @@ class IdentityResolver:
                    for m in self._store.mappings_of(uid)):
                 continue
             via = ('published by %s' % entry.provider if source == 'published'
-                  else 'anime-relations atlas (seen via %s)' % entry.provider)
+                  else '%s atlas (seen via %s)' % (source, entry.provider))
             self._store.add_mapping(uid, other_provider, other_id,
                                     confirmed=True, via=via)
 

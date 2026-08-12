@@ -1,4 +1,4 @@
-"""SQLite persistence for multisync (schema: docs/multisync.md §5)."""
+"""SQLite persistence for multisync (schema: docs/multisync.md §10)."""
 
 import json
 import sqlite3
@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS resolved_absent(
     provider TEXT NOT NULL,
     checked_at REAL NOT NULL,
     PRIMARY KEY(uuid, provider));
+CREATE TABLE IF NOT EXISTS membership(
+    uuid TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    want TEXT NOT NULL,
+    reason TEXT,
+    decided_at REAL NOT NULL,
+    PRIMARY KEY(uuid, provider));
 """
 
 
@@ -128,6 +135,38 @@ class SyncStore:
         self._ensure_column('identity_conflicts', 'entry', 'TEXT')
         self._ensure_column('mappings', 'via', 'TEXT')
         self._ensure_column('local_state', 'source', 'TEXT')
+        self._ensure_column('resolved_absent', 'reason', 'TEXT')
+        self._migrate_membership()
+
+    def _migrate_membership(self):
+        """Move the two resolved_absent reasons that were always USER
+        DECISIONS into the membership table, leaving resolved_absent as
+        what it should have been all along: the network lookup cache.
+
+        Both migrate to 'ignore' ("leave this provider as it is"), never
+        to 'absent'. 'absent' additionally means "remove the entry if
+        the provider has one", and neither historical reason carries
+        that intent: 'declined' meant only "don't create it here", and
+        'deleted' was an OBSERVATION that the user removed it on the
+        website. Promoting either into a deletion proposal would let a
+        stale row silently destroy a list entry the user has since
+        re-added on purpose -- and deletions on real accounts are the
+        one thing here that cannot be undone.
+        """
+        rows = self._conn.execute(
+            "SELECT uuid, provider, reason FROM resolved_absent"
+            " WHERE reason IN ('declined', 'deleted')").fetchall()
+        if not rows:
+            return
+        now = time.time()
+        for row in rows:
+            self._conn.execute(
+                'INSERT OR IGNORE INTO membership(uuid, provider, want,'
+                ' reason, decided_at) VALUES(?,?,?,?,?)',
+                (row['uuid'], row['provider'], 'ignore', row['reason'],
+                 now))
+        self._conn.execute("DELETE FROM resolved_absent WHERE reason IN"
+                           " ('declined', 'deleted')")
 
     def _ensure_column(self, table, column, decl):
         cols = {r['name'] for r in
@@ -334,22 +373,112 @@ class SyncStore:
             'SELECT * FROM mappings WHERE provider=?',
             (provider,)).fetchall()]
 
-    def mark_absent(self, uid, provider):
-        """Record that a cross-provider id lookup (engine.py's
-        _discover_cross_ids) asked `provider` for this entity and got a
-        genuine 'no entry there' answer -- so the next fetch doesn't
-        repeat the same network call forever. Superseded automatically
-        the moment a REAL mapping appears for (uid, provider) through
-        any path (mappings_of_provider is checked first), so this can
-        never block a later legitimate add or identity link."""
+    def mark_absent(self, uid, provider, reason='lookup_miss'):
+        """Record that a cross-provider id LOOKUP came back empty: this
+        entity is (as of that answer) not on `provider`, so engine.py's
+        _discover_cross_ids doesn't repeat the same network call every
+        fetch forever.
+
+        This table is a network cache, not a decision. User decisions
+        about whether an entry belongs on a provider live in
+        `membership` (set_membership) -- keeping them apart is what
+        stops a stale, purely observational miss from ever being read
+        as "the user wants this removed from Kitsu".
+
+        The row is superseded automatically the moment a REAL mapping
+        appears for (uid, provider) through any path
+        (mappings_of_provider is checked first), so it can never block
+        a later legitimate add or identity link; a re-added entry's
+        fetch likewise gives it a remote snapshot again, which trumps
+        the absence for field planning. clear_absent() forgets it
+        deliberately."""
         self._exec(
             'INSERT OR REPLACE INTO resolved_absent(uuid, provider,'
-            ' checked_at) VALUES(?,?,?)', (uid, provider, time.time()))
+            ' checked_at, reason) VALUES(?,?,?,?)',
+            (uid, provider, time.time(), reason))
+
+    def clear_absent(self, uid, provider):
+        """Forget a recorded absence/exclusion: the next plan may
+        propose creation again."""
+        self._exec('DELETE FROM resolved_absent WHERE uuid=? AND'
+                   ' provider=?', (uid, provider))
 
     def absent_for_provider(self, provider):
         return {r['uuid'] for r in self._exec(
             'SELECT uuid FROM resolved_absent WHERE provider=?',
             (provider,)).fetchall()}
+
+    # -- membership decisions ------------------------------------------
+    #
+    # Whether an entry should EXIST on a provider is its own question,
+    # with its own persisted state -- deliberately NOT folded into
+    # field ownership (ownership says where a field's value comes from;
+    # it can never say whether a list entry belongs somewhere). Three
+    # distinct wants, because "never add this to Kitsu" and "Kitsu
+    # should not have this" are different states with different
+    # consequences:
+    #
+    #   'present'  the entry belongs on this provider: propose creating
+    #              it there whenever the provider doesn't have it
+    #   'absent'   the entry does NOT belong here: propose REMOVING it
+    #              whenever the provider does have it. Only ever written
+    #              from an explicit user action -- nothing infers it
+    #   'ignore'   whatever this provider currently holds is fine:
+    #              never propose an add or a remove, and stop asking
+    #
+    # No row at all means "undecided": Mirror surfaces the discrepancy
+    # and ordinary Sync offers the (unticked) creation.
+
+    WANTS = ('present', 'absent', 'ignore')
+
+    def set_membership(self, uid, provider, want, reason=None):
+        """Persist a membership decision (see WANTS). Passing None
+        clears it back to undecided."""
+        if want is None:
+            self._exec('DELETE FROM membership WHERE uuid=? AND'
+                       ' provider=?', (uid, provider))
+            return
+        if want not in self.WANTS:
+            raise ValueError('unknown membership want: %s' % want)
+        self._exec(
+            'INSERT OR REPLACE INTO membership(uuid, provider, want,'
+            ' reason, decided_at) VALUES(?,?,?,?,?)',
+            (uid, provider, want, reason, time.time()))
+
+    def membership_of(self, uid):
+        """{provider: want} for one entity (only decided providers)."""
+        return {r['provider']: r['want'] for r in self._exec(
+            'SELECT provider, want FROM membership WHERE uuid=?',
+            (uid,)).fetchall()}
+
+    def membership_many(self, uids):
+        """{uid: {provider: want}} in a few queries -- the planner and
+        the mirror planner both need this for every entity at once."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, provider, want FROM membership WHERE'
+                    ' uuid IN (%s)' % marks, chunk).fetchall():
+                out.setdefault(r['uuid'], {})[r['provider']] = r['want']
+        return out
+
+    def membership_reason(self, uid, provider):
+        row = self._exec(
+            'SELECT reason FROM membership WHERE uuid=? AND provider=?',
+            (uid, provider)).fetchone()
+        return row['reason'] if row else None
+
+    def absent_reason(self, uid, provider):
+        """The stored reason for an absence row, or None when there is
+        no row (rows from before reasons existed read as the historical
+        default, 'lookup_miss')."""
+        row = self._exec(
+            'SELECT reason FROM resolved_absent WHERE uuid=? AND'
+            ' provider=?', (uid, provider)).fetchone()
+        if row is None:
+            return None
+        return row['reason'] or 'lookup_miss'
 
     def mappings_many(self, uids):
         """{uid: [mapping, ...]} for many entities in a few queries.

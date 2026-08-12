@@ -475,10 +475,9 @@ class HakubunWindow(Gtk.ApplicationWindow):
             self._main_view.set_status_idle(
                 'Multi-sync: an operation is already running.')
             return
-        (mode, plan_only) = present.settings_sync_mode(self._config)
-        win.set_mode(mode)
-        self._main_view.set_status_idle('Multi-syncing (%s%s)...' % (
-            mode.name.lower(), ', review' if plan_only else ''))
+        plan_only = present.settings_plan_only(self._config)
+        self._main_view.set_status_idle(
+            'Multi-syncing%s...' % (' (review)' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._multisync_planned(
                      win, plan, error),
@@ -505,10 +504,10 @@ class HakubunWindow(Gtk.ApplicationWindow):
         if plan.conflicts:
             win.present()
             self._main_view.set_status_idle(
-                'Multi-sync needs your decision on %d conflict(s).'
+                'Multi-sync: %d decision(s) needed -- see the sync window.'
                 % len(plan.conflicts))
             return
-        (_mode, plan_only) = present.settings_sync_mode(self._config)
+        plan_only = present.settings_plan_only(self._config)
         if plan_only:
             # Checked "Fetch & plan only": the point of the setting is
             # seeing the plan, so surface the window even when the plan
@@ -521,21 +520,20 @@ class HakubunWindow(Gtk.ApplicationWindow):
                     'Multi-sync: already in sync.')
             else:
                 self._main_view.set_status_idle(
-                    'Multi-sync: %d change(s) planned -- review and '
-                    'apply from the sync window.' % len(plan.changes))
+                    'Multi-sync: found %d change(s) -- review and '
+                    'sync from the sync window.' % len(plan.changes))
             return
         if not plan.changes:
             self._main_view.set_status_idle('Multi-sync: already in sync.')
             return
-        if any(c.first_sync for c in plan.changes):
-            # First contact with at least one tracker for some field:
-            # there is no shared base, so the "winner" is just whichever
-            # list was read first. Those rows are planned unticked; a
-            # headless Sync must never apply them for the user.
+        if all(c.creates_entry for c in plan.changes):
+            # Only unticked new-entry creates: nothing would apply
+            # headlessly, so surface the window for the opt-in instead
+            # of silently doing nothing.
             win.present()
             self._main_view.set_status_idle(
-                'Multi-sync: first sync for some fields -- review what '
-                'would be overwritten before applying.')
+                'Multi-sync: %d new-entry add(s) need your opt-in in '
+                'the sync window.' % len(plan.changes))
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

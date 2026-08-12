@@ -14,11 +14,20 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-"""Multi-provider Sync window (docs/multisync.md §8).
+"""Multi-provider Sync window (docs/multisync.md §12).
 
-Three sections: the sync Preview (changes / conflicts / apply), the
-field-ownership matrix ("Where should hakubun sync to?" -- lives here,
-not in Settings), and the identity-conflict workflow.
+Organized around the user's questions, not the engine's architecture:
+
+* Sync -- what will change (Changes / New entries side by side with
+  the Decisions pane), how much needs the user, and the Sync button.
+* Configuration -- one friendly rule picker per field ("Keep furthest
+  progress", "Ask me when they differ", ...).
+* Identity -- titles that need matching across providers.
+* Advanced -- the full policy matrix, the identity Inspector and the
+  destructive Reset, deliberately out of the main workflow.
+
+'Hakubun' is the app's own reconciled state (the engine's 'local');
+it is always labeled as the app, never as a provider.
 """
 
 import threading
@@ -35,8 +44,9 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QGridLayout,
 
 from hakubun import utils
 from hakubun.sync import adapters, present
-from hakubun.sync.models import (FieldChange, FieldPolicy, NormalizedEntry,
-                                 SyncCancelled, SyncMode, USER_FIELDS)
+from hakubun.sync.models import (FieldPolicy, NormalizedEntry,
+                                 SyncCancelled, SyncOperation, USER_FIELDS)
+from hakubun.sync.inspect import atlas_label as _atlas_label
 from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
 from hakubun.sync.store import SyncStore
 
@@ -70,6 +80,9 @@ class SyncWindow(QDialog):
         self._plan = None
         self._closed = False
         self._cancel = threading.Event()
+        # Guards the two policy views (Configuration combos, Advanced
+        # matrix) against feedback loops while one refreshes the other.
+        self._policy_updating = False
 
         if engine is not None:
             # Injection seam for tests: a prebuilt SyncEngine (fake
@@ -92,21 +105,21 @@ class SyncWindow(QDialog):
             self.store = SyncStore(uibridge.store_path(media_type))
             self.engine, self._adapter_errors = present.build_engine(
                 self.store, accountman, media_type)
-        # The signed-in account is the app's editing surface (the
-        # working tree): its changes fold in as local intent. Kept as
-        # an attribute (not just engine.primary, which stays None when
-        # the account has no adapter) so the caller can tell whether a
-        # cached window still belongs to the loaded account.
+        # The signed-in account, kept for display (icons/labels) and
+        # so the caller can tell whether a cached window still belongs
+        # to the loaded account (engine.primary stays None when the
+        # account has no adapter). It carries no sync authority --
+        # field policies do.
         self.active_api = active_api
         if active_api and active_api in self.engine.adapters:
             self.engine.primary = active_api
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_preview_tab(), 'Preview')
-        self.tabs.addTab(self._build_ownership_tab(), 'Ownership')
+        self.tabs.addTab(self._build_sync_tab(), 'Sync')
+        self.tabs.addTab(self._build_config_tab(), 'Configuration')
         self.tabs.addTab(self._build_identity_tab(), 'Identity')
-        self.tabs.addTab(self._build_inspector_tab(), 'Inspector')
+        self.tabs.addTab(self._build_advanced_tab(), 'Advanced')
         layout.addWidget(self.tabs)
         self.status_label = QLabel()
         layout.addWidget(self.status_label)
@@ -120,16 +133,16 @@ class SyncWindow(QDialog):
                         'type).' % media_type)
         self._refresh_identity()
 
-    # -- Preview -------------------------------------------------------
+    # -- Sync ----------------------------------------------------------
 
-    def _build_preview_tab(self):
+    def _build_sync_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
 
         bar = QHBoxLayout()
         # The signed-in tracker's icon, same imagery the main window
-        # uses (utils.available_libs) -- an at-a-glance answer to
-        # "whose state feeds 'local' here?".
+        # uses (utils.available_libs). Signed-in is shown as a fact
+        # about accounts, never as what 'Hakubun' means.
         if self.engine.primary:
             lib_info = utils.available_libs.get(self.engine.primary)
             if lib_info:
@@ -138,50 +151,47 @@ class SyncWindow(QDialog):
                     24, 24, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                     QtCore.Qt.TransformationMode.SmoothTransformation))
                 icon_label.setToolTip(
-                    'Signed into %s: its changes count as your local '
-                    'edits.' % lib_info[0])
+                    'Signed into %s. Hakubun keeps its own state; '
+                    'the signed-in site gets no special say in the '
+                    'sync.' % lib_info[0])
                 bar.addWidget(icon_label)
-        bar.addWidget(QLabel('Mode:'))
-        self.mode_combo = QComboBox()
-        for mode, mode_label in present.MODES:
-            self.mode_combo.addItem(mode_label, mode)
-        bar.addWidget(self.mode_combo)
+        # The headline: how much will change, how much needs a human,
+        # what would create entries -- the first thing to read.
+        self.summary_label = QLabel('Fetch changes to see what would '
+                                    'sync.')
+        bar.addWidget(self.summary_label)
         bar.addStretch()
-        self.fetch_button = QPushButton('Fetch && Plan')
+        self.fetch_button = QPushButton('Fetch changes')
+        self.fetch_button.setToolTip(
+            'Download each site\'s list and work out what would sync. '
+            'Nothing is written anywhere until you press Sync.')
         self.fetch_button.clicked.connect(self.s_fetch)
-        self.apply_button = QPushButton('Apply')
+        self.apply_button = QPushButton('Sync selected')
+        self.apply_button.setToolTip(
+            'Carry out every ticked change: update Hakubun and push '
+            'to the sites.')
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.s_apply)
         self.cancel_button = QPushButton('Cancel')
         self.cancel_button.setToolTip(
             'Stop the sync after the current push. Whatever was already '
-            'pushed stays; the rest re-plans.')
+            'pushed stays; the rest is offered again next time.')
         self.cancel_button.setVisible(False)
         self.cancel_button.clicked.connect(self.s_cancel_apply)
-        self.reset_button = QPushButton('Reset database...')
-        self.reset_button.setToolTip(
-            'Wipe the sync database (identities, mappings, history, '
-            'ownership) and start clean. Your provider lists are never '
-            'touched; the next Fetch re-derives everything.')
-        self.reset_button.clicked.connect(self.s_reset)
         bar.addWidget(self.fetch_button)
         bar.addWidget(self.apply_button)
         bar.addWidget(self.cancel_button)
-        bar.addWidget(self.reset_button)
         layout.addLayout(bar)
 
-        # What this mode will actually do, naming the signed-in account
-        # (mirror without that context is a footgun).
-        self.mode_context = QLabel()
-        self.mode_context.setWordWrap(True)
-        self.mode_combo.currentIndexChanged.connect(
-            self._update_mode_context)
-        self._update_mode_context()
-        layout.addWidget(self.mode_context)
+        # How the plan is decided (field rules), so the list below
+        # never reads as magic.
+        plan_context = QLabel(present.plan_context())
+        plan_context.setWordWrap(True)
+        layout.addWidget(plan_context)
 
         legend = QLabel(
-            '<span style="color:#42a5f5">⬆ push to a site</span> · '
-            '<span style="color:#4caf50">⬇ pull into Hakubun</span> · '
+            '<span style="color:#42a5f5">⬆ updates a site</span> · '
+            '<span style="color:#4caf50">⬇ updates Hakubun</span> · '
             'uncheck anything to skip it')
         layout.addWidget(legend)
 
@@ -197,7 +207,8 @@ class SyncWindow(QDialog):
         # be narrowed down instead of scrolled through as one list.
         self.preview_tabs = QTabWidget()
         self._all_changes_tree = None   # built by the first r_planned
-        self._change_items = {}   # id(FieldChange) -> [item in each tab
+        self._new_entries_tree = None   # the '__new__' category's tree
+        self._change_items = {}   # id(SyncOperation) -> [item in each tab
                                   # showing it] -- keeps checkbox state
                                   # in sync across tabs (see
                                   # _on_change_item_toggled): the SAME
@@ -210,7 +221,7 @@ class SyncWindow(QDialog):
         self._category_trees = {}
         self._category_ids = {}
         self._category_order = None
-        # (uuid, field, target) -> the FieldChange object last shown for
+        # (uuid, field, target) -> the SyncOperation last shown for
         # that slot, so a replan that reproduces an identical change can
         # reuse the SAME object and keep its `.selected` -- otherwise
         # every replan (e.g. after resolving one conflict) silently
@@ -218,7 +229,7 @@ class SyncWindow(QDialog):
         self._prev_change_index = {}
         splitter.addWidget(self.preview_tabs)
 
-        self.decisions_box = QGroupBox('Needs your decision')
+        self.decisions_box = QGroupBox('Decisions')
         decisions_outer = QVBoxLayout(self.decisions_box)
         self.decisions_scroll = QScrollArea()
         self.decisions_scroll.setWidgetResizable(True)
@@ -246,24 +257,16 @@ class SyncWindow(QDialog):
         self.apply_log.setVisible(False)
         layout.addWidget(self.apply_progress)
         layout.addWidget(self.apply_log)
-
-        self.preview_summary = QLabel()
-        self.preview_summary.setWordWrap(True)
-        layout.addWidget(self.preview_summary)
         return page
-
-    def _update_mode_context(self):
-        self.mode_context.setText(present.mode_context(
-            self.mode_combo.currentData(), self.engine.primary))
 
     # -- preview rendering --------------------------------------------
 
     _PULL_COLOR = QtGui.QColor('#4caf50')
     _PUSH_COLOR = QtGui.QColor('#42a5f5')
     _CONFLICT_COLOR = QtGui.QColor('#ff9800')
-    # First-sync overwrites: planned, previewed, but unticked -- same
+    # New-entry creates: planned, previewed, but unticked -- same
     # "needs a human" hue as a conflict, because that is what it is.
-    _FIRST_SYNC_COLOR = QtGui.QColor('#ff9800')
+    _CREATE_COLOR = QtGui.QColor('#ff9800')
 
     def _fmt_value(self, field, value):
         return present.fmt_value(field, value)
@@ -278,11 +281,10 @@ class SyncWindow(QDialog):
         arrow, color = (('⬇', self._PULL_COLOR) if direction == 'pull'
                         else ('⬆', self._PUSH_COLOR))
         item = QTreeWidgetItem(['%s %s' % (arrow, text)])
-        item.setForeground(0, self._FIRST_SYNC_COLOR
-                           if change.first_sync or change.creates_entry
-                           else color)
+        item.setForeground(0, self._CREATE_COLOR
+                           if change.creates_entry else color)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-        # Honour the plan's own selection: a first-sync overwrite is
+        # Honour the plan's own selection: a new-entry create is
         # planned unticked, and ticking it must be a deliberate act.
         item.setCheckState(0, QtCore.Qt.CheckState.Checked if change.selected
                            else QtCore.Qt.CheckState.Unchecked)
@@ -318,7 +320,7 @@ class SyncWindow(QDialog):
                 item = self._change_item(change)
                 group.addChild(item)
             # Set AFTER the children so Qt's autotristate derives the
-            # header from them (a group of unticked first-sync rows must
+            # header from them (a group of unticked create rows must
             # not show as fully checked).
             states = {c.selected for c in group_changes}
             group.setCheckState(0, QtCore.Qt.CheckState.Checked
@@ -333,13 +335,42 @@ class SyncWindow(QDialog):
         tree = QTreeWidget()
         tree.setHeaderHidden(True)
         tree.itemChanged.connect(self._on_change_item_toggled)
+        tree.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        tree.customContextMenuRequested.connect(
+            lambda pos, t=tree: self._change_context_menu(t, pos))
         return tree
+
+    def _change_context_menu(self, tree, pos):
+        """Right-click on a new-entry row: durably decline the creation
+        (engine.decline_create), as opposed to leaving it unticked --
+        which only skips it for this plan."""
+        item = tree.itemAt(pos)
+        if item is None:
+            return
+        change = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(change, SyncOperation) \
+                or not change.creates_entry:
+            return
+        menu = QMenu(self)
+        action = menu.addAction(
+            'Never create this on %s' % present.label(change.target))
+        action.triggered.connect(
+            lambda _checked=False, c=change: self._decline_create(c))
+        menu.exec(tree.viewport().mapToGlobal(pos))
+
+    def _decline_create(self, change):
+        self.engine.decline_create(change.uuid, change.target)
+        self._status('%s will not be offered for creation on %s '
+                     'again.' % (change.title,
+                                 present.label(change.target)))
+        self._replan()
 
     def _on_change_item_toggled(self, item, column):
         if column != 0:
             return
         change = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-        if not isinstance(change, FieldChange):
+        if not isinstance(change, SyncOperation):
             return   # a show-group header; Qt's own tristate handles it
         change.selected = (item.checkState(0)
                           == QtCore.Qt.CheckState.Checked)
@@ -413,14 +444,14 @@ class SyncWindow(QDialog):
                     self._decision_card(conflict))
         else:
             placeholder = QLabel(
-                'Nothing needs your attention right now. Conflicts '
-                '(a field changed in more than one place since the '
-                'last sync) will show up here after Fetch & Plan.')
+                'Nothing needs your decision right now. When a value '
+                'changed in more than one place and Hakubun cannot '
+                'choose on its own, the choice appears here after '
+                'Fetch changes.')
             placeholder.setWordWrap(True)
             self.decisions_layout.insertWidget(
                 self.decisions_layout.count() - 1, placeholder)
-        self.decisions_box.setTitle(
-            'Needs your decision (%d)' % len(conflicts))
+        self.decisions_box.setTitle('Decisions (%d)' % len(conflicts))
 
     def _resolve_inline(self, conflict, source):
         self.engine.resolve_conflict(conflict, source)
@@ -448,8 +479,7 @@ class SyncWindow(QDialog):
     def _replan(self):
         # Plan only -- resolution changed local state, no need to hit
         # the network again.
-        self._run(self.engine.plan, self.r_planned, 'Planning...',
-                  self.mode_combo.currentData())
+        self._run(self.engine.plan, self.r_planned, 'Planning...')
 
     @staticmethod
     def _iter_tree_changes(tree):
@@ -458,17 +488,16 @@ class SyncWindow(QDialog):
             for j in range(group.childCount()):
                 child = group.child(j)
                 data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
-                if isinstance(data, FieldChange):
+                if isinstance(data, SyncOperation):
                     yield child, data
 
     def _iter_change_items(self):
-        # 'All' (always tab 0) holds every change exactly once; reading
-        # from it (rather than every tab) avoids processing the same
-        # change twice when it also appears in a category tab.
-        tree = self._all_changes_tree
-        if tree is None:
-            return   # no plan rendered yet -- nothing to iterate
-        yield from self._iter_tree_changes(tree)
+        # 'Changes' holds every ordinary change exactly once and 'New
+        # entries' every create exactly once; together they cover the
+        # whole plan without double-counting the per-field tabs.
+        for tree in (self._all_changes_tree, self._new_entries_tree):
+            if tree is not None:
+                yield from self._iter_tree_changes(tree)
 
     def s_fetch(self):
         self._cancel.clear()
@@ -480,24 +509,23 @@ class SyncWindow(QDialog):
         # between providers/entries, so a close never stays parked
         # behind three full list downloads.
         errors = self.engine.fetch(should_cancel=self._cancel.is_set)
-        plan = self.engine.plan(self.mode_combo.currentData(),
-                                should_cancel=self._cancel.is_set)
+        plan = self.engine.plan(should_cancel=self._cancel.is_set)
         plan.errors.update(errors)
         return plan
 
     @staticmethod
     def _change_content_equal(a, b):
-        """Whether two FieldChanges describe the same proposed edit --
+        """Whether two SyncOperations describe the same proposed edit --
         everything except `.selected`, which is the user's own
         tick/untick and must never be what decides whether a replan
         treats a change as 'the same one' or a new proposal."""
         return (a.old == b.old and a.new == b.new and a.source == b.source
                 and a.title == b.title and a.remote_raw == b.remote_raw
-                and a.first_sync == b.first_sync
+                and a.reason == b.reason
                 and a.creates_entry == b.creates_entry)
 
     def _reconcile_changes(self, changes):
-        """Swap a freshly-planned FieldChange for the previous render's
+        """Swap a freshly-planned SyncOperation for the previous render's
         object when it describes the exact same edit (matched on
         uuid+field+target, then content), so the user's tick survives
         and -- just as importantly -- _update_category_tabs below can
@@ -531,7 +559,20 @@ class SyncWindow(QDialog):
         for key, changes, label in categories:
             tree = self._make_preview_tree()
             self._populate_preview_tree(tree, changes)
-            self.preview_tabs.addTab(tree, label)
+            if key == '__new__':
+                # New entries get their own tab, never mixed into the
+                # ordinary change list: "create this title on another
+                # site" is a different kind of act than a field update,
+                # and it stays opt-in. The tab carries its own help.
+                holder = QWidget()
+                holder_layout = QVBoxLayout(holder)
+                help_label = QLabel(present.CREATES_ENTRY_HELP)
+                help_label.setWordWrap(True)
+                holder_layout.addWidget(help_label)
+                holder_layout.addWidget(tree, 1)
+                self.preview_tabs.addTab(holder, label)
+            else:
+                self.preview_tabs.addTab(tree, label)
             self._category_trees[key] = tree
             self._category_ids[key] = frozenset(id(c) for c in changes)
             if current_tab_label and label.split(' (')[0] == \
@@ -572,7 +613,7 @@ class SyncWindow(QDialog):
             self._status('Sync failed: %s' % error)
             return
         # A replanned change identical to what was already shown reuses
-        # that SAME FieldChange object, so its `.selected` (the user's
+        # that SAME SyncOperation object, so its `.selected` (the user's
         # own tick/untick) survives -- see _reconcile_changes. Without
         # this, resolving one conflict (which always replans, see
         # _replan) silently reset every other tick in the window back
@@ -582,20 +623,28 @@ class SyncWindow(QDialog):
                                    for c in plan.changes}
         self._plan = plan
 
-        # Category tabs: 'All' always present, plus one per field that
-        # actually has a change this plan (Score, Watched Episodes,
-        # ...) -- a category with nothing to show just doesn't appear.
+        # Category tabs: 'Changes' (every ordinary change) always
+        # present, plus one per field that actually has a change this
+        # plan (Score, Watched Episodes, ...), plus -- separately --
+        # 'New entries' for creates: adding a title to a site is a
+        # different kind of act than updating a field, so it never
+        # hides inside the ordinary list.
+        ordinary = [c for c in plan.changes if not c.creates_entry]
+        creates = [c for c in plan.changes if c.creates_entry]
         by_field = {}
-        for change in plan.changes:
+        for change in ordinary:
             by_field.setdefault(change.field, []).append(change)
-        categories = [('__all__', plan.changes, 'All (%d)'
-                       % len(plan.changes))]
+        categories = [('__all__', ordinary, 'Changes (%d)'
+                       % len(ordinary))]
         for field in USER_FIELDS:
             field_changes = by_field.get(field)
             if not field_changes:
                 continue
             categories.append((field, field_changes, '%s (%d)' % (
                 _FIELD_LABELS.get(field, field), len(field_changes))))
+        if creates:
+            categories.append(('__new__', creates,
+                               'New entries (%d)' % len(creates)))
 
         # Which categories exist changes only when a field's change set
         # goes from empty to non-empty or back -- comparatively rare
@@ -610,10 +659,11 @@ class SyncWindow(QDialog):
         else:
             self._update_category_tabs(categories)
         self._all_changes_tree = self._category_trees['__all__']
+        self._new_entries_tree = self._category_trees.get('__new__')
 
         # Re-derive from the CURRENT widget state (rebuilt tabs plus
         # tabs the incremental path above left untouched) rather than
-        # accumulating registrations per-tree: an id(FieldChange) can
+        # accumulating registrations per-tree: an id(SyncOperation) can
         # be reused by the GC once an old, no-longer-referenced change
         # object is dropped, so any stale entry left over from a
         # rebuilt-away tree would risk mirroring a checkbox toggle onto
@@ -623,37 +673,13 @@ class SyncWindow(QDialog):
             for item, change in self._iter_tree_changes(tree):
                 self._change_items.setdefault(id(change), []).append(item)
 
-        groups = {change.uuid for change in plan.changes}
         self._set_decisions(plan.conflicts)
         # A fresh plan supersedes the last apply's progress bar; its
         # log stays readable until the next apply clears it.
         self.apply_progress.setVisible(False)
         self.apply_button.setEnabled(bool(plan.changes))
-        if plan.clean:
-            self.preview_summary.setText('Everything is in sync.')
-        else:
-            self.preview_summary.setText(
-                '%d show(s): %d change(s), %d conflict(s)'
-                % (len(groups), len(plan.changes), len(plan.conflicts)))
-        first_sync = sum(1 for c in plan.changes if c.first_sync)
-        if first_sync:
-            self.preview_summary.setText(
-                '%s %d first-sync overwrite(s) left unticked. %s'
-                % (self.preview_summary.text(), first_sync,
-                   present.FIRST_SYNC_HELP))
-        creates = sum(1 for c in plan.changes if c.creates_entry)
-        if creates:
-            self.preview_summary.setText(
-                '%s %d new-entry add(s) left unticked. %s'
-                % (self.preview_summary.text(), creates,
-                   present.CREATES_ENTRY_HELP))
-        parts = ['%d change(s)' % len(plan.changes),
-                 '%d conflict(s)' % len(plan.conflicts),
-                 '%d identity issue(s)' % len(plan.identity)]
-        if plan.errors:
-            parts.append('errors: %s' % ', '.join(
-                '%s (%s)' % kv for kv in plan.errors.items()))
-        self._status('Planned: ' + ', '.join(parts))
+        self.summary_label.setText('<b>%s</b>' % present.plan_summary(plan))
+        self._status(present.plan_status(plan))
         self._refresh_identity()
 
     def s_apply(self):
@@ -670,12 +696,12 @@ class SyncWindow(QDialog):
         selected = sum(1 for c in plan.changes if c.selected)
         self.apply_log.clear()
         self.apply_log.appendPlainText(
-            'Applying %d change(s)...' % selected)
+            'Syncing %d selected change(s)...' % selected)
         self.apply_log.setVisible(True)
         self.apply_progress.setRange(0, 0)   # busy until first report
         self.apply_progress.setVisible(True)
         self._run(self.engine.apply, self.r_applied,
-                  'Applying changes...', plan,
+                  'Syncing selected changes...', plan,
                   should_cancel=self._cancel.is_set, forward_progress=True)
 
     def s_cancel_apply(self):
@@ -699,13 +725,13 @@ class SyncWindow(QDialog):
             return
         self.apply_progress.setRange(0, 1)
         self.apply_progress.setValue(1)
-        verb = 'Cancelled after' if result.get('cancelled') else 'Applied:'
-        text = '%s %d local change(s), %d push(es)' % (
+        verb = 'Cancelled after' if result.get('cancelled') else 'Synced:'
+        text = '%s %d Hakubun update(s), %d site update(s)' % (
             verb, result['local'], result['pushed'])
         if result['errors']:
             text += '. Failed: %s' % ', '.join(
                 '%s (%s)' % kv for kv in result['errors'].items())
-            text += ' (their changes stay planned)'
+            text += ' (their changes will be offered again)'
         self.apply_log.appendPlainText(text)
         self._status(text)
         self.s_fetch()
@@ -714,7 +740,7 @@ class SyncWindow(QDialog):
         answer = QMessageBox.question(
             self, 'Reset sync database',
             'Wipe the sync database? Identities, mappings, sync '
-            'history, resolved decisions and ownership choices are '
+            'history, resolved decisions and per-field sync rules are '
             'deleted and re-derived on the next fetch. Your provider '
             'lists are NOT touched.')
         if answer != QMessageBox.StandardButton.Yes:
@@ -732,6 +758,7 @@ class SyncWindow(QDialog):
         self._plan = None
         self.preview_tabs.clear()
         self._all_changes_tree = None
+        self._new_entries_tree = None
         self._change_items = {}
         # Tabs were just torn down out from under _category_trees --
         # reset the incremental-replan bookkeeping too, or the next
@@ -745,38 +772,121 @@ class SyncWindow(QDialog):
         self.apply_progress.setVisible(False)
         self.apply_log.clear()
         self.apply_log.setVisible(False)
-        self.preview_summary.clear()
+        self.summary_label.setText('Fetch changes to see what would '
+                                   'sync.')
         self.apply_button.setEnabled(False)
         self._refresh_identity()
-        self._status('Sync database reset. Run Fetch & Plan to '
+        self._refresh_policy_widgets()
+        self._status('Sync database reset. Run Fetch changes to '
                      're-derive it.')
 
-    # -- Ownership -----------------------------------------------------
+    # -- Configuration (simple per-field rules) ------------------------
 
-    def _build_ownership_tab(self):
+    def _build_config_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel('<b>Where should hakubun sync to?</b>'))
-        layout.addWidget(QLabel(
-            'Ownership decides who wins when a field changed in two '
-            'places.\nSingle-sided changes always propagate; '
-            '"Individual" keeps a field per-site; "Ask" asks every '
-            'time.\nScores pushed to coarser sites are rounded to '
-            'their scale.'))
-        if self.engine.primary:
-            layout.addWidget(QLabel(
-                'You are signed into <b>%s</b>: changes you make in the '
-                'app (and tracker updates) belong to it and count as '
-                'your local edits.' % self.engine.primary.capitalize()))
+        layout.addWidget(QLabel('<b>How should each field sync?</b>'))
+        intro = QLabel(
+            'Pick one rule per field: follow one site, keep the best '
+            'value, ask you when sites disagree, or don\'t sync it at '
+            'all. Scores pushed to sites with a coarser scale are '
+            'rounded to fit. The full policy matrix lives in the '
+            'Advanced tab; both views control the same settings.')
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
         providers = list(self.engine.adapters)
-        columns = ([('local', 'Local')]
-                   + [('provider:%s' % p,
-                       p.capitalize() + (' (active)'
-                                         if p == self.engine.primary
-                                         else ''))
-                      for p in providers]
-                   + [('merge', 'Merge'), ('individual', 'Individual'),
-                      ('ask', 'Ask')])
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(10)
+        self._policy_combos = {}
+        ownership = self.store.ownership()
+        for row, field in enumerate(USER_FIELDS):
+            grid.addWidget(QLabel(_FIELD_LABELS.get(field, field)),
+                           row, 0)
+            combo = QComboBox()
+            current = ownership[field].serialize()
+            for key, choice_label in present.policy_choices(
+                    field, providers, current):
+                combo.addItem(choice_label, key)
+            combo.setCurrentIndex(combo.findData(current))
+            combo.currentIndexChanged.connect(
+                lambda _idx, f=field: self._on_policy_combo(f))
+            grid.addWidget(combo, row, 1)
+            self._policy_combos[field] = combo
+        grid.setColumnStretch(2, 1)
+        box = QGroupBox()
+        box.setLayout(grid)
+        layout.addWidget(box)
+        layout.addStretch()
+        return page
+
+    def _on_policy_combo(self, field):
+        if self._policy_updating:
+            return
+        serialized = self._policy_combos[field].currentData()
+        if serialized:
+            self._set_policy(field, serialized)
+
+    def _set_policy(self, field, serialized):
+        policy = FieldPolicy.parse(serialized)
+        self.store.set_ownership(field, policy)
+        self._status('%s now syncs as: %s'
+                     % (_FIELD_LABELS.get(field, field),
+                        present.policy_label(policy)))
+        self._refresh_policy_widgets()
+
+    def _refresh_policy_widgets(self):
+        """Reflect the store's current per-field policies into BOTH the
+        simple Configuration combos and the Advanced matrix -- either
+        one can change them, and the other must never show stale
+        state."""
+        self._policy_updating = True
+        try:
+            providers = list(self.engine.adapters)
+            ownership = self.store.ownership()
+            for field, combo in getattr(self, '_policy_combos',
+                                        {}).items():
+                current = ownership[field].serialize()
+                if combo.findData(current) < 0:
+                    # Set through the matrix to something the simple
+                    # list doesn't offer for this field -- show the
+                    # truth rather than misreport it.
+                    combo.addItem(present.policy_label(
+                        FieldPolicy.parse(current)), current)
+                combo.setCurrentIndex(combo.findData(current))
+            for field, group in getattr(self, '_ownership_groups',
+                                        {}).items():
+                current = ownership[field].serialize()
+                for radio in group.buttons():
+                    if radio.property('policy') == current:
+                        radio.setChecked(True)
+        finally:
+            self._policy_updating = False
+
+    # -- Advanced: the full policy matrix ------------------------------
+
+    def _build_matrix_box(self):
+        box = QGroupBox('Full policy matrix')
+        layout = QVBoxLayout(box)
+        blurb = QLabel(
+            'Every combination, including ones the simple view does '
+            'not offer. A <b>provider</b> column makes that tracker '
+            'authoritative: its value wins everywhere, always. The '
+            '<b>rule</b> columns: Manual asks you when sides genuinely '
+            'disagree, Union combines sets, Highest/Lowest pick an '
+            'extreme, Progress favours the furthest episode. '
+            '"Individual" keeps a field per-site and never syncs it.')
+        blurb.setWordWrap(True)
+        layout.addWidget(blurb)
+        providers = list(self.engine.adapters)
+        columns = ([('provider:%s' % p, p.capitalize())
+                    for p in providers]
+                   + [('reconcile:manual', 'Manual'),
+                      ('reconcile:union', 'Union'),
+                      ('reconcile:max', 'Highest'),
+                      ('reconcile:min', 'Lowest'),
+                      ('reconcile:progress', 'Progress'),
+                      ('individual', 'Individual')])
         grid = QGridLayout()
         # Generous spacing: the previous tight grid packed radios close
         # enough together to be hard to click without misclicking a
@@ -797,7 +907,7 @@ class SyncWindow(QDialog):
             field_label.setMinimumHeight(30)
             grid.addWidget(field_label, row, 0,
                           QtCore.Qt.AlignmentFlag.AlignVCenter)
-            group = QButtonGroup(page)
+            group = QButtonGroup(box)
             current = ownership[field].serialize()
             for col, (policy_text, _) in enumerate(columns, start=1):
                 radio = QRadioButton()
@@ -811,32 +921,24 @@ class SyncWindow(QDialog):
                 grid.addWidget(radio, row, col,
                                QtCore.Qt.AlignmentFlag.AlignCenter)
             self._ownership_groups[field] = group
-        box = QGroupBox()
-        box.setLayout(grid)
-        layout.addWidget(box)
-        layout.addStretch()
-        return page
+        layout.addLayout(grid)
+        return box
 
     def _ownership_changed(self, checked):
-        if not checked:
+        if not checked or self._policy_updating:
             return
         radio = self.sender()
-        field = radio.property('field')
-        policy = FieldPolicy.parse(radio.property('policy'))
-        self.store.set_ownership(field, policy)
-        self._status("Ownership: %s -> %s"
-                     % (_FIELD_LABELS.get(field, field), policy))
+        self._set_policy(radio.property('field'),
+                         radio.property('policy'))
 
     # -- Identity ------------------------------------------------------
 
     def _build_identity_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel(
-            '<b>Unresolved identities:</b> entries with ambiguous '
-            'matches only. Exact ID links and single exact-title '
-            'matches are linked automatically and never appear here. '
-            'Right-click a row to inspect it or open it on its site.'))
+        self.identity_intro = QLabel()
+        self.identity_intro.setWordWrap(True)
+        layout.addWidget(self.identity_intro)
         self.identity_tree = QTreeWidget()
         self.identity_tree.setHeaderLabels(
             ['Provider', 'Type', 'Title', 'Also known as', 'Status'])
@@ -942,8 +1044,16 @@ class SyncWindow(QDialog):
             self.identity_tree.addTopLevelItem(item)
         for col in range(4):
             self.identity_tree.resizeColumnToContents(col)
-        self.tabs.setTabText(2, 'Identity (%d)'
-                             % self.identity_tree.topLevelItemCount())
+        count = self.identity_tree.topLevelItemCount()
+        self.identity_intro.setText(
+            ('<b>%d title(s) need matching:</b> Hakubun could not '
+             'decide on its own which entry on your other sites each '
+             'of these is. ' % count if count else
+             '<b>No titles need matching right now.</b> ')
+            + 'Certain matches (exact ID links, single exact-title '
+            'matches) are linked automatically and never appear here. '
+            'Right-click a row to inspect it or open it on its site.')
+        self.tabs.setTabText(2, 'Identity (%d)' % count)
 
     def _identity_selected(self, item, _previous=None):
         self.identity_box.setEnabled(item is not None)
@@ -1072,7 +1182,7 @@ class SyncWindow(QDialog):
 
     def _inspect_from_identity(self, provider, provider_id):
         for i in range(self.tabs.count()):
-            if self.tabs.tabText(i).startswith('Inspector'):
+            if self.tabs.tabText(i).startswith('Advanced'):
                 self.tabs.setCurrentIndex(i)
                 break
         idx = self.inspect_provider.findData(provider)
@@ -1128,20 +1238,26 @@ class SyncWindow(QDialog):
         self._refresh_identity()
         self._status('Identity updated; fetch again to sync the entry.')
 
-    # -- Inspector -------------------------------------------------------
+    # -- Advanced (matrix, inspector, reset) ---------------------------
 
-    def _build_inspector_tab(self):
+    def _build_advanced_tab(self):
+        """Technical and destructive tools, deliberately out of the
+        main workflow: the full policy matrix, the identity inspector,
+        and the database reset."""
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.addWidget(self._build_matrix_box())
+
+        inspector_box = QGroupBox('Identity inspector')
+        inspector_layout = QVBoxLayout(inspector_box)
         intro = QLabel(
-            '<b>Identity inspector:</b> enter one entry by its provider '
-            'ID to see exactly how multisync resolved it: what it maps '
-            'to on your other providers, how each link was made (a '
-            'published ID, the anime-relations atlas, a title match, '
-            'or your own confirmation), and the raw data recorded for '
-            'it.')
+            'Enter one entry by its provider ID to see exactly how '
+            'multisync resolved it: what it maps to on your other '
+            'providers, how each link was made (a published ID, the '
+            'anime-relations atlas, a title match, or your own '
+            'confirmation), and the raw data recorded for it.')
         intro.setWordWrap(True)
-        layout.addWidget(intro)
+        inspector_layout.addWidget(intro)
 
         bar = QHBoxLayout()
         bar.addWidget(QLabel('Provider:'))
@@ -1162,13 +1278,28 @@ class SyncWindow(QDialog):
         self.inspect_open_button.clicked.connect(self.s_inspect_open)
         bar.addWidget(self.inspect_open_button)
         bar.addStretch()
-        layout.addLayout(bar)
+        inspector_layout.addLayout(bar)
 
         self.inspect_output = QTextBrowser()
         self.inspect_output.setOpenExternalLinks(False)
         self.inspect_output.setHtml(
             '<p style="color:gray">Nothing looked up yet.</p>')
-        layout.addWidget(self.inspect_output, 1)
+        inspector_layout.addWidget(self.inspect_output, 1)
+        layout.addWidget(inspector_box, 1)
+
+        # Destructive, so it lives here rather than next to the Sync
+        # button -- same semantics and confirmation as before.
+        reset_row = QHBoxLayout()
+        self.reset_button = QPushButton('Reset sync database...')
+        self.reset_button.setToolTip(
+            'Wipe the sync database (identities, mappings, history, '
+            'sync rules) and start clean. Your provider lists are '
+            'never touched; the next Fetch changes re-derives '
+            'everything.')
+        self.reset_button.clicked.connect(self.s_reset)
+        reset_row.addWidget(self.reset_button)
+        reset_row.addStretch()
+        layout.addLayout(reset_row)
         return page
 
     def s_inspect(self):
@@ -1218,10 +1349,9 @@ class SyncWindow(QDialog):
                         providers, c.get('via', '')))
                 p.append('</ul>')
             if r.atlas_hint:
-                p.append('<p><b>anime-relations atlas independently '
-                         'says:</b> %s</p>' % self._mono(', '.join(
-                             '%s=%s' % kv for kv in
-                             r.atlas_hint.items())))
+                p.append('<p><b>%s independently says:</b> %s</p>' % (
+                    _atlas_label(r), self._mono(', '.join(
+                        '%s=%s' % kv for kv in r.atlas_hint.items()))))
             return ''.join(p)
 
         p.append('<p><b>%s</b>%s%s</p>' % (
@@ -1260,27 +1390,32 @@ class SyncWindow(QDialog):
                       'mapping above (%s)</span>' % '; '.join(mismatches)
                       if mismatches else
                       'consistent with the mapping above')
-            p.append('<p><b>anime-relations atlas independently says:'
-                     '</b> %s, %s</p>' % (
-                         self._mono(', '.join(
-                             '%s=%s' % kv
-                             for kv in r.atlas_hint.items())),
-                         verdict))
+            p.append('<p><b>%s independently says:</b> %s, %s</p>' % (
+                _atlas_label(r),
+                self._mono(', '.join(
+                    '%s=%s' % kv for kv in r.atlas_hint.items())),
+                verdict))
 
         providers = sorted({prov for row in r.fields
                             for prov in row.per_provider})
         rows = [row for row in r.fields
                if row.per_provider or row.local not in (None, [], 0)]
         if rows and providers:
+            # The synchronization layer, separate from the identity
+            # explanation above: which policy governs each field is
+            # WHY sync does what it does with these numbers.
             p.append('<h4>Field data</h4>'
                      '<table border="1" cellpadding="4" cellspacing="0">'
-                     '<tr><th>Field</th><th>Local</th>' + ''.join(
+                     '<tr><th>Field</th><th>Policy</th><th>Local</th>'
+                     + ''.join(
                          '<th>%s (remote / last-synced)</th>'
                          % prov.capitalize() for prov in providers)
                      + '</tr>')
             for row in rows:
                 cells = ['<td>%s</td>' % _FIELD_LABELS.get(
                              row.field, row.field),
+                        '<td>%s</td>' % (present.policy_label(row.policy)
+                                         if row.policy else '-'),
                         '<td>%s</td>' % self._mono(self._fmt_value(
                             row.field, row.local))]
                 for prov in providers:

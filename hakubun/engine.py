@@ -473,6 +473,19 @@ class Engine:
                 self.msg.warn("Error parsing anime-relations.txt!")
                 self.msg.debug("{}".format(e))
 
+        # Keep multisync's cross-provider id database current, on the
+        # same "sync a community file if it's gone stale" footing as the
+        # redirections above. Anime only -- these are anime ids, and
+        # reusing them for manga would collide with unrelated works.
+        # Nothing here is fatal: multisync falls back to whatever local
+        # copy exists, or to none at all. See hakubun/sync/arm.py.
+        if mediatype == 'anime':
+            try:
+                from hakubun.sync import arm
+                arm.sync(self.config, self.msg)
+            except Exception as e:
+                self.msg.debug("Couldn't sync the id database: %s" % e)
+
         # Determine parser library. If the configured parser can't be
         # imported (an optional dependency isn't installed), cascade down
         # through progressively more basic parsers rather than jumping
