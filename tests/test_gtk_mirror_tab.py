@@ -164,3 +164,43 @@ def test_gates_are_passed_through_independently(win, monkeypatch):
             win._thread.join()
     assert win.engine.applied == [(False, False), (True, False),
                                   (False, True), (True, True)]
+
+
+def test_each_mirror_category_has_its_own_view_and_store(win):
+    """_make_changes_tree sets self._last_changes_view as a side effect
+    and is called once per category (plus twice by the Sync tab), and
+    the context-menu handler looks its model up by the `key` it was
+    connected with. If two categories shared a view, or a handler were
+    bound to the wrong key, it would read _C_CHANGE out of a different
+    model, get None, and the menu would silently never appear."""
+    assert set(win._mirror_views) == {'add', 'remove', 'update', 'local'}
+    ids = {id(v) for v in win._mirror_views.values()}
+    assert len(ids) == 4
+    assert id(win._membership_view) not in ids
+    for key, view in win._mirror_views.items():
+        assert view.get_model() is win._mirror_stores[key]
+
+
+def test_right_clicking_a_resolved_row_offers_the_way_back(win,
+                                                           monkeypatch):
+    """The gesture the resolution affordance depends on, wired
+    end-to-end: a row produced by a stored decision must reach the
+    handler and find its own model."""
+    plan = _plan()
+    plan.updates[0].reason = 'you chose this value for these trackers'
+    win.r_mirror_planned(plan, None)
+
+    seen = []
+    monkeypatch.setattr(win, '_clear_mirror_resolution',
+                        lambda op: seen.append(op))
+    monkeypatch.setattr(Gtk.Menu, 'popup_at_pointer',
+                        lambda self, event: None)
+
+    view = win._mirror_views['update']
+    store = win._mirror_stores['update']
+    # The child row (the op itself), not the group header.
+    path = store.get_path(store.iter_children(store.get_iter_first()))
+    monkeypatch.setattr(view, 'get_path_at_pos', lambda x, y: (path,))
+
+    event = type('E', (), {'button': 3, 'x': 0.0, 'y': 0.0})()
+    assert win._on_mirror_op_button(view, event, 'update') is True

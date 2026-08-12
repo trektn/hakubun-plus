@@ -183,3 +183,70 @@ def test_summary_reads_in_tracker_terms(window):
     text = window.mirror_summary.text()
     assert 'entry to add' in text and 'entry to remove' in text
     assert 'Hakubun' not in text
+
+
+def test_membership_right_click_still_reaches_the_membership_menu(
+        window, monkeypatch):
+    """_mirror_context_menu branches on a stored resolution before it
+    reads the membership payload. Membership rows carry the issue at
+    UserRole+1 and nothing at UserRole, so the branch must fall
+    through -- this is the gesture the whole removal workflow depends
+    on, and it is the one the other tests don't exercise."""
+    import hakubun.ui.qt.syncwindow as mod
+
+    window.r_mirror_planned(_plan(), None)
+    tree = window._mirror_trees['membership']
+    group = tree.topLevelItem(0)
+    kitsu_row = next(group.child(i) for i in range(group.childCount())
+                     if group.child(i).text(0).startswith('Kitsu'))
+
+    actions = []
+    monkeypatch.setattr(mod.QMenu, 'exec', lambda self, pos=None:
+                        actions.extend(a.text() for a in self.actions()))
+    monkeypatch.setattr(tree, 'itemAt', lambda pos: kitsu_row)
+    window._mirror_context_menu(tree, QtCore.QPoint(0, 0))
+
+    # Kitsu lacks the entry, so the offer is to add or to leave it --
+    # and 'Remove from' is correctly absent for a tracker with no entry.
+    assert 'Add to Kitsu' in actions
+    assert 'Leave Kitsu as it is' in actions
+    assert not any(a.startswith('Remove from') for a in actions)
+
+
+def test_membership_right_click_on_a_holder_offers_removal(window,
+                                                           monkeypatch):
+    import hakubun.ui.qt.syncwindow as mod
+
+    window.r_mirror_planned(_plan(), None)
+    tree = window._mirror_trees['membership']
+    group = tree.topLevelItem(0)
+    mal_row = next(group.child(i) for i in range(group.childCount())
+                   if group.child(i).text(0).startswith('Mal'))
+
+    actions = []
+    monkeypatch.setattr(mod.QMenu, 'exec', lambda self, pos=None:
+                        actions.extend(a.text() for a in self.actions()))
+    monkeypatch.setattr(tree, 'itemAt', lambda pos: mal_row)
+    window._mirror_context_menu(tree, QtCore.QPoint(0, 0))
+
+    assert 'Remove from Mal' in actions
+    assert 'Add to Mal' not in actions
+
+
+def test_right_clicking_a_resolved_row_offers_the_way_back(window,
+                                                           monkeypatch):
+    import hakubun.ui.qt.syncwindow as mod
+
+    plan = _plan()
+    plan.updates[0].reason = 'you chose this value for these trackers'
+    window.r_mirror_planned(plan, None)
+
+    tree = window._mirror_trees['update']
+    row = tree.topLevelItem(0).child(0)
+    actions = []
+    monkeypatch.setattr(mod.QMenu, 'exec', lambda self, pos=None:
+                        actions.extend(a.text() for a in self.actions()))
+    monkeypatch.setattr(tree, 'itemAt', lambda pos: row)
+    window._mirror_context_menu(tree, QtCore.QPoint(0, 0))
+
+    assert actions == ['Ask me about Score again']

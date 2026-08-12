@@ -841,7 +841,11 @@ replaying a stale verdict.
 A resolved field stops appearing as a conflict card, so the rows it
 produces carry the way back: right-clicking one offers "Ask me about
 <field> again" (`engine.clear_mirror_resolution`), the same shape as
-the membership rows' "Ask me about <tracker> again".
+the membership rows' "Ask me about <tracker> again". The affordance
+rides on those rows, so a resolution whose value happens to match every
+tracker (producing no rows at all) is unreachable — rare, self-healing
+the moment any tracker moves and the fingerprint lapses, and not worth
+a separate resolutions list.
 
 **Structural** conflicts (progress across differing episode structures)
 are information only in Mirror: each tracker's number is in its own
