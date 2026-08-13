@@ -81,11 +81,12 @@ def _row_markup(change, color):
     line = _markup(change.head, color)
     if change.detail:
         line += ' ' + _markup(change.detail, '#e8eaed')
-    # Sized relative to the theme's font, never in absolute points: a
-    # tile is small, but not smaller than what the user reads with.
-    line = '<span size="small">%s</span>' % line
+    # The body is the theme's own font: running it under to fit more
+    # rows in a tile just made the preview hard to read, and a tile
+    # with more to say than fits scrolls instead. Only the reason is
+    # set smaller, being deliberately the quieter half of the row.
     if change.why:
-        line += ('\n<span size="x-small">%s</span>'
+        line += ('\n<span size="small">%s</span>'
                  % _markup(change.why, _MUTED_COLOR))
     return line
 
@@ -93,15 +94,15 @@ def _row_markup(change, color):
 def _desired_markup(desired):
     """What ownership says the work should be, as field/value pairs
     rather than one long run-on line."""
-    lines = ['<span size="x-small">%s</span>'
+    lines = ['<span size="small">%s</span>'
              % _markup('OWNERSHIP SAYS', _MUTED_COLOR)]
     for name, value, owner, _why in desired:
         line = (_markup(name, _OWNERSHIP_COLOR) + ' '
                 + _markup(value, '#e8eaed'))
         if owner:
-            line += (' <span size="x-small">%s</span>'
+            line += (' <span size="small">%s</span>'
                      % _markup(owner, _MUTED_COLOR))
-        lines.append('<span size="small">%s</span>' % line)
+        lines.append(line)
     return '\n'.join(lines)
 
 

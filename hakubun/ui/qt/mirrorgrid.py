@@ -135,14 +135,16 @@ class FlowLayout(QLayout):
 def _sizes(widget):
     """Body and aside point sizes, derived from the user's own font.
 
-    A tile is small, so the panel runs a little under the interface
-    font -- but scaled from it, never a fixed pixel size that ignores
-    whatever the user set.
+    The body is the interface font, full stop. An earlier revision ran
+    it under -- to fit more rows in a tile -- and simply made the
+    preview hard to read; a tile that has more to say than fits scrolls
+    instead. Only the reason underneath is set smaller, because it is
+    deliberately the quieter half of the row.
     """
     base = widget.font().pointSizeF()
     if base <= 0:                      # font set in pixels
         base = 10.0
-    return max(7.0, base * 0.92), max(6.0, base * 0.78)
+    return base, max(7.0, base * 0.86)
 
 
 def _row_markup(change, color, body_pt, why_pt):
