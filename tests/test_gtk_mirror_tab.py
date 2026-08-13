@@ -3,10 +3,10 @@
 Both windows delegate their wording AND their layout to
 sync/present.py -- the card model is tested once, toolkit-free, in
 tests/sync/test_mirror_cards.py. What is checked here is that the GTK
-side wires the same structure to it: cards reach the store, ticking a
-card reaches the operations under it, adds and removes are opt-in, and
-the apply path cannot run without the confirmation.
-Skipped without GTK/display.
+side wires the same structure to it: cards reach the tiles, pointing at
+a tile brings up its changes, ticking a tile reaches the operations
+under it, adds and removes are opt-in, and the apply path cannot run
+without the confirmation. Skipped without GTK/display.
 """
 
 import pytest
@@ -25,9 +25,7 @@ from hakubun.sync.mirror import (AddOperation,  # noqa: E402
                                  RemoveOperation)
 from hakubun.sync.models import FieldPolicy, SyncOperation  # noqa: E402
 from hakubun.sync.store import SyncStore  # noqa: E402
-from hakubun.ui.gtk.multisyncwindow import (  # noqa: E402
-    MultiSyncWindow, _C_ACTIVE, _C_CHANGE, _C_INCONSISTENT,
-    _C_LABEL)
+from hakubun.ui.gtk.multisyncwindow import MultiSyncWindow  # noqa: E402
 
 
 class _FakeEngine:
@@ -42,6 +40,14 @@ class _FakeEngine:
         self.applied.append((allow_adds, allow_removes))
         return {'local': 0, 'pushed': 0, 'removed': 0, 'skipped': 0,
                 'errors': {}, 'cancelled': False}
+
+
+@pytest.fixture(autouse=True)
+def no_downloads(monkeypatch):
+    """Cover art is decoration, and a test suite has no business
+    reaching a tracker's CDN for it."""
+    from hakubun.ui import posters
+    monkeypatch.setattr(posters.PosterCache, 'get', lambda self, url: None)
 
 
 @pytest.fixture
@@ -71,20 +77,23 @@ def _plan():
     plan.local.append(SyncOperation('u1', 'score', 2.0, 5.0,
                                     target='local', source='anilist',
                                     title='GHOST'))
+    plan.images['u1'] = 'https://example.invalid/ghost.jpg'
     return plan
 
 
-def _rows(store):
-    out = []
+def _tile(win, title):
+    tile = win.mirror_grid.tile_for(title)
+    assert tile is not None, 'no tile for %s' % title
+    tile.ensure_details()
+    return tile
 
-    def walk(it):
-        while it is not None:
-            out.append(store.get_value(it, _C_LABEL))
-            walk(store.iter_children(it))
-            it = store.iter_next(it)
 
-    walk(store.get_iter_first())
-    return out
+def _texts(tile):
+    return [row.text() for row in tile.rows]
+
+
+def _event(button=3):
+    return type('E', (), {'button': button, 'x': 0.0, 'y': 0.0})()
 
 
 def test_mirror_tab_sits_after_sync(win):
@@ -93,144 +102,115 @@ def test_mirror_tab_sits_after_sync(win):
     assert titles[:2] == ['Sync', 'Mirror']
 
 
-def test_the_preview_is_one_card_per_title(win):
-    """Not five pages of operations: the unit on screen is the thing
-    the user is deciding about."""
+def test_the_preview_is_one_tile_per_title(win):
+    """Not five pages of operations: the unit on screen is the work the
+    user is deciding about, shown as the thing they recognize it by."""
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-    titles = []
-    it = store.get_iter_first()
-    while it is not None:
-        titles.append(store.get_value(it, _C_LABEL))
-        it = store.iter_next(it)
-    assert any(t.startswith('GHOST') for t in titles)
-    assert any(t.startswith('Doomed') for t in titles)
+    titles = [t.card.title for t in win.mirror_grid.tiles]
+    assert 'GHOST' in titles
+    assert 'Doomed' in titles
 
 
-def test_a_card_carries_the_ownership_row_and_its_changes(win):
+def test_a_tile_carries_the_ownership_row_and_its_changes(win):
     win.r_mirror_planned(_plan(), None)
-    rows = _rows(win._mirror_store)
-    assert any('Ownership says' in r for r in rows)
-    assert any(r.startswith('Add to Kitsu') for r in rows)
-    assert any(r.startswith('Update Mal') for r in rows)
+    tile = _tile(win, 'GHOST')
+    texts = _texts(tile)
+    assert any(t.startswith('Add to Kitsu') for t in texts)
+    assert any(t.startswith('Update Mal') for t in texts)
+    assert tile.card.desired      # 'Ownership says' heads the overlay
+
+
+def test_the_cover_fades_when_the_changes_come_up(win):
+    """The whole preview: the picture is what you navigate by, the
+    changes are what you read, and they occupy the same space."""
+    win.r_mirror_planned(_plan(), None)
+    tile = _tile(win, 'GHOST')
+    assert tile.cover.get_opacity() == 1.0
+    tile.set_hovered(True)
+    assert tile.cover.get_opacity() < 0.5
+    assert tile._details.get_visible()
+    tile.set_hovered(False)
+    assert tile.cover.get_opacity() == 1.0
+    assert not tile._details.get_visible()
+
+
+def test_a_work_with_no_cover_still_names_itself(win):
+    """Not every provider ships art -- the tile's title carries it."""
+    plan = _plan()
+    plan.images.clear()
+    win.r_mirror_planned(plan, None)
+    assert _tile(win, 'GHOST').card.image == ''
 
 
 def test_tracker_rows_never_name_hakubun(win):
     """Local convergence is disclosed, but never as a TRACKER."""
     win.r_mirror_planned(_plan(), None)
-    for row in _rows(win._mirror_store):
+    rows = _texts(_tile(win, 'GHOST'))
+    assert any(r.startswith('Update Hakubun') for r in rows)
+    for row in rows:
         if row.startswith('Update Hakubun'):
             continue        # this app's own copy, named as such
-        if row.startswith(('Add to', 'Update ', 'Remove from')):
-            assert 'Hakubun' not in row
-
-
-def test_local_convergence_is_disclosed(win):
-    """Mirror overwrites a pending local edit; that must be visible."""
-    win.r_mirror_planned(_plan(), None)
-    assert any('Hakubun' in r for r in _rows(win._mirror_store))
+        assert 'Hakubun' not in row
 
 
 def test_creating_an_entry_is_a_single_tickable_row(win):
     """One decision per entry -- apply() would otherwise be able to
     create a half-formed entry from a ticked subset of its fields."""
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-    found = []
-
-    def walk(it):
-        while it is not None:
-            op = store.get_value(it, _C_CHANGE)
-            if isinstance(op, AddOperation):
-                found.append(store.get_value(it, _C_LABEL))
-            walk(store.iter_children(it))
-            it = store.iter_next(it)
-
-    walk(store.get_iter_first())
-    assert len(found) == 1
-    assert 'Add to Kitsu' in found[0]
+    adds = [r for r in _tile(win, 'GHOST').rows
+            if isinstance(r.op, AddOperation)]
+    assert len(adds) == 1
+    assert 'Add to Kitsu' in adds[0].text()
 
 
 def test_adds_and_removes_start_unticked(win):
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-
-    def check(it):
-        while it is not None:
-            op = store.get_value(it, _C_CHANGE)
-            if isinstance(op, (AddOperation, RemoveOperation)):
-                assert store.get_value(it, _C_ACTIVE) is False
-                assert op.selected is False
-            check(store.iter_children(it))
-            it = store.iter_next(it)
-
-    check(store.get_iter_first())
+    for tile in win.mirror_grid.tiles:
+        tile.ensure_details()
+        for row in tile.rows:
+            if isinstance(row.op, (AddOperation, RemoveOperation)):
+                assert row.op.selected is False
+                assert row.check.get_active() is False
 
 
-def test_ticking_a_card_ticks_everything_under_it(win):
-    """"Yes to this show" is one click, not one per field. The cascade
-    has to be RECURSIVE: a card's operations sit under its tracker
-    rows, so a one-level cascade ticked the tracker rows and left the
-    operations alone."""
+def test_ticking_a_tile_ticks_everything_under_it(win):
+    """"Yes to this show" is one click, not one per field."""
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-    it = next(i for i in _iter_top(store)
-              if store.get_value(i, _C_LABEL).startswith('GHOST'))
-    win._on_change_toggled(None, store.get_path(it), store)
-
-    ops = []
-
-    def walk(node):
-        while node is not None:
-            op = store.get_value(node, _C_CHANGE)
-            if op is not None and hasattr(op, 'selected'):
-                ops.append(op)
-            walk(store.iter_children(node))
-            node = store.iter_next(node)
-
-    walk(store.iter_children(it))
-    assert ops and all(o.selected for o in ops)
-    # And the card's OWN checkbox must read as fully ticked. Its
-    # direct children include rows that carry no operation at all
-    # (the ownership header, the "Hakubun's own copy" heading);
-    # counting their always-false checkbox made a fully-ticked card
-    # render unchecked.
-    assert store.get_value(it, _C_ACTIVE) is True
-    assert store.get_value(it, _C_INCONSISTENT) is False
+    tile = _tile(win, 'GHOST')
+    tile._on_check_clicked(None, None)
+    assert tile.card.ops and all(op.selected for op in tile.card.ops)
+    assert tile.check.get_active() is True
+    assert tile.check.get_inconsistent() is False
+    assert all(r.check.get_active() for r in tile.rows
+               if r.check is not None)
 
 
-def test_informational_rows_never_draw_a_tick(win):
-    """The ownership header is not something the user can act on, so
-    ticking the card must not put a checkbox tick on it."""
+def test_a_tile_whose_changes_were_never_opened_still_ticks(win):
+    """The overlay is built on first hover, so the tile's own tick has
+    to act on the CARD, not on widgets that may not exist yet."""
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-    it = next(i for i in _iter_top(store)
-              if store.get_value(i, _C_LABEL).startswith('GHOST'))
-    win._on_change_toggled(None, store.get_path(it), store)
-
-    child = store.iter_children(it)
-    while child is not None:
-        if store.get_value(child, _C_LABEL).startswith('Ownership says'):
-            assert store.get_value(child, _C_ACTIVE) is False
-        child = store.iter_next(child)
+    tile = win.mirror_grid.tile_for('GHOST')
+    tile._on_check_clicked(None, None)
+    assert all(op.selected for op in tile.card.ops)
 
 
-def test_unticking_one_operation_makes_the_card_inconsistent(win):
-    """A half-ticked card must say so rather than claim the whole
-    title is going."""
+def test_unticking_one_change_makes_the_tile_inconsistent(win):
+    """A half-ticked title must say so rather than claim the whole
+    work is going."""
     win.r_mirror_planned(_plan(), None)
-    store = win._mirror_store
-    it = next(i for i in _iter_top(store)
-              if store.get_value(i, _C_LABEL).startswith('GHOST'))
-    win._on_change_toggled(None, store.get_path(it), store)
+    tile = _tile(win, 'GHOST')
+    tile._on_check_clicked(None, None)
+    row = next(r for r in tile.rows if r.text().startswith('Update Mal'))
+    row.check.set_active(False)
+    assert row.op.selected is False
+    assert tile.check.get_inconsistent() is True
 
-    path = _path_of(store, lambda label: label.startswith('Update Mal'),
-                    under='GHOST')
-    win._on_change_toggled(None, path, store)
 
-    it = next(i for i in _iter_top(store)
-              if store.get_value(i, _C_LABEL).startswith('GHOST'))
-    assert store.get_value(it, _C_INCONSISTENT) is True
+def test_a_deletion_colours_its_whole_tile(win):
+    """Deletion is the only irreversible thing Mirror does, and a grid
+    is scanned rather than read."""
+    win.r_mirror_planned(_plan(), None)
+    assert win.mirror_grid.tile_for('Doomed')._accent() == '#ef5350'
 
 
 def test_apply_is_refused_without_confirmation(win, monkeypatch):
@@ -244,27 +224,22 @@ def test_apply_is_refused_without_confirmation(win, monkeypatch):
 
 def test_right_clicking_a_settled_row_reaches_the_membership_menu(
         win, monkeypatch):
-    """One tree serves both gestures, so the handler has to tell an
+    """One handler serves both gestures, so it has to tell an
     informational row from an operation row. This is the branch the
     whole membership workflow depends on -- and the only way back to a
     decision that, being settled, produces no operations."""
     plan = _plan()
     plan.membership[0].decisions['kitsu'] = 'ignore'
     win.r_mirror_planned(plan, None)
-    store = win._mirror_store
-    path = _path_of(store, lambda label: label.startswith('Kitsu —'),
-                    under='GHOST')
-
+    row = next(r for r in _tile(win, 'GHOST').rows
+               if r.text().startswith('Kitsu —'))
 
     labels = []
     monkeypatch.setattr(Gtk.Menu, 'popup_at_pointer',
                         lambda self, event: labels.extend(
                             c.get_label() for c in self.get_children()))
-    view = win._mirror_view
-    monkeypatch.setattr(view, 'get_path_at_pos', lambda x, y: (path,))
-    event = type('E', (), {'button': 3, 'x': 0.0, 'y': 0.0})()
 
-    assert win._on_mirror_row_button(view, event) is True
+    assert win._on_mirror_row_button(row, _event()) is True
     assert 'Add to Kitsu' in labels
     assert 'Leave Kitsu as it is' in labels
     assert 'Ask me about Kitsu again' in labels
@@ -282,43 +257,21 @@ def test_right_clicking_a_resolved_row_offers_the_way_back(win,
     seen = []
     monkeypatch.setattr(win, '_clear_mirror_resolution',
                         lambda op: seen.append(op))
+    labels = []
     monkeypatch.setattr(Gtk.Menu, 'popup_at_pointer',
-                        lambda self, event: None)
+                        lambda self, event: labels.extend(
+                            c.get_label() for c in self.get_children()))
 
-    store = win._mirror_store
-    path = _path_of(store, lambda label: label.startswith('Update Mal'))
-    view = win._mirror_view
-    monkeypatch.setattr(view, 'get_path_at_pos', lambda x, y: (path,))
-    event = type('E', (), {'button': 3, 'x': 0.0, 'y': 0.0})()
-
-    assert win._on_mirror_row_button(view, event) is True
+    row = next(r for r in _tile(win, 'GHOST').rows
+               if getattr(r.op, 'target', None) == 'mal')
+    assert win._on_mirror_row_button(row, _event()) is True
+    assert labels == ['Ask me about Score again']
 
 
-def _iter_top(store):
-    it = store.get_iter_first()
-    while it is not None:
-        yield it
-        it = store.iter_next(it)
-
-
-def _path_of(store, match, under=None):
-    """Path of the first row whose label satisfies `match`, optionally
-    only within the card whose title starts with `under` -- several
-    cards carry a row for the same tracker."""
-    found = []
-
-    def walk(it):
-        while it is not None:
-            if not found and match(store.get_value(it, _C_LABEL)):
-                found.append(store.get_path(it))
-            walk(store.iter_children(it))
-            it = store.iter_next(it)
-
-    if under is not None:
-        top = next(i for i in _iter_top(store)
-                   if store.get_value(i, _C_LABEL).startswith(under))
-        walk(store.iter_children(top))
-    else:
-        walk(store.get_iter_first())
-    assert found, 'no row matched'
-    return found[0]
+def test_an_ordinary_change_row_offers_no_menu(win):
+    """Right-clicking a plain update has nothing to decide: the row
+    must fall through rather than pop up an empty menu."""
+    win.r_mirror_planned(_plan(), None)
+    row = next(r for r in _tile(win, 'GHOST').rows
+               if getattr(r.op, 'target', None) == 'mal')
+    assert win._on_mirror_row_button(row, _event()) is False

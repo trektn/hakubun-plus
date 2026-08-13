@@ -497,7 +497,10 @@ it is compensated).
 
 ```sql
 entities(uuid TEXT PRIMARY KEY, media_type, title, year, total,
-         status, provider_only, aliases, created_at)
+         status, provider_only, aliases,
+         image,                   -- cover art URL, first one seen
+                                  -- (§15.5); never synced anywhere
+         created_at)
 
 mappings(uuid REFERENCES entities, provider, provider_id,
          confirmed,               -- user-confirmed or exact link
@@ -576,8 +579,11 @@ hakubun/sync/present.py      toolkit-agnostic plan wording
 hakubun/sync/overlay.py      read-only list overlay from local_state
 hakubun/sync/uibridge.py     UI glue (overlay build, owned-score edit)
 tests/sync/…                 fake providers, tmp DB
+hakubun/ui/posters.py        shared cover-art cache (§15.5)
 hakubun/ui/qt/syncwindow.py  Qt Sync window (§12)
+hakubun/ui/qt/mirrorgrid.py  Qt Mirror grid (§15.5)
 hakubun/ui/gtk/multisyncwindow.py  GTK twin
+hakubun/ui/gtk/mirrorgrid.py       GTK twin
 ```
 
 ## 12. UI
@@ -608,11 +614,13 @@ other and the app is not one of the parties. Five tabs:
    button per adoptable side. The buttons are *Fetch changes* and
    *Sync selected*; the engine keeps calling these plan and apply.
 2. **Mirror** — *make your trackers agree, according to Ownership*
-   (§15). **One card per title** (§15.5), laid out like the Sync tab:
-   what ownership says the work should be, then its changes as flat
-   rows, each naming the tracker, the field, both values and the rule
-   behind it. A card's tick answers the whole title at once; a row's
-   context menu records or revisits a membership decision. Alongside
+   (§15). **A grid of covers, one tile per title** (§15.5): the art,
+   the title under it, and a one-line summary. Point at a tile and its
+   cover fades out from under what ownership says the work should be
+   and its changes as flat rows, each naming the tracker, the field,
+   both values and the rule behind it. A tile's tick answers the whole
+   title at once; a row's context menu records or revisits a
+   membership decision. Alongside
    is a Decisions pane for tracker-vs-tracker disagreements. Its own
    preview, deliberately not overloaded onto Sync's: it is a different
    and potentially much larger operation. **Preview → Apply** is the
@@ -941,14 +949,16 @@ Unset is the default, and stays conservative: nothing is ever removed
 automatically, and any tracker holding an entry can justify creating
 it elsewhere.
 
-### 15.5 The preview: one card per work
+### 15.5 The preview: a wall of covers
 
 `present.mirror_cards(plan, adapters)` re-projects the plan into one
 **card per work**, and both windows render that same model — so the
 layout is tested once, without a widget, and the two UIs cannot drift.
 
-Inside a card the changes are a **flat list**, in exactly the shape the
-Sync tab uses:
+A card is drawn as a **tile**: its cover art, the title underneath, and
+a one-line summary of what happens to it. The changes live *behind* the
+cover — point at a tile and the picture fades to 12% out from under the
+list:
 
 ```
 GHOST   —   add to Kitsu · 1 field(s)
@@ -958,17 +968,36 @@ GHOST   —   add to Kitsu · 1 field(s)
     Update Hakubun, Score: 5 → 9  — matches the trackers
 ```
 
-Each line names the tracker, the field, both values and the rule
-behind it. An earlier revision grouped these under per-tracker
-sub-headers showing each tracker's whole entry; it read as two levels
-of expansion to find one value, and the user's verdict was blunt —
-"get rid of the show stuff, it's incredibly confusing".
+Each line names the tracker, the field, both values and the rule behind
+it. Two earlier revisions are worth recording. The first grouped a
+card's rows under per-tracker sub-headers showing each tracker's whole
+entry; it read as two levels of expansion to find one value, and the
+user's verdict was blunt — "get rid of the show stuff, it's incredibly
+confusing". The second flattened those rows into a tree, which fixed
+the depth but not the medium: a plan is a few hundred works, and a few
+hundred rows of text is something you *read* rather than something you
+*scan*. People navigate their lists by the art.
 
-The card's own tick answers the whole title at once. Both toolkits
-needed fixing for that: Qt's `ItemIsAutoTristate` derives a parent's
-state from its *checkable* direct children, and a card's rows include
-informational ones that are not checkable, so the flag overrode every
-click; GTK's cascade was one level deep.
+Nothing is hidden behind a disclosure the user has to find: the detail
+appears where the pointer already is, and the tile's border and summary
+carry the headline (deletion first — it is the only irreversible thing
+Mirror does — then decisions needed, then creations, then updates).
+
+The tile's own tick answers the whole title at once, and acts on the
+**card**, not on the row widgets: the overlay is built lazily on first
+hover, so a tile whose changes were never opened must still tick. Both
+toolkits needed care here — Qt's tristate cycles through *Partially* on
+click and GTK's has an `inconsistent` flag that is not a third state,
+so in both the click reads as "the opposite of what it was".
+
+Cover art rides in on the ordinary fetch (`NormalizedEntry.image` →
+`entities.image` → `MirrorPlan.images` → `MirrorCard.image`) and the
+first provider to supply one keeps it. `hakubun/ui/posters.py` holds
+the parts that are neither Qt's nor GTK's: where a URL lands on disk,
+at most three downloads in flight, and how a widget that goes away
+cancels the one it was waiting for. None of it is user data, none is
+ever pushed anywhere, and a work with no art is a tile with its title
+on it — never a work that drops out of the preview.
 
 Hakubun's own copy appears as `Update Hakubun, …` — the same shape as
 a tracker row, and named. It used to open with the show's title and

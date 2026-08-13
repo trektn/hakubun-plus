@@ -300,6 +300,12 @@ class SyncEngine:
             updates['total'] = entry.total
         if entry.airing_status:
             updates['status'] = entry.airing_status
+        if entry.image and not ent.get('image'):
+            # First provider to ship cover art wins, and keeps winning:
+            # these URLs are only ever a picture in a preview, so
+            # re-pointing them on every fetch would churn the entity
+            # table (and everyone's poster cache) to no visible end.
+            updates['image'] = entry.image
         if updates:
             self.store.update_entity_meta(uid, **updates)
         # Accumulate every title this provider knows -- cross-language

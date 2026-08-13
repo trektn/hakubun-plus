@@ -142,6 +142,7 @@ class SyncStore:
 
     def _migrate(self):
         self._ensure_column('entities', 'aliases', 'TEXT')
+        self._ensure_column('entities', 'image', 'TEXT')
         self._ensure_column('identity_conflicts', 'entry', 'TEXT')
         self._ensure_column('mappings', 'via', 'TEXT')
         self._ensure_column('local_state', 'source', 'TEXT')
@@ -349,7 +350,7 @@ class SyncStore:
 
     def update_entity_meta(self, uid, **fields):
         allowed = {'title', 'year', 'total', 'status',
-                   'media_type', 'provider_only'}
+                   'media_type', 'provider_only', 'image'}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return

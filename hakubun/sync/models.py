@@ -128,6 +128,10 @@ class NormalizedEntry:
     airing_status: Optional[str] = None
     external_ids: Dict[str, str] = dc_field(default_factory=dict)
     user: Dict[str, Any] = dc_field(default_factory=dict)  # USER_FIELDS
+    # Cover art URL, when the provider ships one with its list. Not
+    # user data and never synced anywhere -- it exists so a preview can
+    # show the work rather than only name it.
+    image: Optional[str] = None
 
 
 @dataclass

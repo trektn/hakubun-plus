@@ -242,6 +242,10 @@ class MirrorPlan:
     # The designated entry owner, if any -- so the preview can explain
     # WHY entries are being added or removed without re-deriving it.
     master: str = None
+    # uuid -> cover art URL, for the preview's poster grid. Purely
+    # cosmetic: nothing here is ever written to a tracker, and a plan
+    # with no art at all is still a complete plan.
+    images: Dict[str, str] = dc_field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
@@ -311,6 +315,8 @@ class MirrorPlanner:
                           master=self.master)
         ents = self.store.entities()
         uids = [e['uuid'] for e in ents]
+        plan.images = {e['uuid']: e['image'] for e in ents
+                       if e.get('image')}
         snapshot = {
             'mappings': self.store.mappings_many(uids),
             'local': self.store.local_get_many(uids),

@@ -237,6 +237,10 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
         external_ids={k: str(v) for k, v in (external_ids or {}).items()
                       if v},
         user=user,
+        # Prefer the thumbnail: the only consumer is a poster grid, and
+        # a list-sized fetch of full-resolution art is a lot of bytes
+        # for pictures that get drawn a couple of hundred pixels wide.
+        image=(show.get('image_thumb') or show.get('image')) or None,
     )
 
 

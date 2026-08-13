@@ -393,3 +393,59 @@ def test_a_decision_on_a_tracker_that_holds_the_entry_is_explained(store):
     card = next(c for c in cards(engine, engine.mirror_plan())
                 if c.uuid == uid)
     assert 'should not have it' in note_for(card, 'mal')
+
+
+# -- 6. cover art ------------------------------------------------------
+#
+# The preview is a grid of covers, so the art has to survive the whole
+# trip: a provider's list entry -> the entity -> the plan -> the card.
+# None of it is user data and none of it is ever pushed anywhere; it
+# exists so the preview can SHOW a work rather than only name it.
+
+def test_a_card_carries_the_cover_its_provider_shipped(store):
+    anilist = FakeLib('anilist', [
+        show('anilist', 9, 'GHOST', mal_id=77,
+             image_thumb='https://example.invalid/ghost-small.jpg',
+             image='https://example.invalid/ghost-large.jpg')])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=8)])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    own(store, score='provider:mal')
+
+    card = card_named(engine, engine.mirror_plan(), 'GHOST')
+    # The thumbnail, not the full-size art: a few hundred of these are
+    # drawn a couple of hundred pixels wide.
+    assert card.image == 'https://example.invalid/ghost-small.jpg'
+
+
+def test_a_work_whose_providers_ship_no_art_still_makes_a_card(store):
+    """A missing picture is a tile with a title on it, never a work
+    that quietly drops out of the preview."""
+    anilist = FakeLib('anilist', [show('anilist', 9, 'GHOST', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=8)])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    own(store, score='provider:mal')
+
+    card = card_named(engine, engine.mirror_plan(), 'GHOST')
+    assert card.image == ''
+
+
+def test_the_first_cover_seen_is_kept(store):
+    """Re-pointing the art on every fetch would churn the entity table
+    and everyone's poster cache for a picture nobody asked to change."""
+    anilist = FakeLib('anilist', [
+        show('anilist', 9, 'GHOST', mal_id=77,
+             image_thumb='https://example.invalid/first.jpg')])
+    mal = FakeLib('mal', [
+        show('mal', 77, 'GHOST',
+             image_thumb='https://example.invalid/second.jpg')])
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    assert store.get_entity(uid)['image'] \
+        == 'https://example.invalid/first.jpg'
+
+    assert engine.fetch() == {}
+    assert store.get_entity(uid)['image'] \
+        == 'https://example.invalid/first.jpg'

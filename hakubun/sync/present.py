@@ -400,7 +400,8 @@ MIRROR_TAB_HELP = (
     'it after changing an ownership rule, or when a tracker has drifted '
     'and normal syncing has nothing left to go on.\n\n'
     'This can change a lot at once, so nothing is applied until you '
-    'review it and confirm.')
+    'review it and confirm. Point at a title to see what will happen '
+    'to it; tick a title to include everything under it.')
 
 
 def membership_note(want, reason=None):
@@ -546,6 +547,9 @@ class MirrorCard:
     def __init__(self, uuid, title):
         self.uuid = uuid
         self.title = title
+        # Cover art URL, or '' -- the grid draws a placeholder for the
+        # works no provider gave a picture for.
+        self.image = ''
         # [(field label, formatted value, owning tracker label, why)]
         self.desired = []
         # [(operation, text)] -- every tickable change, flat, in the
@@ -669,6 +673,9 @@ def mirror_cards(plan, adapters, category='all'):
             card.rows.append(
                 (None, '%s — not matched yet; resolve it under Identity'
                  % label(provider)))
+
+    for uuid, card in cards.items():
+        card.image = plan.images.get(uuid) or ''
 
     def rank(card):
         # Decisions first: nothing else can be applied confidently

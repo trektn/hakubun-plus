@@ -55,6 +55,7 @@ from hakubun.sync.models import (FieldPolicy, NormalizedEntry,
 from hakubun.sync.inspect import atlas_label as _atlas_label
 from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
 from hakubun.sync.store import SyncStore
+from hakubun.ui.qt.mirrorgrid import MirrorGrid, MirrorRow
 
 
 class _Task(QtCore.QThread):
@@ -781,7 +782,7 @@ class SyncWindow(QDialog):
         # wiped -- membership decisions included. Clear it too, or its
         # rows would offer to act on entities that no longer exist.
         self._mirror_plan = None
-        self.mirror_tree.clear()
+        self.mirror_grid.clear()
         self._set_mirror_decisions([])
         self.mirror_apply_button.setEnabled(False)
         self.mirror_summary.setText('Preview a mirror to see what '
@@ -847,14 +848,11 @@ class SyncWindow(QDialog):
         # to understand is one you cannot confidently apply.
 
         splitter = QSplitter(QtCore.Qt.Orientation.Horizontal)
-        self.mirror_tree = QTreeWidget()
-        self.mirror_tree.setHeaderHidden(True)
-        self.mirror_tree.itemChanged.connect(self._on_mirror_item_toggled)
-        self.mirror_tree.setContextMenuPolicy(
-            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self.mirror_tree.customContextMenuRequested.connect(
-            lambda pos: self._mirror_context_menu(self.mirror_tree, pos))
-        splitter.addWidget(self.mirror_tree)
+        # A wall of covers, not a wall of text: point at a title and
+        # its cover fades out from under what Mirror will do to it.
+        self.mirror_grid = MirrorGrid()
+        self.mirror_grid.menu_requested.connect(self._mirror_context_menu)
+        splitter.addWidget(self.mirror_grid)
 
         self.mirror_decisions_box = QGroupBox('Decisions')
         outer = QVBoxLayout(self.mirror_decisions_box)
@@ -877,178 +875,30 @@ class SyncWindow(QDialog):
 
     # -- mirror preview rendering --------------------------------------
 
-    def _mirror_op_item(self, op, text, color):
-        item = QTreeWidgetItem([text])
-        item.setForeground(0, color)
-        item.setFlags(item.flags()
-                      | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(0, QtCore.Qt.CheckState.Checked if op.selected
-                           else QtCore.Qt.CheckState.Unchecked)
-        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, op)
-        return item
-
-    def _on_mirror_item_toggled(self, item, column):
-        if column != 0:
-            return
-        card = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 3)
-        if card is not None:
-            # A card's own tick answers the whole title at once. Qt's
-            # auto-tristate only reaches CHECKABLE descendants, and a
-            # card's operations sit under its tracker rows, which are
-            # not checkable -- so propagating by hand is what makes
-            # "yes to this show" a single click instead of one per
-            # field.
-            state = item.checkState(0)
-            if state == QtCore.Qt.CheckState.PartiallyChecked:
-                return
-            selected = state == QtCore.Qt.CheckState.Checked
-            for op in card.ops:
-                op.selected = selected
-            self.mirror_tree.blockSignals(True)
-            try:
-                self._sync_mirror_checks(item)
-            finally:
-                self.mirror_tree.blockSignals(False)
-            return
-        op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-        if op is None or not hasattr(op, 'selected'):
-            return
-        op.selected = (item.checkState(0)
-                       == QtCore.Qt.CheckState.Checked)
-        # Keep the card above in step, so a card that is half-ticked
-        # says so rather than claiming the whole title is going.
-        parent = item.parent()
-        while parent is not None:
-            owner = parent.data(0, QtCore.Qt.ItemDataRole.UserRole + 3)
-            if owner is not None:
-                self.mirror_tree.blockSignals(True)
-                try:
-                    parent.setCheckState(0,
-                                         self._card_check_state(owner))
-                finally:
-                    self.mirror_tree.blockSignals(False)
-                return
-            parent = parent.parent()
-
-    @staticmethod
-    def _card_check_state(card):
-        states = {o.selected for o in card.ops}
-        if states == {True}:
-            return QtCore.Qt.CheckState.Checked
-        if states == {False} or not states:
-            return QtCore.Qt.CheckState.Unchecked
-        return QtCore.Qt.CheckState.PartiallyChecked
-
-    def _sync_mirror_checks(self, item):
-        """Redraw every operation tick under `item` from the operations
-        themselves, so the widgets agree with the plan."""
-        for i in range(item.childCount()):
-            child = item.child(i)
-            op = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
-            if op is not None and hasattr(op, 'selected'):
-                child.setCheckState(
-                    0, QtCore.Qt.CheckState.Checked if op.selected
-                    else QtCore.Qt.CheckState.Unchecked)
-            self._sync_mirror_checks(child)
-
     def _render_mirror_cards(self):
-        """Draw the plan as one group per title, its changes as flat
-        rows -- the same shape the Sync tab uses.
+        """Draw the plan as a grid of covers, one per work.
 
-        A card's own tick drives every change under it, so "yes to this
-        show" is one click rather than one per field.
+        Everything about WHAT is drawn lives in present.mirror_cards;
+        this hands those cards to the grid and lets it place them.
         """
-        tree = self.mirror_tree
         plan = self._mirror_plan
-        tree.blockSignals(True)
-        try:
-            tree.clear()
-            if plan is None:
-                return
-            cards = present.mirror_cards(plan, self.engine.adapters)
-            bold = QtGui.QFont()
-            bold.setBold(True)
-            for card in cards:
-                top = QTreeWidgetItem(
-                    ['%s   —   %s'
-                     % (card.title, present.mirror_card_headline(card))])
-                top.setFont(0, bold)
-                top.setData(0, QtCore.Qt.ItemDataRole.UserRole + 3, card)
-                top.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1,
-                            card.issue)
-                if card.ops:
-                    # Checkable, but NOT auto-tristate: Qt derives an
-                    # auto-tristate item's state from its checkable
-                    # direct children, and a card's rows include
-                    # informational ones that are not checkable. Left
-                    # on, Qt overrode every click back to unchecked.
-                    top.setFlags(top.flags()
-                                 | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                self._build_mirror_card(top, card)
-                if card.ops:
-                    top.setCheckState(0, self._card_check_state(card))
-                tree.addTopLevelItem(top)
-                top.setExpanded(len(cards) <= 25)
-        finally:
-            tree.blockSignals(False)
+        if plan is None:
+            self.mirror_grid.clear()
+            return
+        self.mirror_grid.set_cards(
+            present.mirror_cards(plan, self.engine.adapters))
 
-    def _build_mirror_card(self, top, card):
-        # What ownership says this work SHOULD be. Under a single
-        # master list this would just be that list's entry; ownership
-        # assembles it per field from each field's own authority, so it
-        # names the owner alongside every value.
-        if card.desired:
-            header = QTreeWidgetItem(
-                ['Ownership says:  '
-                 + '   ·   '.join('%s %s (%s)' % (name, value, owner)
-                                  if owner else '%s %s' % (name, value)
-                                  for name, value, owner, _why
-                                  in card.desired)])
-            header.setForeground(0, self._PULL_COLOR)
-            top.addChild(header)
-
-        for op, text in card.rows:
-            if op is None:
-                # Informational: a settled membership decision, or a
-                # tracker identity has not matched. Not actionable
-                # here, so not tickable -- but shown, because the way
-                # back to that decision is this card's context menu.
-                item = QTreeWidgetItem([text])
-                item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 1,
-                             card.issue)
-                item.setData(0, QtCore.Qt.ItemDataRole.UserRole + 2,
-                             text.split(' — ')[0].strip())
-                top.addChild(item)
-                continue
-            if hasattr(op, 'values'):
-                color = self._CREATE_COLOR
-            elif not hasattr(op, 'field'):
-                color = self._CONFLICT_COLOR
-            elif op.target == 'local':
-                color = self._PULL_COLOR
-            else:
-                color = self._PUSH_COLOR
-            top.addChild(self._mirror_op_item(op, text, color))
-
-        for conflict in card.conflicts:
-            note = QTreeWidgetItem(
-                ['%s needs your decision — see Decisions'
-                 % present.field_label(conflict.field)])
-            note.setForeground(0, self._CONFLICT_COLOR)
-            top.addChild(note)
-
-    def _mirror_context_menu(self, tree, pos):
-        """Right-click a tracker row in the membership view: record what
-        should be true of this entry on that tracker.
+    def _mirror_context_menu(self, target, global_pos):
+        """Right-click a row of a tile's changes: record what should be
+        true of this entry on that tracker.
 
         These are the three membership decisions (sync/membership.py),
         and they persist -- the next mirror does not rediscover a
         discrepancy the user has already settled. 'Remove from' is the
         ONLY way a deletion is ever proposed."""
-        item = tree.itemAt(pos)
-        if item is None:
+        if not isinstance(target, MirrorRow):
             return
-        op = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        op = target.op
         if op is not None and 'you chose this' in getattr(op, 'reason', ''):
             # This row exists because of a stored Mirror decision --
             # the field is settled and so no longer appears as a
@@ -1058,10 +908,10 @@ class SyncWindow(QDialog):
                                  % present.field_label(op.field))
             act.triggered.connect(
                 lambda _c=False: self._clear_mirror_resolution(op))
-            menu.exec(tree.viewport().mapToGlobal(pos))
+            menu.exec(global_pos)
             return
-        issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 1)
-        provider_label = item.data(0, QtCore.Qt.ItemDataRole.UserRole + 2)
+        issue = target.issue
+        provider_label = target.provider_label
         if issue is None or not provider_label:
             return
         provider = provider_label.lower()
@@ -1086,7 +936,7 @@ class SyncWindow(QDialog):
             act.triggered.connect(
                 lambda _c=False: self._set_membership(issue, provider,
                                                       None))
-        menu.exec(tree.viewport().mapToGlobal(pos))
+        menu.exec(global_pos)
 
     def _clear_mirror_resolution(self, op):
         self.engine.clear_mirror_resolution(op.uuid, op.field)
@@ -2042,6 +1892,7 @@ class SyncWindow(QDialog):
             # a minute) doesn't block the close on the _task.wait()
             # below.
             self._cancel.set()
+            self.mirror_grid.stop()
             if self._task is not None:
                 # Drop any queued done/progress deliveries before
                 # closing the store, so nothing runs against it after.

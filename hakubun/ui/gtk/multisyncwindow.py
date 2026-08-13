@@ -43,6 +43,7 @@ from hakubun.sync.models import (FieldPolicy, NormalizedEntry, SyncCancelled,
 from hakubun.sync.inspect import atlas_label
 from hakubun.sync.present import FIELD_LABELS as _FIELD_LABELS
 from hakubun.sync.store import SyncStore
+from hakubun.ui.gtk.mirrorgrid import MirrorGrid
 
 _PULL_COLOR = '#4caf50'
 _PUSH_COLOR = '#42a5f5'
@@ -714,11 +715,10 @@ class MultiSyncWindow(Gtk.Window):
         # the preview and the confirmation already answer.
 
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        self._mirror_store, mirror_widget = self._make_changes_tree()
-        self._mirror_view = self._last_changes_view
-        self._mirror_view.connect('button-press-event',
-                                  self._on_mirror_row_button)
-        paned.pack1(mirror_widget, True, True)
+        # A wall of covers, not a wall of text: point at a title and
+        # its cover fades out from under what Mirror will do to it.
+        self.mirror_grid = MirrorGrid(on_menu=self._on_mirror_row_button)
+        paned.pack1(self.mirror_grid, True, True)
 
         frame = Gtk.Frame(label='Decisions')
         scroll = Gtk.ScrolledWindow()
@@ -737,11 +737,11 @@ class MultiSyncWindow(Gtk.Window):
         self._set_mirror_decisions([])
         return page
 
-    def _on_mirror_row_button(self, view, event):
-        """Right-click inside a Mirror card.
+    def _on_mirror_row_button(self, row, event):
+        """Right-click a row of a tile's changes.
 
-        One handler, because there is now one tree: a TRACKER row
-        carries (issue, label) and offers the three membership
+        One handler, because there is one kind of row: a note about a
+        TRACKER carries (issue, label) and offers the three membership
         decisions (sync/membership.py), while an OPERATION row produced
         by a stored decision offers the way back to it -- that field is
         settled and so no longer appears as a conflict card.
@@ -750,29 +750,21 @@ class MultiSyncWindow(Gtk.Window):
         rediscover a discrepancy the user has already settled, and
         'Remove from' is the ONLY way a deletion is ever proposed.
         """
-        if event.button != 3:
-            return False
-        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
-        if pathinfo is None:
-            return False
-        store = self._mirror_store
-        payload = store.get_value(store.get_iter(pathinfo[0]), _C_CHANGE)
-        if payload is not None and not isinstance(payload, tuple):
-            if 'you chose this' not in getattr(payload, 'reason', ''):
+        op = row.op
+        if op is not None:
+            if 'you chose this' not in getattr(op, 'reason', ''):
                 return False
             menu = Gtk.Menu()
             item = Gtk.MenuItem(label='Ask me about %s again'
-                                % present.field_label(payload.field))
+                                % present.field_label(op.field))
             item.connect('activate', lambda *_a:
-                         self._clear_mirror_resolution(payload))
+                         self._clear_mirror_resolution(op))
             menu.append(item)
             menu.show_all()
             menu.popup_at_pointer(event)
             return True
-        if not isinstance(payload, tuple):
-            return False
-        issue, provider_label = payload
-        if issue is None:
+        issue, provider_label = row.issue, row.provider_label
+        if issue is None or not provider_label:
             return False
         provider = provider_label.lower()
         menu = Gtk.Menu()
@@ -928,60 +920,17 @@ class MultiSyncWindow(Gtk.Window):
         self._status(present.mirror_plan_summary(plan))
 
     def _render_mirror_cards(self):
-        """Draw the plan as one group per title, its changes as flat
-        rows -- see the Qt twin."""
-        store = self._mirror_store
-        store.clear()
+        """Draw the plan as a grid of covers, one per work.
+
+        Everything about WHAT is drawn lives in present.mirror_cards;
+        this hands those cards to the grid and lets it place them.
+        """
         plan = self._mirror_plan
         if plan is None:
+            self.mirror_grid.clear()
             return
-        for card in present.mirror_cards(plan, self.engine.adapters):
-            states = {o.selected for o in card.ops}
-            parent = store.append(None, [
-                states == {True}, len(states) > 1,
-                '%s   —   %s' % (card.title,
-                                 present.mirror_card_headline(card)),
-                None, None])
-            self._build_mirror_card(store, parent, card)
-
-    def _build_mirror_card(self, store, parent, card):
-        if card.desired:
-            store.append(parent, [
-                False, False,
-                'Ownership says:  '
-                + '   ·   '.join('%s %s (%s)' % (name, value, owner)
-                                 if owner else '%s %s' % (name, value)
-                                 for name, value, owner, _why
-                                 in card.desired),
-                _PULL_COLOR, None])
-
-        for op, text in card.rows:
-            if op is None:
-                # Informational: a settled decision, or an unmatched
-                # tracker. Carries (issue, label) so the context menu
-                # can offer the way back to that decision.
-                store.append(parent, [
-                    False, False, text, None,
-                    (card.issue, text.split(' — ')[0].strip())
-                    if card.issue is not None else None])
-                continue
-            if hasattr(op, 'values'):
-                color = _CREATE_COLOR
-            elif not hasattr(op, 'field'):
-                color = _CONFLICT_COLOR
-            elif op.target == 'local':
-                color = _PULL_COLOR
-            else:
-                color = _PUSH_COLOR
-            store.append(parent, [op.selected, False, text, color, op])
-
-        for conflict in card.conflicts:
-            store.append(parent, [
-                False, False,
-                '%s needs your decision — see Decisions'
-                % present.field_label(conflict.field),
-                _CONFLICT_COLOR, None])
-
+        self.mirror_grid.set_cards(
+            present.mirror_cards(plan, self.engine.adapters))
 
     def s_mirror_apply(self):
         """Never applies silently: the totals are shown first, per
@@ -1642,4 +1591,5 @@ class MultiSyncWindow(Gtk.Window):
         # Interrupt any in-flight apply so a rate-limit wait doesn't keep
         # the worker (and the store) alive for long.
         self._cancel.set()
+        self.mirror_grid.stop()
         self._maybe_close_store()
