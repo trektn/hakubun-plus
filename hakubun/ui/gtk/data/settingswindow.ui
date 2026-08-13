@@ -2148,6 +2148,51 @@
                 <property name="position">4</property>
               </packing>
             </child>
+            <child>
+              <object class="GtkBox" id="box_ui_language">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="label" translatable="yes">Language:</property>
+                    <property name="xalign">0</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkComboBoxText" id="combo_ui_language">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="tooltip_text" translatable="yes">Takes effect after restarting Hakubun+.</property>
+                    <items>
+                      <item id="auto" translatable="yes">System Default</item>
+                      <item id="en" translatable="yes">English</item>
+                      <item id="ja" translatable="yes">日本語 (Japanese)</item>
+                      <item id="zh_CN" translatable="yes">简体中文 (Chinese, Simplified)</item>
+                      <item id="zh_TW" translatable="yes">繁體中文 (Chinese, Traditional)</item>
+                      <item id="es" translatable="yes">Español (Spanish)</item>
+                    </items>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">1</property>
+                  </packing>
+                </child>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">5</property>
+              </packing>
+            </child>
           </object>
           <packing>
             <property name="position">2</property>

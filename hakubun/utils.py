@@ -957,6 +957,16 @@ gtk_defaults = {
     'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'episodebar_style': 1,
     'filter_global': False,
+    # Whether the SubMiner on/off toggle is shown at all -- purely
+    # cosmetic, doesn't touch config_defaults' 'use_subminer' switch
+    # itself. Same key and meaning as qt_defaults below; the GTK
+    # Preferences window reads it directly, so its absence here was a
+    # KeyError on opening Preferences at all.
+    'show_subminer_toggle': True,
+    # UI language override. 'auto' follows the system locale; otherwise
+    # one of hakubun.i18n.SUPPORTED_LANGUAGES. Read once at startup, so
+    # changing it needs a restart to take effect.
+    'language': 'auto',
     # Multi-sync (same keys/semantics as qt_defaults below): the list
     # overlay, owner-system score editing and the Sync button's
     # headless multi-sync all gate on these.
@@ -1014,6 +1024,8 @@ qt_defaults = {
     # menu in Taiga mode) is shown at all -- purely cosmetic, doesn't
     # touch config_defaults' 'use_subminer' switch itself.
     'show_subminer_toggle': True,
+    # Same key/semantics as gtk_defaults above.
+    'language': 'auto',
     'multisync_enabled': True,
     # Same keys/semantics as config_defaults above.
     'multisync_mode': 'merge',
