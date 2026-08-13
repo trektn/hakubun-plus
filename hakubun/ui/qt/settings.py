@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorD
                              QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QRadioButton,
                              QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
+from hakubun import i18n
 from hakubun import utils
 from hakubun.sync import present
 from hakubun.ui.qt.delegates import ShowsTableDelegate
@@ -44,23 +45,23 @@ class SettingsDialog(QDialog):
         self.config = config
         self.configfile = configfile
         self.setStyleSheet("QGroupBox { font-weight: bold; } ")
-        self.setWindowTitle('Settings')
+        self.setWindowTitle(_('Settings'))
         layout = QGridLayout()
 
         # Categories
         self.category_list = QListWidget()
         category_media = QListWidgetItem(
-            getIcon('media-playback-start'), 'Media', self.category_list)
+            getIcon('media-playback-start'), _('Media'), self.category_list)
         category_library = QListWidgetItem(
-            getIcon('folder'), 'Library', self.category_list)
+            getIcon('folder'), _('Library'), self.category_list)
         category_sync = QListWidgetItem(
-            getIcon('view-refresh'), 'Sync', self.category_list)
+            getIcon('view-refresh'), _('Sync'), self.category_list)
         category_behavior = QListWidgetItem(
-            getIcon('preferences-system'), 'Behavior', self.category_list)
+            getIcon('preferences-system'), _('Behavior'), self.category_list)
         category_ui = QListWidgetItem(
-            getIcon('window-new'), 'User Interface', self.category_list)
+            getIcon('window-new'), _('User Interface'), self.category_list)
         category_theme = QListWidgetItem(
-            getIcon('applications-graphics'), 'Theme', self.category_list)
+            getIcon('applications-graphics'), _('Theme'), self.category_list)
         self.category_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.category_list.setCurrentRow(0)
         self.category_list.setMaximumWidth(
@@ -504,6 +505,17 @@ class SettingsDialog(QDialog):
         page_ui_layout = QFormLayout()
         page_ui_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
+        # Group: Language
+        g_language = QGroupBox(_('Language'))
+        g_language.setFlat(True)
+        self.ui_language = QComboBox()
+        for (code, label) in i18n.SUPPORTED_LANGUAGES:
+            self.ui_language.addItem(label, code)
+        self.ui_language.setToolTip(_('Takes effect after restarting Hakubun+.'))
+        g_language_layout = QFormLayout()
+        g_language_layout.addRow(_('UI language:'), self.ui_language)
+        g_language.setLayout(g_language_layout)
+
         # Group: Icon
         g_icon = QGroupBox('Notification Icon')
         g_icon.setFlat(True)
@@ -597,6 +609,7 @@ class SettingsDialog(QDialog):
         g_subminer.setLayout(g_subminer_layout)
 
         # UI layout
+        page_ui_layout.addWidget(g_language)
         page_ui_layout.addWidget(g_icon)
         page_ui_layout.addWidget(g_window)
         page_ui_layout.addWidget(g_lists)
@@ -805,6 +818,8 @@ class SettingsDialog(QDialog):
         self.kitsu_api.setCurrentIndex(
             max(0, self.kitsu_api.findData(engine.get_config('kitsu_api'))))
 
+        self.ui_language.setCurrentIndex(
+            max(0, self.ui_language.findData(self.config.get('language', 'auto'))))
         self.tray_icon.setChecked(self.config['show_tray'])
         self.close_to_tray.setChecked(self.config['close_to_tray'])
         self.start_in_tray.setChecked(self.config['start_in_tray'])
@@ -949,6 +964,8 @@ class SettingsDialog(QDialog):
 
         engine.save_config()
 
+        self.config['language'] = self.ui_language.itemData(
+            self.ui_language.currentIndex())
         self.config['show_tray'] = self.tray_icon.isChecked()
         self.config['close_to_tray'] = self.close_to_tray.isChecked()
         self.config['start_in_tray'] = self.start_in_tray.isChecked()

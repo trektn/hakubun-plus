@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboB
                              QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
                              QWidget)
 
+from hakubun import i18n
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
@@ -119,6 +120,12 @@ class MainWindow(QMainWindow):
         # touching taiga-only widgets that were never built because the
         # window itself was constructed for the other mode.
         self._taiga_mode = self.config['taiga_mode']
+
+        # Same restart-gated read as taiga_mode above: the language a
+        # freshly-installed catalog puts on screen shouldn't change out
+        # from under already-built widgets just because Settings wrote a
+        # new value to self.config on Apply.
+        i18n.install(self.config.get('language', 'auto'))
 
         # Build UI
         self.app_name = 'Taiga-qt' if self._taiga_mode else 'Hakubun+-qt'

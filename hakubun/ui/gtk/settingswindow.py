@@ -128,6 +128,7 @@ class SettingsWindow(Gtk.Window):
     checkbox_show_subminer_toggle = Gtk.Template.Child()
     checkbox_add_mal_scores = Gtk.Template.Child()
     btn_load_mal_scores = Gtk.Template.Child()
+    combo_ui_language = Gtk.Template.Child()
 
     colorbutton_rows_playing = Gtk.Template.Child()
     colorbutton_rows_queued = Gtk.Template.Child()
@@ -351,6 +352,8 @@ class SettingsWindow(Gtk.Window):
         self.checkbox_filter_global.set_active(self.config['filter_global'])
         self.checkbox_show_subminer_toggle.set_active(
             self.config['show_subminer_toggle'])
+        if not self.combo_ui_language.set_active_id(self.config['language']):
+            self.combo_ui_language.set_active_id('auto')
 
         for color_key, color_button in self._color_buttons.items():
             color = getColor(self.config['colors'][color_key])
@@ -656,6 +659,7 @@ class SettingsWindow(Gtk.Window):
         self.config['filter_global'] = self.checkbox_filter_global.get_active()
         self.config['show_subminer_toggle'] = \
             self.checkbox_show_subminer_toggle.get_active()
+        self.config['language'] = self.combo_ui_language.get_active_id() or 'auto'
         self.config['multisync_enabled'] = \
             self.checkbox_multisync_enabled.get_active()
         # Retire any legacy multisync_mode so settings_plan_only's
