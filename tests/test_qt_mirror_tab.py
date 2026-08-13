@@ -126,15 +126,25 @@ def test_a_tile_carries_the_ownership_row_and_its_changes(window):
 
 def test_the_cover_fades_when_the_changes_come_up(window):
     """The whole preview: the picture is what you navigate by, the
-    changes are what you read, and they occupy the same space."""
+    changes are what you read, and they occupy the same space.
+
+    The fade is the panel's own near-opaque background, not a graphics
+    effect on the cover -- an effect renders the widget through an
+    offscreen pixmap, which a QScrollArea's blit-scrolling leaves
+    smeared behind at the old offset.
+    """
+    from PyQt6.QtWidgets import QGraphicsEffect
     window.r_mirror_planned(_plan(), None)
     tile = _tile(window, 'GHOST')
-    assert tile._fade.opacity() == 1.0
+    assert not tile._details.isVisibleTo(tile)
     tile.set_hovered(True)
-    assert tile._fade.opacity() < 0.5
     assert tile._details.isVisibleTo(tile)
     tile.set_hovered(False)
-    assert tile._fade.opacity() == 1.0
+    assert not tile._details.isVisibleTo(tile)
+
+    for widget in tile.findChildren(QtCore.QObject):
+        assert not isinstance(getattr(widget, 'graphicsEffect', None)
+                              and widget.graphicsEffect(), QGraphicsEffect)
 
 
 def test_a_work_with_no_cover_still_names_itself(window):

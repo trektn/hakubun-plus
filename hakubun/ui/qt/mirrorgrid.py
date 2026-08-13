@@ -32,9 +32,8 @@ projection the GTK grid draws, so the two windows say the same words.
 """
 
 from PyQt6 import QtCore, QtGui
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsOpacityEffect,
-                             QHBoxLayout, QLabel, QLayout, QScrollArea,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
+                             QLayout, QScrollArea, QVBoxLayout, QWidget)
 
 from hakubun.sync import present
 from hakubun.ui import posters
@@ -133,6 +132,44 @@ class FlowLayout(QLayout):
         return y + line_height - rect.y() + margins.bottom()
 
 
+def _sizes(widget):
+    """Body and aside point sizes, derived from the user's own font.
+
+    A tile is small, so the panel runs a little under the interface
+    font -- but scaled from it, never a fixed pixel size that ignores
+    whatever the user set.
+    """
+    base = widget.font().pointSizeF()
+    if base <= 0:                      # font set in pixels
+        base = 10.0
+    return max(7.0, base * 0.92), max(6.0, base * 0.78)
+
+
+def _row_markup(change, color, body_pt, why_pt):
+    """A row on two levels: what happens, then why underneath.
+
+    The reason is the part you only read when the change surprises you,
+    so it is smaller and quieter -- otherwise every row is a paragraph
+    and none of them is scannable.
+    """
+    parts = ['<span style="color:%s;">%s</span>'
+             % (color, _escape(change.head))]
+    if change.detail:
+        parts.append('<span style="color:#e8eaed;">%s</span>'
+                     % _escape(change.detail))
+    line = ('<span style="font-size:%.1fpt;">%s</span>'
+            % (body_pt, ' '.join(parts)))
+    if change.why:
+        line += ('<br><span style="color:%s; font-size:%.1fpt;">%s</span>'
+                 % (_MUTED_COLOR, why_pt, _escape(change.why)))
+    return line
+
+
+def _escape(text):
+    return (text.replace('&', '&amp;').replace('<', '&lt;')
+            .replace('>', '&gt;'))
+
+
 class MirrorRow(QWidget):
     """One line of the overlay: a change, or a note about one.
 
@@ -141,21 +178,22 @@ class MirrorRow(QWidget):
     per row type.
     """
 
-    def __init__(self, text, color, op=None, issue=None,
-                 provider_label='', parent=None):
+    def __init__(self, change, color, issue=None, provider_label='',
+                 parent=None):
         super().__init__(parent)
-        self.op = op
+        self.change = change
+        self.op = change.op
         self.issue = issue
         self.provider_label = provider_label
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        if op is not None and hasattr(op, 'selected'):
+        layout.setSpacing(5)
+        if self.op is not None and hasattr(self.op, 'selected'):
             # The text is a LABEL beside the box, never the box's own
             # caption: a checkbox does not wrap its caption, and these
             # rows are read in a tile two hundred pixels wide.
             self.check = QCheckBox()
-            self.check.setChecked(bool(op.selected))
+            self.check.setChecked(bool(self.op.selected))
             self.check.toggled.connect(self._on_toggled)
             layout.addWidget(self.check, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         else:
@@ -164,13 +202,22 @@ class MirrorRow(QWidget):
             # nothing to tick, but the way back to that decision is
             # this row's context menu.
             self.check = None
-        self.label = QLabel(text)
+
+        mark = QLabel(present.MIRROR_MARKS.get(change.kind, '·'))
+        mark.setStyleSheet('color: %s;' % color)
+        mark.setFixedWidth(12)
+        mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop
+                          | QtCore.Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(mark, 0)
+
+        body_pt, why_pt = _sizes(self)
+        self.label = QLabel(_row_markup(change, color, body_pt, why_pt))
+        self.label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.label.setWordWrap(True)
         layout.addWidget(self.label, 1)
         # No context menu policy of its own: the right-click belongs to
         # the tile, which routes it back down to whichever row it
         # landed on. A policy here would swallow the event instead.
-        self.setStyleSheet('color: %s;' % color)
 
     def _on_toggled(self, checked):
         self.op.selected = checked
@@ -188,7 +235,9 @@ class MirrorRow(QWidget):
         self.check.blockSignals(False)
 
     def text(self):
-        return self.label.text()
+        """The flat sentence -- what the row SAYS, independent of how
+        it is laid out."""
+        return self.change.text
 
 
 class MirrorTile(QFrame):
@@ -222,9 +271,6 @@ class MirrorTile(QFrame):
         self.cover.setWordWrap(True)
         self.cover.setText(card.title)
         self.cover.setStyleSheet('color: #6b7280; padding: 12px;')
-        self._fade = QGraphicsOpacityEffect(self.cover)
-        self._fade.setOpacity(1.0)
-        self.cover.setGraphicsEffect(self._fade)
         layout.addWidget(self.cover_holder)
 
         self.check = QCheckBox(self.cover_holder)
@@ -319,12 +365,22 @@ class MirrorTile(QFrame):
         self._hovered = hovered
         if hovered:
             self.ensure_details()
-        # 0.12, not 0: the cover still reads as the backdrop of its own
-        # changes, which is what tells you at a glance which tile you
-        # are reading.
-        self._fade.setOpacity(0.12 if hovered else 1.0)
+        # The fade IS the panel: its background is nearly-but-not-quite
+        # opaque, so the cover reads through it at about a tenth --
+        # still the backdrop of its own changes, which is what tells
+        # you at a glance which tile you are reading.
+        #
+        # This used to be a QGraphicsOpacityEffect on the cover, and
+        # that is what made scrolling tear: a QScrollArea scrolls by
+        # blitting its viewport, and a widget carrying a graphics
+        # effect renders through an offscreen pixmap that the blit
+        # leaves behind at the old offset.
         if self._details is not None:
             self._details.setVisible(hovered)
+        if self.cover.pixmap() is None or self.cover.pixmap().isNull():
+            # No art: the title is standing in for the picture, and
+            # reading the changes through it is unpleasant.
+            self.cover.setText('' if hovered else self.card.title)
         self.check.raise_()
 
     @property
@@ -344,7 +400,7 @@ class MirrorTile(QFrame):
             return self._details
         panel = QWidget(self.cover_holder)
         panel.setGeometry(0, 0, COVER_W, COVER_H)
-        panel.setStyleSheet('background: rgba(12, 15, 20, 215);')
+        panel.setStyleSheet('background: rgba(12, 15, 20, 225);')
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -354,36 +410,38 @@ class MirrorTile(QFrame):
         scroll.setStyleSheet('background: transparent;')
         holder = QWidget()
         inner = QVBoxLayout(holder)
-        inner.setContentsMargins(8, 24, 8, 8)
-        inner.setSpacing(4)
+        inner.setContentsMargins(8, 26, 8, 8)
+        inner.setSpacing(7)
 
         if self.card.desired:
             # What ownership says this work SHOULD be -- the row every
             # delta below is read against. Without it "Score 7 -> 8" is
             # a number the reader has to reconstruct a target from.
-            says = QLabel(
-                'Ownership says:  '
-                + '   ·   '.join('%s %s (%s)' % (name, value, owner)
-                                 if owner else '%s %s' % (name, value)
-                                 for name, value, owner, _why
-                                 in self.card.desired))
+            # Set as a heading rather than a sentence: it is the one
+            # row that is not a change.
+            body_pt, small_pt = _sizes(self)
+            says = QLabel(_desired_markup(self.card.desired,
+                                          body_pt, small_pt))
+            says.setTextFormat(QtCore.Qt.TextFormat.RichText)
             says.setWordWrap(True)
-            says.setStyleSheet('color: %s; font-size: 11px;'
-                               % _OWNERSHIP_COLOR)
             inner.addWidget(says)
 
-        for op, text in self.card.rows:
-            row = MirrorRow(text, self._row_color(op), op=op,
+        for change in self.card.rows:
+            row = MirrorRow(change, _row_color(change),
                             issue=self.card.issue,
-                            provider_label=_provider_label(op, text))
+                            provider_label=(change.head
+                                            if change.op is None else ''))
             self.rows.append(row)
             inner.addWidget(row)
 
         for conflict in self.card.conflicts:
-            note = QLabel('%s needs your decision — see Decisions'
-                          % present.field_label(conflict.field))
+            note = QLabel(
+                '<span style="color:%s;">%s&nbsp; %s needs your decision'
+                '</span>' % (_CONFLICT_COLOR,
+                             present.MIRROR_MARKS['conflict'],
+                             _escape(present.field_label(conflict.field))))
+            note.setTextFormat(QtCore.Qt.TextFormat.RichText)
             note.setWordWrap(True)
-            note.setStyleSheet('color: %s;' % _CONFLICT_COLOR)
             inner.addWidget(note)
 
         inner.addStretch()
@@ -392,18 +450,6 @@ class MirrorTile(QFrame):
         panel.setVisible(False)
         self._details = panel
         return panel
-
-    @staticmethod
-    def _row_color(op):
-        if op is None:
-            return _MUTED_COLOR
-        if hasattr(op, 'values'):
-            return _ADD_COLOR
-        if not hasattr(op, 'field'):
-            return _REMOVE_COLOR
-        if op.target == 'local':
-            return _LOCAL_COLOR
-        return _UPDATE_COLOR
 
     # -- selection -----------------------------------------------------
 
@@ -441,16 +487,29 @@ class MirrorTile(QFrame):
         self.refresh_check()
 
 
-def _provider_label(op, text):
-    """Which tracker an informational row is about.
+_ROW_COLORS = {'add': _ADD_COLOR, 'remove': _REMOVE_COLOR,
+               'update': _UPDATE_COLOR, 'local': _LOCAL_COLOR}
 
-    Read from the row's own text, which is how the tree read it too:
-    the notes are built by present.mirror_cards as "<Tracker> — ...",
-    and the membership menu needs the tracker name to act on.
-    """
-    if op is not None:
-        return ''
-    return text.split(' — ')[0].strip()
+
+def _row_color(change):
+    return _ROW_COLORS.get(change.kind, _MUTED_COLOR)
+
+
+def _desired_markup(desired, body_pt, small_pt):
+    """What ownership says the work should be, as a list of
+    field/value pairs rather than one long run-on line."""
+    parts = ['<span style="color:%s; font-size:%.1fpt;">OWNERSHIP SAYS'
+             '</span>' % (_MUTED_COLOR, small_pt)]
+    for name, value, owner, _why in desired:
+        line = ('<span style="color:%s;">%s</span> '
+                '<span style="color:#e8eaed;">%s</span>'
+                % (_OWNERSHIP_COLOR, _escape(name), _escape(value)))
+        if owner:
+            line += ('<span style="color:%s; font-size:%.1fpt;"> %s</span>'
+                     % (_MUTED_COLOR, small_pt, _escape(owner)))
+        parts.append('<span style="font-size:%.1fpt;">%s</span>'
+                     % (body_pt, line))
+    return '<br>'.join(parts)
 
 
 class MirrorGrid(QScrollArea):

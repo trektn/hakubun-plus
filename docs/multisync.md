@@ -961,15 +961,27 @@ cover — point at a tile and the picture fades to 12% out from under the
 list:
 
 ```
-GHOST   —   add to Kitsu · 1 field(s)
-    Ownership says:  Score 9 (Anilist)   ·   Status Completed (Mal)
-    Add to Kitsu: Score 9 · Status Completed  — exists on Anilist
-    Update Mal, Score: 5 → 9  — Anilist owns score
-    Update Hakubun, Score: 5 → 9  — matches the trackers
+OWNERSHIP SAYS
+Score  9   Anilist
+Status Completed   Mal
+[x] ✚  Add to Kitsu  Score 9 · Status Completed
+          exists on Anilist
+[x] →  Mal · Score  5 → 9
+          Anilist owns score
+[x] ⌂  Hakubun · Score  5 → 9
+          matches the trackers
 ```
 
-Each line names the tracker, the field, both values and the rule behind
-it. Two earlier revisions are worth recording. The first grouped a
+Each row still names the tracker, the field, both values and the rule
+behind it — but as *parts*, not as one glued sentence.
+`present.MirrorChange` carries `kind`, `head`, `detail` and `why`
+separately (with `.text` keeping the flat one-line form for tests,
+logs and tooltips), because "Update Mal, Score: 5 → 9  — Anilist owns
+score" wraps into three ragged lines in a 200px tile and every row ends
+up looking like every other one. Given the parts, both windows set the
+tracker apart from the values, drop the reason underneath in a quieter
+voice, and lead with a mark (`present.MIRROR_MARKS`) that says which
+*kind* of change it is before any of it is read. Two earlier revisions are worth recording. The first grouped a
 card's rows under per-tracker sub-headers showing each tracker's whole
 entry; it read as two levels of expansion to find one value, and the
 user's verdict was blunt — "get rid of the show stuff, it's incredibly
@@ -982,6 +994,25 @@ Nothing is hidden behind a disclosure the user has to find: the detail
 appears where the pointer already is, and the tile's border and summary
 carry the headline (deletion first — it is the only irreversible thing
 Mirror does — then decisions needed, then creations, then updates).
+
+**The fade is the panel's own near-opaque background**, in both
+toolkits, and that is load-bearing rather than incidental. It began as
+a widget-level opacity — `QGraphicsOpacityEffect` on Qt,
+`set_opacity()` on GTK — and both make the toolkit render the widget
+through an offscreen surface. On Qt that tore during scrolling, because
+a `QScrollArea` scrolls by blitting its viewport and the effect's
+pixmap was left behind at the old offset. The panel alone gives the
+same picture with none of that.
+
+**Hover is not read from the crossing event alone.** A GTK tile is an
+`EventBox` with no visible window, so its `GdkWindow` is input-only —
+and an input-only window cannot contain the windows of the widgets
+inside it. The details panel is therefore a *sibling* in the window
+hierarchy, and crossing onto it reports `NONLINEAR`, not `INFERIOR`:
+trusting the detail hid the panel the instant the pointer touched it,
+which re-entered the tile, which showed it again. Both windows now ask
+where the pointer actually is, and GTK defers the hide by 80ms so a
+boundary pixel cannot flash a panel away and back.
 
 The tile's own tick answers the whole title at once, and acts on the
 **card**, not on the row widgets: the overlay is built lazily on first

@@ -122,16 +122,48 @@ def test_a_tile_carries_the_ownership_row_and_its_changes(win):
 
 def test_the_cover_fades_when_the_changes_come_up(win):
     """The whole preview: the picture is what you navigate by, the
-    changes are what you read, and they occupy the same space."""
+    changes are what you read, and they occupy the same space.
+
+    The fade is the panel's own near-opaque background, not an opacity
+    set on the cover -- that forces GTK to render the widget through an
+    offscreen surface every frame, for a result the panel already
+    gives.
+    """
     win.r_mirror_planned(_plan(), None)
     tile = _tile(win, 'GHOST')
-    assert tile.cover.get_opacity() == 1.0
+    assert not tile._details.get_visible()
     tile.set_hovered(True)
-    assert tile.cover.get_opacity() < 0.5
     assert tile._details.get_visible()
     tile.set_hovered(False)
-    assert tile.cover.get_opacity() == 1.0
     assert not tile._details.get_visible()
+    assert tile.cover.get_opacity() == 1.0
+
+
+def test_the_details_stay_up_when_the_pointer_moves_onto_them(win):
+    """The flicker bug, pinned.
+
+    A tile is an EventBox with no visible window, so its GdkWindow is
+    input-only -- and an input-only window cannot contain the windows
+    of the widgets inside it. The details panel is therefore a SIBLING
+    in the window hierarchy, and crossing onto it reports NONLINEAR,
+    not INFERIOR. Trusting the detail alone hid the panel the instant
+    the pointer touched it, which re-entered the tile, which showed it
+    again.
+    """
+    win.r_mirror_planned(_plan(), None)
+    tile = _tile(win, 'GHOST')
+    tile.set_hovered(True)
+
+    crossing = type('E', (), {'detail': Gdk.NotifyType.NONLINEAR})()
+    tile._on_leave(tile, crossing)
+    # Deferred, and conditional on where the pointer really is -- so
+    # nothing has been hidden yet by the leave itself.
+    assert tile._details.get_visible()
+    assert tile._hide_source
+
+    tile._on_enter(tile, None)
+    assert not tile._hide_source, 'a re-entry must cancel the hide'
+    assert tile._details.get_visible()
 
 
 def test_a_work_with_no_cover_still_names_itself(win):

@@ -534,6 +534,57 @@ MIRROR_LOCAL_HELP = (
 # Both toolkits render this same model, so the two windows cannot drift
 # apart again, and the layout is testable without a widget.
 
+# The mark that leads each row. Part of the vocabulary, not of either
+# toolkit: a grid is scanned before it is read, and the shape of the
+# change should arrive before the sentence does. Kept to glyphs every
+# ordinary UI font has -- a tofu box would be worse than no mark.
+MIRROR_MARKS = {
+    'add': '✚',
+    'remove': '✕',
+    'update': '→',
+    'local': '⌂',      # this app's own copy, never a tracker
+    'note': 'ⓘ',
+    'conflict': '!',
+}
+
+
+class MirrorChange:
+    """One line of a card: a change, or a note about one.
+
+    Split into its parts rather than handed over as a finished
+    sentence. A card is read inside a tile a couple of hundred pixels
+    wide, where "Update Mal, Score: 5 → 9  — Anilist owns score" wraps
+    into three ragged lines and every row looks like every other one.
+    Given the parts, a window can set the tracker apart from the
+    values, put the reason underneath in a quieter voice, and lead
+    with a mark that says which KIND of change this is before any of
+    it is read.
+
+    `text` remains the whole thing on one line -- the flat form, still
+    what a plain-text context (a log, a test, a tooltip) wants.
+    """
+
+    def __init__(self, op, kind, head, detail='', why='', text=None):
+        self.op = op          # None for an informational note
+        self.kind = kind      # add | remove | update | local | note
+        self.head = head      # who and what: 'Kitsu', 'Mal · Score'
+        self.detail = detail  # the values: '5 → 9', 'Score 9 · …'
+        self.why = why        # the rule behind it, if any
+        if text is None:
+            text = ' '.join(p for p in (head, detail) if p)
+            if why:
+                text += '  — %s' % why
+        # The flat sentence is its own thing, with its own grammar --
+        # "Update Mal, Score: 5 → 9" is a sentence, while the parts
+        # above are a layout. Callers pass it where the two differ.
+        self.text = text
+
+    def __iter__(self):
+        """Still unpacks as (op, text): the flat pair is what several
+        readers only ever wanted."""
+        return iter((self.op, self.text))
+
+
 class MirrorCard:
     """Everything a Mirror plan does to one work.
 
@@ -564,7 +615,7 @@ class MirrorCard:
         """The tickable operations. Informational rows carry None and
         are excluded -- both windows derive a card's checkbox state
         from this, and a None in it crashed the render."""
-        return [op for op, _text in self.rows if op is not None]
+        return [row.op for row in self.rows if row.op is not None]
 
     @property
     def changed(self):
@@ -618,14 +669,18 @@ def mirror_cards(plan, adapters, category='all'):
         text = 'Add to %s: %s' % (label(op.provider), detail)
         if op.reason:
             text += '  — %s' % op.reason
-        card.rows.append((op, text))
+        card.rows.append(MirrorChange(
+            op, 'add', 'Add to %s' % label(op.provider),
+            detail=detail, why=op.reason or '', text=text))
 
     for op in plan.removes:
         card = card_for(op.uuid, op.title)
         text = 'Remove from %s' % label(op.provider)
         if op.reason:
             text += '  — %s' % op.reason
-        card.rows.append((op, text))
+        card.rows.append(MirrorChange(
+            op, 'remove', 'Remove from %s' % label(op.provider),
+            why=op.reason or '', text=text))
 
     totals = {}
     for uuid, observed in plan.observed.items():
@@ -644,15 +699,25 @@ def mirror_cards(plan, adapters, category='all'):
             new = fmt_target_value(adapters, op.field, op.new, op.target)
         text = 'Update %s, %s: %s → %s' % (
             label(op.target), field_label(op.field), old, new)
-        if op.field == 'score':
-            text += score_round_note(adapters, op.target, op.new)
+        note = (score_round_note(adapters, op.target, op.new)
+                if op.field == 'score' else '')
+        text += note
         if op.reason:
             text += '  — %s' % op.reason
-        card.rows.append((op, text))
+        card.rows.append(MirrorChange(
+            op, 'update',
+            '%s · %s' % (label(op.target), field_label(op.field)),
+            detail='%s → %s%s' % (old, new, note),
+            why=op.reason or '', text=text))
 
     for op in plan.local:
         card = card_for(op.uuid, op.title)
-        card.rows.append((op, mirror_local_line(op)))
+        card.rows.append(MirrorChange(
+            op, 'local', '%s · %s' % (local_label(), field_label(op.field)),
+            detail='%s → %s' % (fmt_value(op.field, op.old),
+                                fmt_value(op.field, op.new)),
+            why=op.reason or 'matches the trackers',
+            text=mirror_local_line(op)))
 
     for conflict in plan.conflicts:
         card_for(conflict.uuid, conflict.title).conflicts.append(conflict)
@@ -667,12 +732,14 @@ def mirror_cards(plan, adapters, category='all'):
             note = membership_note(issue.decisions[provider],
                                    issue.reasons.get(provider))
             if note:
-                card.rows.append(
-                    (None, '%s — %s' % (label(provider), note)))
+                card.rows.append(MirrorChange(
+                    None, 'note', label(provider), why=note,
+                    text='%s — %s' % (label(provider), note)))
         for provider in issue.unmapped:
-            card.rows.append(
-                (None, '%s — not matched yet; resolve it under Identity'
-                 % label(provider)))
+            why = 'not matched yet; resolve it under Identity'
+            card.rows.append(MirrorChange(
+                None, 'note', label(provider), why=why,
+                text='%s — %s' % (label(provider), why)))
 
     for uuid, card in cards.items():
         card.image = plan.images.get(uuid) or ''
@@ -689,16 +756,16 @@ def mirror_card_headline(card):
     """The one-line summary beside a title: what happens to this work,
     in the fewest words that are still true."""
     adds, removes, updates, local = set(), set(), 0, 0
-    for op, _text in card.rows:
-        target = getattr(op, 'provider', None) or getattr(op, 'target',
-                                                          None)
-        if op is None:
+    for row in card.rows:
+        if row.op is None:
             continue
-        if hasattr(op, 'values'):
+        target = (getattr(row.op, 'provider', None)
+                  or getattr(row.op, 'target', None))
+        if row.kind == 'add':
             adds.add(label(target))
-        elif not hasattr(op, 'field'):
+        elif row.kind == 'remove':
             removes.add(label(target))
-        elif target == 'local':
+        elif row.kind == 'local':
             local += 1
         else:
             updates += 1
