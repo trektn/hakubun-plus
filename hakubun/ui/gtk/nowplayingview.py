@@ -148,7 +148,16 @@ class NowPlayingView(Gtk.Box):
 
     def _show_details_state(self):
         self.empty_box.hide()
-        self.details_box.show_all()
+        # details_box has no_show_all set (see the comment in __init__) so
+        # that the container window's startup show_all() can't un-hide it
+        # while nothing is playing -- but that same no_show_all also makes
+        # GTK ignore a *direct* show_all() call on this widget, silently
+        # leaving it (and everything under it) invisible forever. A plain
+        # show() isn't subject to that and is all that's needed here: its
+        # visible descendants already carry their own visibility (set in
+        # showinfobox.ui, or explicitly re-shown once details finish
+        # loading in ShowInfoBox._show_load_finish_idle).
+        self.details_box.show()
 
     def show_nothing_playing(self):
         self._show = None
