@@ -8,10 +8,6 @@ denote the same entry. Identity resolution treats them as exact links,
 exactly like provider-published ids -- these are precisely the messy
 long-running/split entries where title matching fails.
 
-Annict ids come from a second source, arm (see sync/arm.py), because
-anime-relations has no Annict column and Annict is the one provider
-title matching cannot rescue.
-
 (The episode ranges in the anime-relations rules are the future path for
 translating *partial* progress between differing structures; today
 those surface as structure conflicts.)
@@ -23,8 +19,8 @@ import re
 from hakubun import utils
 
 # The column order of an anime-relations rule, not a whitelist -- the
-# atlas itself is provider-agnostic (see _add_ids), which is how arm's
-# Annict ids join it without touching this.
+# atlas itself is provider-agnostic (see _add_ids), so another id
+# database could join it without touching this.
 PROVIDERS = ('mal', 'kitsu', 'anilist')
 
 _ID = r'(\d+|[?~])'
@@ -50,12 +46,10 @@ def default_path():
 
 
 # Which database a link came from. Surfaced all the way to the
-# Inspector and stored in a mapping's `via`, because the two are not
-# equally authoritative -- anime-relations is hand-curated, arm is bulk
-# community data -- and the whole point of showing an atlas opinion is
-# letting the user judge it.
+# Inspector and stored in a mapping's `via`: the whole point of showing
+# an atlas opinion is letting the user judge it, which means naming
+# where it came from.
 SOURCE_ANIME_RELATIONS = 'anime-relations'
-SOURCE_ARM = 'arm'
 
 
 class RelationsAtlas:
@@ -72,23 +66,6 @@ class RelationsAtlas:
         atlas.add_anime_relations(path)
         return atlas
 
-    @classmethod
-    def from_sources(cls, relations_path=None, arm_path=None):
-        """Every id source the app knows about, merged.
-
-        Both are optional and both fail quietly -- a missing database
-        costs exact links, not correctness.
-
-        arm goes in first so anime-relations overwrites it wherever the
-        two overlap. That keeps every link an existing MAL/Kitsu/AniList
-        account already had identical, in both id and attribution, and
-        confines arm to filling gaps -- which for now means Annict.
-        """
-        atlas = cls()
-        atlas.add_arm(arm_path)
-        atlas.add_anime_relations(relations_path)
-        return atlas
-
     def add_anime_relations(self, path=None):
         try:
             with open(path or default_path()) as f:
@@ -103,12 +80,6 @@ class RelationsAtlas:
             pass  # the atlas is an optional enrichment
         return self
 
-    def add_arm(self, path=None):
-        from hakubun.sync import arm
-        for ids in arm.load(path):
-            self._add_ids(ids, SOURCE_ARM)
-        return self
-
     def _add(self, triple):
         self._add_ids({provider: raw
                        for provider, raw in zip(PROVIDERS, triple)
@@ -117,9 +88,9 @@ class RelationsAtlas:
 
     def _add_ids(self, ids, source):
         """Merge one community statement that these provider ids are the
-        same entry. Sources are additive: a row naming Annict and MAL
-        joins up with an anime-relations rule naming the same MAL id and
-        AniList, so Annict reaches AniList through it."""
+        same entry. Sources are additive: a row naming two providers
+        joins up with any other row naming one of them, so an entry can
+        reach a provider no single row named directly."""
         if len(ids) < 2:
             return
         for provider, provider_id in ids.items():

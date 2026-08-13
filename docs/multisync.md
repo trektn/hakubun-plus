@@ -100,16 +100,8 @@ Resolution pipeline (`sync/identity.py`, per fetched provider entry):
    fetched entries share the same `mal_id` → link automatically
    (`confirmed = 1`). The community **anime-relations** database is
    harvested as an id atlas (every rule carries MAL|Kitsu|AniList
-   triples) and its links are trusted the same way. Annict ids come
-   from a second database, **arm**, since anime-relations has no
-   Annict column — and Annict cannot be linked any other way, because
-   its titles are Japanese-only (step 3 below is dead for it) and it
-   publishes no AniList id. arm is fetched at runtime and cached, not
-   bundled; `arm_time: 0` in `config.json` disables it. The two
-   sources are additive: an arm row linking Annict to a MAL id joins
-   up with an anime-relations rule for that MAL id, so Annict reaches
-   Kitsu through a provider neither database named directly. The atlas
-   is an identity aid only — it never participates in field
+   triples) and its links are trusted the same way. The atlas is an
+   identity aid only — it never participates in field
    synchronization.
 3. **Single exact title match** — exactly one candidate whose
    normalized title or alias is equal (same media type, compatible

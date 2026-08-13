@@ -51,7 +51,6 @@ Currently supported websites
 ----------------------------
 
 - [Anilist](https://anilist.co/) (Anime, Manga)
-- [Annict](https://annict.com/) (Anime)
 - [Kitsu](https://kitsu.app/) (Anime, Manga, Drama)
 - [MyAnimeList](https://myanimelist.net/) (Anime, Manga)
 - [Shikimori](https://shikimori.io/) (Anime, Manga)

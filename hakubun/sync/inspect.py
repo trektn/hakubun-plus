@@ -47,9 +47,8 @@ class InspectionResult:
     mappings: List[MappingRow] = dc_field(default_factory=list)
     fields: List[FieldRow] = dc_field(default_factory=list)
     atlas_hint: Dict[str, str] = dc_field(default_factory=dict)
-    # {provider: which community database said so} for atlas_hint --
-    # 'anime-relations' and 'arm' are not equally authoritative, and an
-    # Annict link can only have come from arm. See sync/relations.py.
+    # {provider: which community database said so} for atlas_hint.
+    # See sync/relations.py.
     atlas_sources: Dict[str, str] = dc_field(default_factory=dict)
     identity_issue: Optional[dict] = None
 
@@ -57,9 +56,9 @@ class InspectionResult:
 def atlas_label(result):
     """What to call the atlas in the UI, for this particular result.
 
-    Naming the database matters: an Annict link can only have come from
-    arm, and the two databases aren't equally authoritative, so a flat
-    "atlas says" would hide the one thing the user needs to weigh.
+    Naming the database matters: community id databases are not all
+    equally authoritative, so a flat "atlas says" would hide the one
+    thing the user needs to weigh.
     """
     sources = sorted({result.atlas_sources.get(p)
                       for p in result.atlas_hint

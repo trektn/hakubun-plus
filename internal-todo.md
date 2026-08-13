@@ -180,14 +180,6 @@
 
 These should be handled after the MultiSync rework and rapid-fire work, with careful testing.
 
-## Annict
-
-* [ ] **Internal / Engine:** Add Annict GraphQL API
-
-  * Scope: `hakubun`, `hakubun+`
-  * **Priority:** Last
-  * Implementation should be supervised
-
 ## UI Languages / Localization
 
 * [ ] **Qt/GTK:** Add UI language support
@@ -263,7 +255,6 @@ These should be handled after the MultiSync rework and rapid-fire work, with car
 * [ ] AIE parsing improvements
 * [ ] anitomy-ng / PR29 wrapper improvements
 * [ ] Internal bloat cleanup
-* [ ] Annict GraphQL
 * [ ] UI language support
 * [ ] Title/synonym localization behavior
 * [ ] Alternative-title search
@@ -274,7 +265,6 @@ These should be handled after the MultiSync rework and rapid-fire work, with car
 
 ## Do Last
 
-* [ ] Annict GraphQL API
 * [ ] UI language support
 * [ ] Title/synonym localization behavior
 * [ ] Alternative-title search

@@ -904,7 +904,6 @@ def build_engine(store, accountman, media_type):
         except Exception as e:
             errors.append('%s: %s' % (api, e))
     from hakubun.sync.relations import RelationsAtlas
-    # Reads local files only -- this runs on the UI thread, and the arm
-    # download is done from Engine.start (see sync/arm.py).
-    atlas = RelationsAtlas.from_sources() if media_type == 'anime' else None
+    # Reads local files only -- this runs on the UI thread.
+    atlas = RelationsAtlas.from_file() if media_type == 'anime' else None
     return SyncEngine(store, by_provider, relations=atlas), errors

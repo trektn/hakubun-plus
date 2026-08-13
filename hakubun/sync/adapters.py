@@ -24,9 +24,7 @@ class AdapterError(Exception):
 # 1.5s (~40/min) stays well clear of the former, and the retry loop
 # below absorbs the occasional 429 from the latter. MAL/Kitsu are more
 # lenient. (Values are conservative and easily tuned.)
-# Annict publishes no limit and returns no rate-limit headers at all, so
-# it gets the same conservative spacing as AniList rather than a guess.
-_PUSH_INTERVAL = {'anilist': 1.5, 'mal': 0.5, 'kitsu': 1.0, 'annict': 1.5}
+_PUSH_INTERVAL = {'anilist': 1.5, 'mal': 0.5, 'kitsu': 1.0}
 _DEFAULT_PUSH_INTERVAL = 1.0
 _RATE_LIMIT_RETRIES = 5
 _RATE_LIMIT_DEFAULT_WAIT = 60   # AniList's rate window is 60s
@@ -54,8 +52,6 @@ _WEB_URL_TEMPLATES = {
     'mal': 'https://myanimelist.net/%(mt)s/%(id)s',
     'anilist': 'https://anilist.co/%(mt)s/%(id)s',
     'kitsu': 'https://kitsu.app/%(mt)s/%(id)s',
-    # Annict is anime-only and routes everything through /works.
-    'annict': 'https://annict.com/works/%(id)s',
 }
 
 

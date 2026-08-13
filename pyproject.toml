@@ -16,7 +16,6 @@ keywords = [
     "kitsu",
     "anilist",
     "shikimori",
-    "annict",
     "vndb",
 ]
 classifiers = [

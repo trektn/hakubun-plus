@@ -45,15 +45,15 @@ class IdentityResolver:
         community id atlas fills in anything the provider itself doesn't
         publish. The source is kept (not just the id) so a mapping
         created from this can record exactly how it was linked, for the
-        Inspector -- and it names the specific database ('anime-
-        relations', 'arm'), since they are not equally authoritative and
-        an Annict link can only have come from arm.
+        Inspector -- and it names the specific database
+        ('anime-relations'), since community databases are not all
+        equally authoritative.
 
         The atlas is anime-only -- every anime-relations rule is a
-        MAL|Kitsu|AniList *anime* id triple, and arm relates anime too
-        -- and must never be consulted for a manga entry: the same
-        numeric id space means a manga id would silently collide with an
-        unrelated anime's rule and produce a nonsense cross-reference.
+        MAL|Kitsu|AniList *anime* id triple -- and must never be
+        consulted for a manga entry: the same numeric id space means a
+        manga id would silently collide with an unrelated anime's rule
+        and produce a nonsense cross-reference.
         """
         ids = {p: (pid, 'published') for p, pid in entry.external_ids.items()}
         if self._atlas is not None and entry.media_type == 'anime':

@@ -173,12 +173,6 @@ EXTENSIONS = ('.mkv', '.mp4', '.avi', '.ts')
 available_libs = {
     'anilist':   ('Anilist',      DATADIR + '/anilist.jpg',     Login.OAUTH,
                   "https://anilist.co/api/v2/oauth/authorize?client_id=537&response_type=token"),
-    # Annict's PIN is a personal access token created on the linked page
-    # (read+write), used directly as the bearer -- the same shape as
-    # AniList's implicit-grant token above. A registered OAuth app would
-    # need a client secret in-tree; see libannict for the swap.
-    'annict':    ('Annict',       DATADIR + '/annict.png',      Login.OAUTH,
-                  "https://annict.com/settings/apps"),
     'kitsu':     ('Kitsu',        DATADIR + '/kitsu.png',       Login.PASSWD),
     'mal':       ('MyAnimeList',  DATADIR + '/mal.jpg',     Login.OAUTH_PKCE,
                   "https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=54ac679bcb073d20fb81ca9e5c78837b&code_challenge=%s"),
@@ -879,13 +873,6 @@ config_defaults = {
     'kodi_passwd': '',
     'redirections_url': 'https://raw.githubusercontent.com/erengy/anime-relations/master/anime-relations.txt',
     'redirections_time': 1,
-    # Community database of cross-provider anime ids, used by multisync
-    # to link entries exactly instead of by title (hakubun/sync/arm.py).
-    # It is the only way Annict can be linked at all -- its titles are
-    # Japanese-only and it publishes no AniList id. Fetched at runtime
-    # rather than bundled; ~3.6MB. Set arm_time to 0 to never fetch it.
-    'arm_url': 'https://cdn.jsdelivr.net/gh/SlashNephy/arm-supplementary@master/dist/arm.json',
-    'arm_time': 7,
     'use_hooks': True,
     'title_parser': 'aie',
     # Automatically cross-reference MyAnimeList's community score after

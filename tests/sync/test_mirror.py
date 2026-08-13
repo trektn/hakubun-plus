@@ -154,7 +154,7 @@ def test_owner_without_an_entry_asserts_nothing(store):
         kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
         anilist={'score': 90}, mal={'score': 5})
     assert engine.fetch() == {}
-    own(store, score='provider:annict')     # a tracker that isn't here
+    own(store, score='provider:shikimori')  # a tracker that isn't here
 
     assert [o for o in engine.mirror_plan().updates
             if o.field == 'score'] == []
@@ -674,7 +674,7 @@ def test_an_owned_field_the_owner_lacks_seeds_nothing(store):
     engine = make_engine(store, {'anilist': anilist, 'mal': mal,
                                  'kitsu': kitsu})
     assert engine.fetch() == {}
-    own(store, score='provider:annict')     # a tracker that isn't here
+    own(store, score='provider:shikimori')  # a tracker that isn't here
 
     plan = engine.mirror_plan()
     add = next((o for o in plan.adds if o.provider == 'kitsu'), None)
