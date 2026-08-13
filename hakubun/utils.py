@@ -970,6 +970,12 @@ gtk_defaults = {
     'visible_columns': ['Title', 'Progress', 'Score', 'Percent', 'Season', 'Platform Score', 'Synced Score'],
     'episodebar_style': 1,
     'filter_global': False,
+    # Whether the SubMiner on/off toggle is shown at all -- purely
+    # cosmetic, doesn't touch config_defaults' 'use_subminer' switch
+    # itself. Same key and meaning as qt_defaults below; the GTK
+    # Preferences window reads it directly, so its absence here was a
+    # KeyError on opening Preferences at all.
+    'show_subminer_toggle': True,
     # Multi-sync (same keys/semantics as qt_defaults below): the list
     # overlay, owner-system score editing and the Sync button's
     # headless multi-sync all gate on these.
