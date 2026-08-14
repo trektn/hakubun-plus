@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ui-i 18n\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-13 00:17-0500\n"
+"POT-Creation-Date: 2026-08-14 14:07-0500\n"
 "PO-Revision-Date: 2026-08-13 00:17-0500\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -32,7 +32,7 @@ msgstr "媒體庫"
 msgid "Sync"
 msgstr "同步"
 
-#: hakubun/ui/qt/settings.py:60 hakubun/ui/gtk/data/settingswindow.ui:2527
+#: hakubun/ui/qt/settings.py:60 hakubun/ui/gtk/data/settingswindow.ui:2484
 msgid "Behavior"
 msgstr "行為"
 
@@ -44,117 +44,355 @@ msgstr "使用者介面"
 msgid "Theme"
 msgstr "主題"
 
-#: hakubun/ui/qt/settings.py:521
+#: hakubun/ui/qt/settings.py:509
 msgid "Language"
 msgstr "語言"
 
-#: hakubun/ui/qt/settings.py:526 hakubun/ui/gtk/data/settingswindow.ui:2173
+#: hakubun/ui/qt/settings.py:514 hakubun/ui/gtk/data/settingswindow.ui:2173
 msgid "Takes effect after restarting Hakubun+."
 msgstr "重新啟動 Hakubun+ 後生效。"
 
-#: hakubun/ui/qt/settings.py:528
+#: hakubun/ui/qt/settings.py:516
 msgid "UI language:"
 msgstr "介面語言:"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:68
+#: hakubun/ui/gtk/data/accountswindow.ui:15
+#: hakubun/ui/gtk/data/accountswindow.ui:278 hakubun/ui/gtk/data/app-menu.ui:20
+msgid "Accounts"
+msgstr "帳戶"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:18
+#: hakubun/ui/gtk/data/accountswindow.ui:27
+msgid "Cancel"
+msgstr "取消"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:38
+#: hakubun/ui/gtk/data/accountswindow.ui:51
+#: hakubun/ui/gtk/data/searchwindow.ui:19
+msgid "Add"
+msgstr "新增"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:67
+#: hakubun/ui/gtk/data/accountswindow.ui:231
+msgid "Edit"
+msgstr "編輯"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:202
+msgid "Remember"
+msgstr "記住"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:245
+msgid "Open"
+msgstr "開啟"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:302
+msgid "Website"
+msgstr "網站"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:352
+#: hakubun/ui/gtk/data/settingswindow.ui:820
+#: hakubun/ui/gtk/data/settingswindow.ui:955
+#: hakubun/ui/gtk/data/settingswindow.ui:1090
+msgid "Username"
+msgstr "使用者名稱"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:390
+#: hakubun/ui/gtk/data/settingswindow.ui:808
+#: hakubun/ui/gtk/data/settingswindow.ui:943
+#: hakubun/ui/gtk/data/settingswindow.ui:1078
+msgid "Password"
+msgstr "密碼"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:418
+msgid "Request PIN"
+msgstr "要求 PIN"
+
+#: hakubun/ui/gtk/data/accountswindow.ui:447
+msgid "New Account"
+msgstr "新增帳戶"
+
+#: hakubun/ui/gtk/data/app-menu.ui:8 hakubun/ui/gtk/data/searchwindow.ui:15
+#: hakubun/ui/gtk/data/window.ui:20 hakubun/ui/qt/mainwindow.py:240
+#: hakubun/ui/qt/mainwindow.py:420
+msgid "Search"
+msgstr "搜尋"
+
+#: hakubun/ui/gtk/data/app-menu.ui:12 hakubun/ui/gtk/data/window.ui:36
+#: hakubun/ui/qt/mainwindow.py:244
+msgid "Airing Schedule"
+msgstr "放送時間表"
+
+#: hakubun/ui/gtk/data/app-menu.ui:16 hakubun/ui/gtk/data/shortcuts.ui:29
+msgid "Filter list"
+msgstr "篩選清單"
+
+#: hakubun/ui/gtk/data/app-menu.ui:27 hakubun/ui/gtk/data/shortcuts.ui:15
+msgid "Undo"
+msgstr "復原"
+
+#: hakubun/ui/gtk/data/app-menu.ui:31 hakubun/ui/gtk/data/shortcuts.ui:22
+msgid "Redo"
+msgstr "重做"
+
+#: hakubun/ui/gtk/data/app-menu.ui:38 hakubun/ui/gtk/data/shortcuts.ui:36
+msgid "Synchronize"
+msgstr "同步"
+
+#: hakubun/ui/gtk/data/app-menu.ui:42
+msgid "Multi-provider Sync..."
+msgstr "多提供方同步…"
+
+#: hakubun/ui/gtk/data/app-menu.ui:46
+msgid "Upload"
+msgstr "上傳"
+
+#: hakubun/ui/gtk/data/app-menu.ui:50
+msgid "Download"
+msgstr "下載"
+
+#: hakubun/ui/gtk/data/app-menu.ui:54 hakubun/ui/gtk/data/shortcuts.ui:57
+msgid "Scan files"
+msgstr "掃描檔案"
+
+#: hakubun/ui/gtk/data/app-menu.ui:61 hakubun/ui/gtk/data/settingswindow.ui:68
 msgid "Preferences"
 msgstr "偏好設定"
 
+#: hakubun/ui/gtk/data/app-menu.ui:65 hakubun/ui/gtk/data/shortcuts.ui:4
+msgid "Keyboard Shortcuts"
+msgstr "鍵盤快速鍵"
+
+#: hakubun/ui/gtk/data/app-menu.ui:69
+msgid "About Hakubun+"
+msgstr "關於 Hakubun+"
+
+#: hakubun/ui/gtk/data/app-menu.ui:73
+msgid "Quit"
+msgstr "結束"
+
+#: hakubun/ui/gtk/data/app-menu.ui:80
+msgid "_File"
+msgstr "檔案(_F)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:83
+msgid "_Search"
+msgstr "搜尋(_S)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:87
+msgid "_Airing Schedule"
+msgstr "放送時間表(_A)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:91
+msgid "_Filter list"
+msgstr "篩選清單(_F)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:97
+msgid "Play _Next"
+msgstr "播放下一個(_N)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:101
+msgid "Play _Random"
+msgstr "隨機播放(_R)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:106
+msgid "_Quit"
+msgstr "結束(_Q)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:111
+msgid "_List"
+msgstr "清單(_L)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:114
+msgid "_Undo"
+msgstr "復原(_U)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:118
+msgid "_Redo"
+msgstr "重做(_R)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:122
+msgid "_Synchronize"
+msgstr "同步(_S)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:126
+msgid "_Multi-provider Sync..."
+msgstr "多提供方同步(_M)…"
+
+#: hakubun/ui/gtk/data/app-menu.ui:130
+msgid "_Upload"
+msgstr "上傳(_U)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:134
+msgid "_Download"
+msgstr "下載(_D)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:138
+msgid "Scan _files"
+msgstr "掃描檔案(_F)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:142
+msgid "_Option"
+msgstr "選項(_O)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:145
+msgid "_Preferences"
+msgstr "偏好設定(_P)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:149
+msgid "_Accounts"
+msgstr "帳戶(_A)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:154
+msgid "_Help"
+msgstr "說明(_H)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:157
+msgid "Keyboard _Shortcuts"
+msgstr "鍵盤快速鍵(_S)"
+
+#: hakubun/ui/gtk/data/app-menu.ui:161
+msgid "About _Hakubun+"
+msgstr "關於 Hakubun+(_A)"
+
+#: hakubun/ui/gtk/data/mainview.ui:82
+msgid "Hakubun+"
+msgstr "Hakubun+"
+
+#: hakubun/ui/gtk/data/mainview.ui:118
+msgid "api username"
+msgstr "API 使用者名稱"
+
+#: hakubun/ui/gtk/data/mainview.ui:171
+msgid "Progress"
+msgstr "進度"
+
+#: hakubun/ui/gtk/data/mainview.ui:183
+msgid "Score"
+msgstr "評分"
+
+#: hakubun/ui/gtk/data/mainview.ui:195
+msgid "Status"
+msgstr "狀態"
+
+#: hakubun/ui/gtk/data/mainview.ui:205
+msgid "Play Next"
+msgstr "播放下一個"
+
+#: hakubun/ui/gtk/data/mainview.ui:227
+msgid "On: rate this cross-tracker entry in its owner's synced rating system. Off: rate it in this account's own system."
+msgstr "開啟：以擁有者的同步評分系統為此跨追蹤器項目評分。關閉：以此帳戶自己的系統評分。"
+
+#: hakubun/ui/gtk/data/mainview.ui:239
+msgid "Synced"
+msgstr "已同步"
+
+#: hakubun/ui/gtk/data/mainview.ui:269
+msgid "0"
+msgstr ""
+
+#: hakubun/ui/gtk/data/mainview.ui:286
+msgid "Set"
+msgstr "設定"
+
+#: hakubun/ui/gtk/data/mainview.ui:342
+msgid "-"
+msgstr ""
+
 #: hakubun/ui/gtk/data/settingswindow.ui:72
 msgid "Save"
-msgstr ""
+msgstr "儲存"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:123
 msgid "Tracker"
-msgstr ""
+msgstr "追蹤器"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:139
 msgid "Application need to be restarted for this change to take place"
-msgstr ""
+msgstr "此變更需要重新啟動應用程式才能生效"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:181
 msgid "Auto-detect (recommended)"
-msgstr ""
+msgstr "自動偵測（建議）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:187
 msgid "Prefers MPRIS if available, otherwise falls back to watching your media directories (inotify, or polling with lsof if inotify isn't available)."
-msgstr ""
+msgstr "若可用則優先使用 MPRIS，否則改為監看您的媒體目錄（inotify，若 inotify 無法使用則以 lsof 輪詢）。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:198
 msgid "MPRIS"
-msgstr ""
+msgstr "MPRIS"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:222
 msgid "Player process name"
-msgstr ""
+msgstr "播放器處理程序名稱"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:234
 msgid "Executable"
-msgstr ""
+msgstr "執行檔"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:246
 msgid "Files directories"
-msgstr ""
+msgstr "檔案目錄"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:271
 msgid "Select player executable"
-msgstr ""
+msgstr "選擇播放器執行檔"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:358
 msgid "Reuse an existing mpv window instead of opening a new one"
-msgstr ""
+msgstr "重複使用現有的 mpv 視窗，而不是開啟新視窗"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:363
 msgid "Only applies when the player above is mpv. Hands off playback to the already-running mpv window via its IPC socket instead of starting a new process each time."
-msgstr ""
+msgstr "僅當上面的播放器是 mpv 時適用。透過其 IPC 通訊端將播放交給已在執行的 mpv 視窗，而不是每次都啟動新程序。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:375
 msgid "Parser"
-msgstr ""
+msgstr "剖析器"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:388
 msgid "AnimeInfoExtractor (Default)"
-msgstr ""
+msgstr "AnimeInfoExtractor（預設）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:389
 msgid "Anitopy"
-msgstr ""
+msgstr "Anitopy"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:390
 msgid "Anitomy-NG (Experimental)"
-msgstr ""
+msgstr "Anitomy-NG（實驗性）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:400
 msgid "Open episodes with SubMiner instead by default"
-msgstr ""
+msgstr "預設以 SubMiner 開啟集數"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:405
 msgid "Opens episodes with SubMiner (its sentence-mining mpv wrapper) instead of the player configured above."
-msgstr ""
+msgstr "以 SubMiner（其語句探勘 mpv 包裝器）開啟集數，而不是使用上面設定的播放器。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:428
 msgid "Search for new files at startup"
-msgstr ""
+msgstr "啟動時搜尋新檔案"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:442
 msgid "Scan through whole list when matching local files"
-msgstr ""
+msgstr "比對本機檔案時掃描整個清單"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:447
 msgid "When library scanning matches your media directories against the list, only Watching/Plan to Watch shows are considered by default. Enable this to also match against Completed, Dropped, and other statuses."
-msgstr ""
+msgstr "媒體庫掃描比對媒體目錄與清單時，預設只考慮觀看中/計畫觀看的作品。啟用此項也會比對已完成、已放棄等其他狀態。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:457
 msgid "Check subdirectory name when searching"
-msgstr ""
+msgstr "搜尋時檢查子目錄名稱"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:493
 msgid "Update options"
-msgstr ""
+msgstr "更新選項"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:520
 msgid "Update after"
-msgstr ""
+msgstr "更新時間"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:532
 msgid "5"
@@ -162,31 +400,31 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/settingswindow.ui:546
 msgid "seconds"
-msgstr ""
+msgstr "秒"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:564
 msgid "Use this wait time for Plex/Kodi trackers"
-msgstr ""
+msgstr "為 Plex/Kodi 追蹤器使用此等待時間"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:569
 msgid "Plex and Kodi normally estimate when an episode is \"watched\" from playback position instead of a fixed timer. Enable this to make the currently selected one (Plex or Kodi) use the fixed wait time above instead. Has no effect for other tracker types."
-msgstr ""
+msgstr "Plex 與 Kodi 通常根據播放位置而非固定計時器來估計一集是否「已觀看」。啟用此項可讓目前選取的一方（Plex 或 Kodi）改用上面的固定等待時間。對其他追蹤器類型沒有影響。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:586
 msgid "Update when (MPRIS)"
-msgstr ""
+msgstr "更新時機（MPRIS）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:598
 msgid "How the tracker decides an episode counts as watched: after the fixed wait above, or once playback reaches a percentage of the episode's actual duration. The latter needs the player to report its length over MPRIS, so it only applies when Tracker type is MPRIS."
-msgstr ""
+msgstr "追蹤器判斷一集是否已觀看的方式：於上述固定等待時間之後，或達到該集實際長度的某個百分比時。後者需要播放器透過 MPRIS 回報長度，因此僅當追蹤器類型為 MPRIS 時適用。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:600
 msgid "Fixed wait (above)"
-msgstr ""
+msgstr "固定等待時間（如上）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:601
 msgid "Percentage complete"
-msgstr ""
+msgstr "完成百分比"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:627
 msgid "%"
@@ -194,55 +432,43 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/settingswindow.ui:644
 msgid "Wait for the media player to close"
-msgstr ""
+msgstr "等待媒體播放器關閉"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:658
 msgid "Ask confirmation"
-msgstr ""
+msgstr "要求確認"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:672
 msgid "Ask to add if not in list"
-msgstr ""
+msgstr "若不在清單中則詢問是否新增"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:707
 msgid "Streaming Credentials"
-msgstr ""
+msgstr "串流認證資訊"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:735
 msgid "Jellyfin"
-msgstr ""
+msgstr "Jellyfin"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:760
 #: hakubun/ui/gtk/data/settingswindow.ui:895
 #: hakubun/ui/gtk/data/settingswindow.ui:1030
 msgid "Port"
-msgstr ""
+msgstr "連接埠"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:772
 #: hakubun/ui/gtk/data/settingswindow.ui:907
 #: hakubun/ui/gtk/data/settingswindow.ui:1042
 msgid "Host"
-msgstr ""
+msgstr "主機"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:795
 msgid "8096"
 msgstr ""
 
-#: hakubun/ui/gtk/data/settingswindow.ui:808
-#: hakubun/ui/gtk/data/settingswindow.ui:943
-#: hakubun/ui/gtk/data/settingswindow.ui:1078
-msgid "Password"
-msgstr ""
-
-#: hakubun/ui/gtk/data/settingswindow.ui:820
-#: hakubun/ui/gtk/data/settingswindow.ui:955
-#: hakubun/ui/gtk/data/settingswindow.ui:1090
-msgid "Username"
-msgstr ""
-
 #: hakubun/ui/gtk/data/settingswindow.ui:870
 msgid "Kodi"
-msgstr ""
+msgstr "Kodi"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:930
 #: hakubun/ui/gtk/data/settingswindow.ui:1065
@@ -251,189 +477,192 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1005
 msgid "Plex media server"
-msgstr ""
+msgstr "Plex 媒體伺服器"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1132
 msgid "Use SSL"
-msgstr ""
+msgstr "使用 SSL"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1194
+#: hakubun/ui/gtk/data/shortcuts.ui:50
 msgid "Download changes"
-msgstr ""
+msgstr "下載變更"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1217
 #: hakubun/ui/gtk/data/settingswindow.ui:1337
 msgid "Every"
-msgstr ""
+msgstr "每"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1245
 msgid "days"
-msgstr ""
+msgstr "天"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1262
 msgid "When opening the application"
-msgstr ""
+msgstr "開啟應用程式時"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1277
 #: hakubun/ui/gtk/data/settingswindow.ui:1448
 msgid "Manually"
-msgstr ""
+msgstr "手動"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1314
+#: hakubun/ui/gtk/data/shortcuts.ui:43
 msgid "Upload changes"
-msgstr ""
+msgstr "上傳變更"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1365
 msgid "minutes"
-msgstr ""
+msgstr "分鐘"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1387
 msgid "When"
-msgstr ""
+msgstr "當"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1416
 msgid "entries have been modified"
-msgstr ""
+msgstr "筆記錄被修改後"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1433
 msgid "After every change"
-msgstr ""
+msgstr "每次變更後"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1463
 msgid "When closing the application"
-msgstr ""
+msgstr "關閉應用程式時"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1499
 msgid "Additional options"
-msgstr ""
+msgstr "其他選項"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1517
 msgid "Change status when updating"
-msgstr ""
+msgstr "更新時變更狀態"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1522
 msgid "Moves a show to its start status (e.g. Watching) when you set episode 1, and to its finish status (e.g. Completed) when you set its last episode."
-msgstr ""
+msgstr "設定第 1 集時，將作品移至開始狀態（如觀看中）；設定最後一集時，移至完成狀態（如已完成）。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1532
 msgid "Change status only if it has a score"
-msgstr ""
+msgstr "僅在有評分時變更狀態"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1538
 msgid "Only applies to the finish-status change above: hold off moving the show to its finish status until it has a score, instead of doing it as soon as the last episode is set."
-msgstr ""
+msgstr "僅適用於上面的完成狀態變更：在有評分之前，先不將作品移至完成狀態，而不是在設定最後一集後立即執行。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1548
 msgid "Update start and finish dates"
-msgstr ""
+msgstr "更新開始與完成日期"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1586
+#: hakubun/ui/gtk/data/shortcuts.ui:11
 msgid "Lists"
-msgstr ""
+msgstr "清單"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1611
 msgid "Remember window size"
-msgstr ""
+msgstr "記住視窗大小"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1625
 msgid "Use classic progress bar"
-msgstr ""
+msgstr "使用傳統進度條"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1639
 msgid "Switch to the All category when filtering"
-msgstr ""
+msgstr "篩選時切換到「全部」分類"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1644
 msgid "When typing in the filter bar while on a specific status tab, automatically switch to the All tab so the filter searches your whole list instead of just that status."
-msgstr ""
+msgstr "在特定狀態標籤頁的篩選欄中輸入時，自動切換到「全部」標籤頁，以便篩選整個清單而非僅該狀態。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1654
 msgid "Show tray icon"
-msgstr ""
+msgstr "顯示系統匣圖示"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1675
 msgid "Close to tray"
-msgstr ""
+msgstr "關閉到系統匣"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1689
 msgid "Start minimized to tray"
-msgstr ""
+msgstr "啟動時最小化到系統匣"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1703
 msgid "Use website icon in tray"
-msgstr ""
+msgstr "在系統匣中使用網站圖示"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1724
 msgid "Show the SubMiner switch in the header bar"
-msgstr ""
+msgstr "在標題列中顯示 SubMiner 開關"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1729
 msgid "Purely cosmetic -- hiding the switch doesn't turn SubMiner off. Settings > Media still controls whether episodes open with SubMiner."
-msgstr ""
+msgstr "純粹是外觀設定——隱藏此開關不會關閉 SubMiner。是否以 SubMiner 開啟集數由 設定 > 媒體 控制。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1754
 msgid "Colors for row text"
-msgstr ""
+msgstr "行文字顏色"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1817
 msgid "Playing"
-msgstr ""
+msgstr "觀看中"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1829
 msgid "Queued"
-msgstr ""
+msgstr "已排入佇列"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1841
 msgid "New episode"
-msgstr ""
+msgstr "新集數"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1867
 msgid "Airing"
-msgstr ""
+msgstr "連載中"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1903
 msgid "Unaired"
-msgstr ""
+msgstr "未播出"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1942
 msgid "Colors for progress bar"
-msgstr ""
+msgstr "進度條顏色"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2005
 msgid "Background"
-msgstr ""
+msgstr "背景"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2017
 msgid "Watched"
-msgstr ""
+msgstr "已觀看"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2029
 msgid "Aired"
-msgstr ""
+msgstr "已播出"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2055
 msgid "Stored"
-msgstr ""
+msgstr "已儲存"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2091
 msgid "Completed"
-msgstr ""
+msgstr "已完成"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2122
 msgid "Add MAL Scores (must be signed into MAL)"
-msgstr ""
+msgstr "新增 MAL 評分（需要登入 MAL）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2127
 msgid "Automatically cross-references MyAnimeList's community score for shows on your list after every sync, using a MyAnimeList account added in Hakubun+. Not needed if this account already is MyAnimeList."
-msgstr ""
+msgstr "每次同步後，自動使用已加入 Hakubun+ 的 MyAnimeList 帳戶，交叉核對清單中作品的 MyAnimeList 社群評分。如果此帳戶本身就是 MyAnimeList，則不需要此項。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2137
 msgid "Load MAL Scores Now"
-msgstr ""
+msgstr "立即載入 MAL 評分"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2142
 msgid "Fetch MAL scores for the current list right now, without waiting for a sync or enabling the automatic option above."
-msgstr ""
+msgstr "立即取得目前清單的 MAL 評分，不需等待同步或啟用上面的自動選項。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2160
 msgid "Language:"
@@ -465,92 +694,365 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2205
 msgid "Interface"
-msgstr ""
+msgstr "介面"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2232
 msgid "Adding shows"
-msgstr ""
+msgstr "新增作品"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2252
 msgid "Default status when adding a show:"
-msgstr ""
+msgstr "新增作品時的預設狀態："
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2266
 msgid "Currently active tab"
-msgstr ""
+msgstr "目前使用中的標籤頁"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2267
 msgid "Plan to Watch"
-msgstr ""
+msgstr "計畫觀看"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2300
 msgid "Apply behavior"
-msgstr ""
+msgstr "套用行為"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2311
 msgid "Push a sync when applying settings"
-msgstr ""
+msgstr "套用設定時推送同步"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2317
 msgid "Sends any queued changes to the API right after you close this settings window, instead of waiting for the next scheduled or manual sync. This only pushes -- it doesn't also pull a fresh copy of the list from the API."
-msgstr ""
+msgstr "關閉此設定視窗後立即將所有排入佇列的變更傳送到 API，而不等待下一次排程或手動同步。這只會推送——不會同時從 API 拉取最新的清單。"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2353
 msgid "Enable multi-sync (BETA)"
-msgstr ""
+msgstr "啟用多方同步（測試版）"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2359
 msgid "BETA: Sync will now multi-sync across every configured provider by default, reconciling them with your local list instead of just uploading/downloading one account. Turn this off to fall back to the classic single-account sync."
-msgstr ""
+msgstr "測試版：同步現在預設會與所有已設定的提供方進行多方同步，將它們與本機清單協調，而不只是上傳/下載單一帳戶。關閉此項可回到傳統的單帳戶同步。"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2378
-msgid "Mode:"
-msgstr ""
+#: hakubun/ui/gtk/data/settingswindow.ui:2369
+msgid "Always review changes before syncing"
+msgstr "同步前一律先檢查變更"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2392
-msgid "Merge (reconcile every provider)"
-msgstr ""
+#: hakubun/ui/gtk/data/settingswindow.ui:2375
+msgid "Sync fetches every provider and works out what would change per each field's sync rule, then always opens the sync window so you can review and sync it yourself. Turn this off to let Sync carry out clean changes headlessly -- decisions and new-entry adds still always stop for review either way."
+msgstr "同步會取得每個提供方，並依各欄位的同步規則計算出會發生的變更，然後一律開啟同步視窗供您檢閱並自行同步。關閉此項可讓同步以無人值守方式執行簡單變更——但需要判斷的變更與新項目仍會一律停下等待您檢閱。"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2393
-msgid "Pull (providers update local)"
-msgstr ""
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2394
-msgid "Push (local overwrites providers)"
-msgstr ""
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2412
-msgid "Fetch & plan only (review before applying)"
-msgstr ""
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2418
-msgid "Sync fetches every provider and works out what would change in the mode above, then always opens the sync window so you can review and apply it yourself. Turn this off to let Sync apply clean changes headlessly -- conflicts and first-time syncs still always stop for review either way."
-msgstr ""
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2428
+#: hakubun/ui/gtk/data/settingswindow.ui:2385
 msgid "Edit owned scores in the owner's rating system"
-msgstr ""
+msgstr "以擁有者的評分系統編輯其所擁有的評分"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2434
+#: hakubun/ui/gtk/data/settingswindow.ui:2391
 msgid "When a show's Score is owned by another tracker, let the sidebar score editor rate it in that owner's own system (e.g. AniList's 8.4 while signed into Kitsu), toggled live via the Synced/Platform switch by the slider. Turn this off to always edit in the signed-in account's own system."
-msgstr ""
+msgstr "當作品的評分由其他追蹤器擁有時，允許側邊欄評分編輯器以擁有者自己的系統評分（例如登入 Kitsu 時使用 AniList 的 8.4 分），透過滑桿上的 同步/平台 開關即時切換。關閉此項將一律以已登入帳戶自己的系統編輯。"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2459
+#: hakubun/ui/gtk/data/settingswindow.ui:2416
 msgid "Kitsu"
-msgstr ""
+msgstr "Kitsu"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2479
+#: hakubun/ui/gtk/data/settingswindow.ui:2436
 msgid "Kitsu API:"
-msgstr ""
+msgstr "Kitsu API："
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2481
+#: hakubun/ui/gtk/data/settingswindow.ui:2438
 msgid "Which Kitsu API to use for Kitsu accounts. Takes effect the next time the account is loaded. Both use the same Kitsu login."
-msgstr ""
+msgstr "Kitsu 帳戶要使用哪個 Kitsu API。將於下次載入帳戶時生效。兩者使用相同的 Kitsu 登入資訊。"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2494
+#: hakubun/ui/gtk/data/settingswindow.ui:2451
 msgid "Legacy (REST)"
-msgstr ""
+msgstr "舊版（REST）"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2495
+#: hakubun/ui/gtk/data/settingswindow.ui:2452
 msgid "New (GraphQL)"
-msgstr ""
+msgstr "新版（GraphQL）"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:66 hakubun/ui/gtk/data/shortcuts.ui:93
+msgid "Shows"
+msgstr "作品"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:70
+msgid "Search and add shows"
+msgstr "搜尋並新增作品"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:77
+msgid "Delete show"
+msgstr "刪除作品"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:84
+msgid "Copy show title"
+msgstr "複製作品標題"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:97
+msgid "Play random episode"
+msgstr "隨機播放一集"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:104
+msgid "Play next episode"
+msgstr "播放下一集"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:111
+msgid "Add episode"
+msgstr "新增集數"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:118
+msgid "Remove episode"
+msgstr "移除集數"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:127
+msgid "Application Actions"
+msgstr "應用程式操作"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:131
+msgid "Open shortcuts window"
+msgstr "開啟快速鍵視窗"
+
+#: hakubun/ui/gtk/data/shortcuts.ui:138
+msgid "Quit application"
+msgstr "結束應用程式"
+
+#: hakubun/ui/gtk/data/showinfowindow.ui:16
+msgid "Details"
+msgstr "詳情"
+
+#: hakubun/ui/gtk/data/showinfowindow.ui:20
+msgid "View in website"
+msgstr "在網站中檢視"
+
+#: hakubun/ui/gtk/data/window.ui:51
+msgid "Now Playing"
+msgstr "正在播放"
+
+#: hakubun/ui/gtk/data/window.ui:71
+msgid "SubMiner"
+msgstr "SubMiner"
+
+#: hakubun/ui/qt/mainwindow.py:194
+msgid "Play &Next"
+msgstr "播放下一個(&N)"
+
+#: hakubun/ui/qt/mainwindow.py:195
+msgid "Play the next unwatched episode."
+msgstr "播放下一集未觀看的集數。"
+
+#: hakubun/ui/qt/mainwindow.py:198
+msgid "Play Episode..."
+msgstr "播放集數…"
+
+#: hakubun/ui/qt/mainwindow.py:199
+msgid "Select an episode to play."
+msgstr "選擇要播放的集數。"
+
+#: hakubun/ui/qt/mainwindow.py:207
+msgid "SubMiner: Off"
+msgstr "SubMiner：關閉"
+
+#: hakubun/ui/qt/mainwindow.py:211 hakubun/ui/qt/mainwindow.py:214
+msgid "Open episodes with SubMiner instead of the configured player."
+msgstr "使用 SubMiner 而非已設定的播放器開啟集數。"
+
+#: hakubun/ui/qt/mainwindow.py:219
+msgid "SubMiner was not found on PATH. Install it to enable this."
+msgstr "在 PATH 中找不到 SubMiner。請安裝它以啟用此項。"
+
+#: hakubun/ui/qt/mainwindow.py:226
+msgid "Show &details..."
+msgstr "顯示詳情(&D)…"
+
+#: hakubun/ui/qt/mainwindow.py:228
+msgid "Show detailed information about the selected show."
+msgstr "顯示所選作品的詳細資訊。"
+
+#: hakubun/ui/qt/mainwindow.py:230
+msgid "Change &alternate name..."
+msgstr "變更替代名稱(&A)..."
+
+#: hakubun/ui/qt/mainwindow.py:232
+msgid "Set an alternate title for the tracker."
+msgstr "為追蹤器設定替代標題。"
+
+#: hakubun/ui/qt/mainwindow.py:234
+msgid "Play &random show"
+msgstr "隨機播放作品(&R)"
+
+#: hakubun/ui/qt/mainwindow.py:236
+msgid "Pick a random show with a new episode and play it."
+msgstr "隨機挑選一部有新集數的作品並播放。"
+
+#: hakubun/ui/qt/mainwindow.py:246
+msgid "See when the airing shows in your list air next."
+msgstr "查看清單中連載作品的下一次播出時間。"
+
+#: hakubun/ui/qt/mainwindow.py:248
+msgid "&Multi-provider Sync..."
+msgstr "多提供方同步(&M)…"
+
+#: hakubun/ui/qt/mainwindow.py:250
+msgid "Reconcile your lists across every configured provider."
+msgstr "在所有已設定的提供方之間協調您的清單。"
+
+#: hakubun/ui/qt/mainwindow.py:252
+msgid "&Delete"
+msgstr "刪除(&D)"
+
+#: hakubun/ui/qt/mainwindow.py:253
+msgid "Remove this show from your list."
+msgstr "從您的清單中移除此作品。"
+
+#: hakubun/ui/qt/mainwindow.py:256
+msgid "&Quit"
+msgstr "結束(&Q)"
+
+#: hakubun/ui/qt/mainwindow.py:258
+msgid "Exit Hakubun+."
+msgstr "結束 Hakubun+。"
+
+#: hakubun/ui/qt/mainwindow.py:261
+msgid "&Undo"
+msgstr "復原(&U)"
+
+#: hakubun/ui/qt/mainwindow.py:262
+msgid "Undo the last episode/score/status/tags change."
+msgstr "復原上一次集數/評分/狀態/標籤的變更。"
+
+#: hakubun/ui/qt/mainwindow.py:266
+msgid "&Redo"
+msgstr "重做(&R)"
+
+#: hakubun/ui/qt/mainwindow.py:267
+msgid "Redo the last undone change."
+msgstr "重做上一個復原的變更。"
+
+#: hakubun/ui/qt/mainwindow.py:272
+msgid "&Sync"
+msgstr "同步(&S)"
+
+#: hakubun/ui/qt/mainwindow.py:276
+msgid "S&end changes"
+msgstr "傳送變更(&E)"
+
+#: hakubun/ui/qt/mainwindow.py:279
+msgid "Upload any changes made to the list immediately."
+msgstr "立即上傳對清單所做的任何變更。"
+
+#: hakubun/ui/qt/mainwindow.py:281
+msgid "Re&download list"
+msgstr "重新下載清單(&D)"
+
+#: hakubun/ui/qt/mainwindow.py:284
+msgid "Discard any changes made to the list and re-download it."
+msgstr "捨棄對清單所做的任何變更並重新下載。"
+
+#: hakubun/ui/qt/mainwindow.py:287
+msgid "Rescan &Library (quick)"
+msgstr "重新掃描媒體庫（快速）(&L)"
+
+#: hakubun/ui/qt/mainwindow.py:291
+msgid "Rescan &Library (full)"
+msgstr "重新掃描媒體庫（完整）(&L)"
+
+#: hakubun/ui/qt/mainwindow.py:293
+msgid "Open containing folder"
+msgstr "開啟所在資料夾"
+
+#: hakubun/ui/qt/mainwindow.py:295
+msgid "Set folder..."
+msgstr "設定資料夾…"
+
+#: hakubun/ui/qt/mainwindow.py:297
+msgid "Manually point this show at a local folder, bypassing filename guessing -- for folders the parser can't match."
+msgstr "手動將此作品指向本機資料夾，略過檔名猜測——適用於剖析器無法比對的資料夾。"
+
+#: hakubun/ui/qt/mainwindow.py:300
+msgid "Clear folder"
+msgstr "清除資料夾"
+
+#: hakubun/ui/qt/mainwindow.py:303
+msgid "Switch &Account"
+msgstr "切換帳戶(&A)"
+
+#: hakubun/ui/qt/mainwindow.py:304
+msgid "Switch to a different account."
+msgstr "切換到其他帳戶。"
+
+#: hakubun/ui/qt/mainwindow.py:306
+msgid "&Settings..."
+msgstr "設定(&S)…"
+
+#: hakubun/ui/qt/mainwindow.py:309
+msgid "About..."
+msgstr "關於..."
+
+#: hakubun/ui/qt/mainwindow.py:311
+msgid "About Qt..."
+msgstr "關於 Qt..."
+
+#: hakubun/ui/qt/mainwindow.py:324 hakubun/ui/qt/mainwindow.py:369
+msgid "Library folders"
+msgstr "媒體庫資料夾"
+
+#: hakubun/ui/qt/mainwindow.py:325
+msgid "Mediatype"
+msgstr "媒體類型"
+
+#: hakubun/ui/qt/mainwindow.py:330
+msgid "&File"
+msgstr "檔案(&F)"
+
+#: hakubun/ui/qt/mainwindow.py:337
+msgid "&Services"
+msgstr "服務(&S)"
+
+#: hakubun/ui/qt/mainwindow.py:347
+msgid "&Tools"
+msgstr "工具(&T)"
+
+#: hakubun/ui/qt/mainwindow.py:355 hakubun/ui/qt/mainwindow.py:501
+msgid "&Help"
+msgstr "說明(&H)"
+
+#: hakubun/ui/qt/mainwindow.py:364 hakubun/ui/qt/mainwindow.py:392
+msgid "Main"
+msgstr "主要"
+
+#: hakubun/ui/qt/mainwindow.py:376
+msgid "&Show"
+msgstr "作品(&S)"
+
+#: hakubun/ui/qt/mainwindow.py:405
+msgid "Play"
+msgstr "播放"
+
+#: hakubun/ui/qt/mainwindow.py:408
+msgid "Move to"
+msgstr "移至"
+
+#: hakubun/ui/qt/mainwindow.py:434
+msgid "Set score"
+msgstr "設定評分"
+
+#: hakubun/ui/qt/mainwindow.py:445
+msgid "Set date started"
+msgstr "設定開始日期"
+
+#: hakubun/ui/qt/mainwindow.py:448
+msgid "Set date completed"
+msgstr "設定完成日期"
+
+#: hakubun/ui/qt/mainwindow.py:478
+msgid "&List"
+msgstr "清單(&L)"
+
+#: hakubun/ui/qt/mainwindow.py:493
+msgid "&Mediatype"
+msgstr "媒體類型(&M)"
+
+#: hakubun/ui/qt/mainwindow.py:497
+msgid "&Options"
+msgstr "選項(&O)"
+
+#: hakubun/ui/qt/mainwindow.py:1031
+msgid "Show/Hide"
+msgstr "顯示/隱藏"
+
