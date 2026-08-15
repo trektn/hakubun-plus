@@ -233,7 +233,7 @@ class SearchWindow(Gtk.Window):
         tree_view.set_cursor(path, col, 0)
 
         menu = Gtk.Menu()
-        mb_move_to = Gtk.MenuItem("Move to")
+        mb_move_to = Gtk.MenuItem(_("Move to"))
         mb_move_to.set_submenu(self._build_move_to_menu(showid))
         menu.append(mb_move_to)
         menu.show_all()

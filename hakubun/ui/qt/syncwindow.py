@@ -363,7 +363,7 @@ class SyncWindow(QDialog):
             return
         menu = QMenu(self)
         action = menu.addAction(
-            'Never create this on %s' % present.label(change.target))
+            _('Never create this on %s') % present.label(change.target))
         action.triggered.connect(
             lambda _checked=False, c=change: self._decline_create(c))
         menu.exec(tree.viewport().mapToGlobal(pos))
@@ -904,7 +904,7 @@ class SyncWindow(QDialog):
             # the field is settled and so no longer appears as a
             # conflict card. Without this there is no way back to it.
             menu = QMenu(self)
-            act = menu.addAction('Ask me about %s again'
+            act = menu.addAction(_('Ask me about %s again')
                                  % present.field_label(op.field))
             act.triggered.connect(
                 lambda _c=False: self._clear_mirror_resolution(op))
@@ -932,7 +932,7 @@ class SyncWindow(QDialog):
             lambda _c=False: self._set_membership(issue, provider,
                                                   'ignore'))
         if provider in issue.decisions:
-            act = menu.addAction('Ask me about %s again' % provider_label)
+            act = menu.addAction(_('Ask me about %s again') % provider_label)
             act.triggered.connect(
                 lambda _c=False: self._set_membership(issue, provider,
                                                       None))
@@ -1543,7 +1543,7 @@ class SyncWindow(QDialog):
         providers = (cand or {}).get('providers') or {}
         media_type = (cand or {}).get('media_type')
         for provider, pid in sorted(providers.items()):
-            action = menu.addAction('Open on %s' % provider.capitalize())
+            action = menu.addAction(_('Open on %s') % provider.capitalize())
             action.triggered.connect(
                 lambda checked=False, p=provider, mt=media_type, i=pid:
                 self._open_provider_page(p, mt, i))
@@ -1566,14 +1566,14 @@ class SyncWindow(QDialog):
             return
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        inspect_action = menu.addAction('Inspect')
+        inspect_action = menu.addAction(_('Inspect'))
         inspect_action.triggered.connect(
             lambda: self._inspect_from_identity(issue['provider'],
                                                 issue['provider_id']))
         media_type = (issue.get('entry') or {}).get('media_type')
         url = adapters.web_url(issue['provider'], media_type,
                                issue['provider_id'])
-        open_action = menu.addAction('Open on %s'
+        open_action = menu.addAction(_('Open on %s')
                                      % issue['provider'].capitalize())
         open_action.setEnabled(url is not None)
         if url:

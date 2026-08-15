@@ -357,7 +357,7 @@ class MultiSyncWindow(Gtk.Window):
         if change is None or not change.creates_entry:
             return False
         menu = Gtk.Menu()
-        item = Gtk.MenuItem(label='Never create this on %s'
+        item = Gtk.MenuItem(label=_('Never create this on %s')
                             % present.label(change.target))
         item.connect('activate',
                      lambda *_a, c=change: self._decline_create(c))
@@ -755,7 +755,7 @@ class MultiSyncWindow(Gtk.Window):
             if 'you chose this' not in getattr(op, 'reason', ''):
                 return False
             menu = Gtk.Menu()
-            item = Gtk.MenuItem(label='Ask me about %s again'
+            item = Gtk.MenuItem(label=_('Ask me about %s again')
                                 % present.field_label(op.field))
             item.connect('activate', lambda *_a:
                          self._clear_mirror_resolution(op))
@@ -784,7 +784,7 @@ class MultiSyncWindow(Gtk.Window):
                      self._set_membership(issue, provider, 'ignore'))
         menu.append(item)
         if provider in issue.decisions:
-            item = Gtk.MenuItem(label='Ask me about %s again'
+            item = Gtk.MenuItem(label=_('Ask me about %s again')
                                 % provider_label)
             item.connect('activate', lambda *_a:
                          self._set_membership(issue, provider, None))

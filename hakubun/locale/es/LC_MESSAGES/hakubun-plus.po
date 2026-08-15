@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ui-i 18n\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-14 14:07-0500\n"
+"POT-Creation-Date: 2026-08-14 19:26-0500\n"
 "PO-Revision-Date: 2026-08-13 00:17-0500\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -25,11 +25,12 @@ msgstr "Configuración"
 msgid "Media"
 msgstr "Multimedia"
 
-#: hakubun/ui/qt/settings.py:56
+#: hakubun/ui/qt/settings.py:56 hakubun/ui/qt/settings.py:251
 msgid "Library"
 msgstr "Biblioteca"
 
-#: hakubun/ui/qt/settings.py:58 hakubun/ui/gtk/data/settingswindow.ui:2342
+#: hakubun/ui/qt/settings.py:58 hakubun/ui/qt/settings.py:437
+#: hakubun/ui/gtk/data/settingswindow.ui:2342
 msgid "Sync"
 msgstr "Sincronización"
 
@@ -45,17 +46,930 @@ msgstr "Interfaz de usuario"
 msgid "Theme"
 msgstr "Tema"
 
-#: hakubun/ui/qt/settings.py:509
+#: hakubun/ui/qt/settings.py:78
+msgid "Media settings"
+msgstr "Ajustes de multimedia"
+
+#: hakubun/ui/qt/settings.py:99 hakubun/ui/gtk/data/settingswindow.ui:600
+msgid "Fixed wait (above)"
+msgstr "Espera fija (arriba)"
+
+#: hakubun/ui/qt/settings.py:100 hakubun/ui/gtk/data/settingswindow.ui:601
+msgid "Percentage complete"
+msgstr "Porcentaje completado"
+
+#: hakubun/ui/qt/settings.py:102 hakubun/ui/gtk/data/settingswindow.ui:598
+msgid "How the tracker decides an episode counts as watched: after the fixed wait above, or once playback reaches a percentage of the episode's actual duration. The latter needs the player to report its length over MPRIS, so it only applies when Tracker type is MPRIS."
+msgstr "Cómo decide el rastreador que un episodio se ha visto: tras la espera fija anterior, o al alcanzar un porcentaje de la duración real del episodio. Esto último requiere que el reproductor informe su duración por MPRIS, así que solo se aplica cuando el tipo de rastreador es MPRIS."
+
+#: hakubun/ui/qt/settings.py:120
+msgid "Plex and Kodi normally estimate when an episode is \"watched\" from playback position instead of a fixed timer. Enable this to make the currently selected one (Plex or Kodi) use the fixed \"Wait before updating\" time above instead. Has no effect for other tracker types."
+msgstr "Plex y Kodi normalmente estiman que un episodio se ha «visto» según la posición de reproducción en lugar de un temporizador fijo. Activa esto para que el seleccionado actualmente (Plex o Kodi) use en su lugar el tiempo de «Esperar antes de actualizar» anterior. No afecta a otros tipos de rastreador."
+
+#: hakubun/ui/qt/settings.py:129
+msgid "Enable tracker"
+msgstr "Activar rastreador"
+
+#: hakubun/ui/qt/settings.py:130
+msgid "Tracker type"
+msgstr "Tipo de rastreador"
+
+#: hakubun/ui/qt/settings.py:132
+msgid "Tracker interval (seconds)"
+msgstr "Intervalo del rastreador (segundos)"
+
+#: hakubun/ui/qt/settings.py:133
+msgid "Process name (regex)"
+msgstr "Nombre del proceso (regex)"
+
+#: hakubun/ui/qt/settings.py:135
+msgid "Wait before updating (seconds)"
+msgstr "Esperar antes de actualizar (segundos)"
+
+#: hakubun/ui/qt/settings.py:137 hakubun/ui/gtk/data/settingswindow.ui:564
+msgid "Use this wait time for Plex/Kodi trackers"
+msgstr "Usar este tiempo de espera para rastreadores Plex/Kodi"
+
+#: hakubun/ui/qt/settings.py:140 hakubun/ui/gtk/data/settingswindow.ui:586
+msgid "Update when (MPRIS)"
+msgstr "Actualizar cuándo (MPRIS)"
+
+#: hakubun/ui/qt/settings.py:142
+msgid "Completion percentage (MPRIS)"
+msgstr "Porcentaje de finalización (MPRIS)"
+
+#: hakubun/ui/qt/settings.py:144
+msgid "Wait until the player is closed"
+msgstr "Esperar hasta que se cierre el reproductor"
+
+#: hakubun/ui/qt/settings.py:145
+msgid "Ask before updating"
+msgstr "Preguntar antes de actualizar"
+
+#: hakubun/ui/qt/settings.py:147
+msgid "Ask to add new shows"
+msgstr "Preguntar antes de añadir series nuevas"
+
+#: hakubun/ui/qt/settings.py:153 hakubun/ui/gtk/data/settingswindow.ui:735
+msgid "Jellyfin"
+msgstr "Jellyfin"
+
+#: hakubun/ui/qt/settings.py:162 hakubun/ui/qt/settings.py:187
+#: hakubun/ui/qt/settings.py:212
+msgid "Host and Port"
+msgstr "Host y puerto"
+
+#: hakubun/ui/qt/settings.py:168
+msgid "API and User"
+msgstr "API y usuario"
+
+#: hakubun/ui/qt/settings.py:177 hakubun/ui/gtk/data/settingswindow.ui:870
+msgid "Kodi"
+msgstr "Kodi"
+
+#: hakubun/ui/qt/settings.py:192
+msgid "Kodi login"
+msgstr "Inicio de sesión de Kodi"
+
+#: hakubun/ui/qt/settings.py:201
+msgid "Plex Media Server"
+msgstr "Servidor multimedia Plex"
+
+#: hakubun/ui/qt/settings.py:218 hakubun/ui/gtk/data/settingswindow.ui:1132
+msgid "Use SSL"
+msgstr "Usar SSL"
+
+#: hakubun/ui/qt/settings.py:222
+msgid "myPlex login (claimed server)"
+msgstr "Inicio de sesión myPlex (servidor reclamado)"
+
+#: hakubun/ui/qt/settings.py:235 hakubun/ui/gtk/data/settingswindow.ui:707
+msgid "Streaming Credentials"
+msgstr "Credenciales de streaming"
+
+#: hakubun/ui/qt/settings.py:257
+msgid "Browse..."
+msgstr "Examinar..."
+
+#: hakubun/ui/qt/settings.py:261 hakubun/ui/gtk/data/settingswindow.ui:363
+msgid "Only applies when the player above is mpv. Hands off playback to the already-running mpv window via its IPC socket instead of starting a new process each time."
+msgstr "Solo se aplica cuando el reproductor anterior es mpv. Transfiere la reproducción a la ventana de mpv ya en ejecución mediante su socket IPC, en lugar de iniciar un proceso nuevo cada vez."
+
+#: hakubun/ui/qt/settings.py:264
+msgid "Media directories"
+msgstr "Directorios multimedia"
+
+#: hakubun/ui/qt/settings.py:267
+msgid "Add..."
+msgstr "Añadir..."
+
+#: hakubun/ui/qt/settings.py:269
+msgid "Remove"
+msgstr "Quitar"
+
+#: hakubun/ui/qt/settings.py:279 hakubun/ui/gtk/data/settingswindow.ui:447
+msgid "When library scanning matches your media directories against the list, only Watching/Plan to Watch shows are considered by default. Enable this to also match against Completed, Dropped, and other statuses."
+msgstr "Cuando el escaneo de biblioteca empareja tus directorios multimedia con la lista, de forma predeterminada solo se consideran las series en Viendo/Planeo ver. Activa esto para emparejar también con Completado, Abandonado y otros estados."
+
+#: hakubun/ui/qt/settings.py:287 hakubun/ui/gtk/data/settingswindow.ui:375
+msgid "Parser"
+msgstr "Analizador"
+
+#: hakubun/ui/qt/settings.py:291
+msgid "Player"
+msgstr "Reproductor"
+
+#: hakubun/ui/qt/settings.py:297
+msgid "Reuse existing mpv window"
+msgstr "Reutilizar la ventana de mpv existente"
+
+#: hakubun/ui/qt/settings.py:307
+msgid "Rescan Library at startup"
+msgstr "Volver a escanear la biblioteca al iniciar"
+
+#: hakubun/ui/qt/settings.py:311
+msgid "Scan through whole list"
+msgstr "Recorrer toda la lista"
+
+#: hakubun/ui/qt/settings.py:315
+msgid "Take subdirectory name into account"
+msgstr "Tener en cuenta el nombre del subdirectorio"
+
+#: hakubun/ui/qt/settings.py:330
+msgid "Autoretrieve"
+msgstr "Descarga automática"
+
+#: hakubun/ui/qt/settings.py:332 hakubun/ui/qt/settings.py:349
+msgid "Disabled"
+msgstr "Desactivado"
+
+#: hakubun/ui/qt/settings.py:333
+msgid "Always at start"
+msgstr "Siempre al iniciar"
+
+#: hakubun/ui/qt/settings.py:334
+msgid "After n days"
+msgstr "Tras n días"
+
+#: hakubun/ui/qt/settings.py:347
+msgid "Autosend"
+msgstr "Envío automático"
+
+#: hakubun/ui/qt/settings.py:350
+msgid "Immediately after every change"
+msgstr "Inmediatamente tras cada cambio"
+
+#: hakubun/ui/qt/settings.py:351
+msgid "After n minutes"
+msgstr "Tras n minutos"
+
+#: hakubun/ui/qt/settings.py:355
+msgid "After the queue reaches n items"
+msgstr "Cuando la cola alcance n elementos"
+
+#: hakubun/ui/qt/settings.py:359
+msgid "At exit"
+msgstr "Al salir"
+
+#: hakubun/ui/qt/settings.py:372 hakubun/ui/gtk/data/settingswindow.ui:1499
+msgid "Additional options"
+msgstr "Opciones adicionales"
+
+#: hakubun/ui/qt/settings.py:374
+msgid "Change status automatically"
+msgstr "Cambiar el estado automáticamente"
+
+#: hakubun/ui/qt/settings.py:376 hakubun/ui/gtk/data/settingswindow.ui:1522
+msgid "Moves a show to its start status (e.g. Watching) when you set episode 1, and to its finish status (e.g. Completed) when you set its last episode."
+msgstr "Mueve una serie a su estado inicial (p. ej. Viendo) al poner el episodio 1, y a su estado final (p. ej. Completado) al poner su último episodio."
+
+#: hakubun/ui/qt/settings.py:381
+msgid "Change status automatically only if scored"
+msgstr "Cambiar el estado automáticamente solo si tiene puntuación"
+
+#: hakubun/ui/qt/settings.py:383 hakubun/ui/gtk/data/settingswindow.ui:1538
+msgid "Only applies to the finish-status change above: hold off moving the show to its finish status until it has a score, instead of doing it as soon as the last episode is set."
+msgstr "Solo se aplica al cambio de estado final anterior: retrasa mover la serie a su estado final hasta que tenga puntuación, en lugar de hacerlo en cuanto se pone el último episodio."
+
+#: hakubun/ui/qt/settings.py:387
+msgid "Change start and finish dates automatically"
+msgstr "Cambiar fechas de inicio y fin automáticamente"
+
+#: hakubun/ui/qt/settings.py:406 hakubun/ui/gtk/data/settingswindow.ui:2232
+msgid "Adding shows"
+msgstr "Añadir series"
+
+#: hakubun/ui/qt/settings.py:410 hakubun/ui/gtk/data/settingswindow.ui:2266
+msgid "Currently active tab"
+msgstr "Pestaña activa actualmente"
+
+#: hakubun/ui/qt/settings.py:412 hakubun/ui/gtk/data/settingswindow.ui:2267
+msgid "Plan to Watch"
+msgstr "Planeo ver"
+
+#: hakubun/ui/qt/settings.py:415 hakubun/ui/gtk/data/settingswindow.ui:2252
+msgid "Default status when adding a show:"
+msgstr "Estado predeterminado al añadir una serie:"
+
+#: hakubun/ui/qt/settings.py:421 hakubun/ui/gtk/data/settingswindow.ui:2300
+msgid "Apply behavior"
+msgstr "Comportamiento al aplicar"
+
+#: hakubun/ui/qt/settings.py:424 hakubun/ui/gtk/data/settingswindow.ui:2311
+msgid "Push a sync when applying settings"
+msgstr "Enviar una sincronización al aplicar los ajustes"
+
+#: hakubun/ui/qt/settings.py:426
+msgid "Sends any queued changes to the API right after you click Apply/OK here, instead of waiting for the next scheduled or manual sync. This only pushes -- it doesn't also pull a fresh copy of the list from the API."
+msgstr "Envía cualquier cambio en cola a la API justo después de hacer clic en Aplicar/Aceptar aquí, en lugar de esperar a la siguiente sincronización programada o manual. Esto solo envía; no también obtiene una copia actualizada de la lista desde la API."
+
+#: hakubun/ui/qt/settings.py:440 hakubun/ui/gtk/data/settingswindow.ui:2353
+msgid "Enable multi-sync (BETA)"
+msgstr "Activar sincronización múltiple (BETA)"
+
+#: hakubun/ui/qt/settings.py:442 hakubun/ui/gtk/data/settingswindow.ui:2359
+msgid "BETA: Sync will now multi-sync across every configured provider by default, reconciling them with your local list instead of just uploading/downloading one account. Turn this off to fall back to the classic single-account sync."
+msgstr "BETA: Sincronizar ahora hará una sincronización múltiple con todos los proveedores configurados de forma predeterminada, conciliándolos con tu lista local en lugar de solo subir/descargar una cuenta. Desactiva esto para volver a la sincronización clásica de una sola cuenta."
+
+#: hakubun/ui/qt/settings.py:448 hakubun/ui/gtk/data/settingswindow.ui:2369
+msgid "Always review changes before syncing"
+msgstr "Revisar siempre los cambios antes de sincronizar"
+
+#: hakubun/ui/qt/settings.py:450 hakubun/ui/gtk/data/settingswindow.ui:2375
+msgid "Sync fetches every provider and works out what would change per each field's sync rule, then always opens the sync window so you can review and sync it yourself. Turn this off to let Sync carry out clean changes headlessly -- decisions and new-entry adds still always stop for review either way."
+msgstr "Sincronizar obtiene todos los proveedores y calcula qué cambiaría según la regla de sincronización de cada campo; luego siempre abre la ventana de sincronización para que puedas revisar y sincronizar tú mismo. Desactiva esto para que Sincronizar realice cambios limpios sin supervisión; las decisiones y las nuevas entradas siempre se detienen para revisión de todos modos."
+
+#: hakubun/ui/qt/settings.py:457 hakubun/ui/gtk/data/settingswindow.ui:2385
+msgid "Edit owned scores in the owner's rating system"
+msgstr "Editar puntuaciones propias en el sistema de puntuación del propietario"
+
+#: hakubun/ui/qt/settings.py:459
+msgid "When a show's Score is owned by another tracker, let the sidebar score editor rate it in that owner's own system (e.g. AniList's 8.4 while signed into Kitsu), toggled live via the Synced/Platform switch under the slider. Turn this off to always edit in the signed-in account's own system."
+msgstr "Cuando la puntuación de una serie pertenece a otro rastreador, permite que el editor de puntuación de la barra lateral puntúe en el sistema propio de ese propietario (p. ej. el 8.4 de AniList mientras estás conectado a Kitsu), alternado en vivo mediante el interruptor Sincronizado/Plataforma bajo el control deslizante. Desactívalo para editar siempre en el sistema propio de la cuenta conectada."
+
+#: hakubun/ui/qt/settings.py:477
+msgid "Taiga Mode"
+msgstr "Modo Taiga"
+
+#: hakubun/ui/qt/settings.py:480
+msgid "Emulate Taiga's look (Qt only, requires restart)"
+msgstr "Emular el aspecto de Taiga (solo Qt, requiere reiniciar)"
+
+#: hakubun/ui/qt/settings.py:488 hakubun/ui/gtk/data/settingswindow.ui:2416
+msgid "Kitsu"
+msgstr "Kitsu"
+
+#: hakubun/ui/qt/settings.py:491 hakubun/ui/gtk/data/settingswindow.ui:2451
+msgid "Legacy (REST)"
+msgstr "Antigua (REST)"
+
+#: hakubun/ui/qt/settings.py:492 hakubun/ui/gtk/data/settingswindow.ui:2452
+msgid "New (GraphQL)"
+msgstr "Nueva (GraphQL)"
+
+#: hakubun/ui/qt/settings.py:494 hakubun/ui/gtk/data/settingswindow.ui:2438
+msgid "Which Kitsu API to use for Kitsu accounts. Takes effect the next time the account is loaded. Both use the same Kitsu login."
+msgstr "Qué API de Kitsu usar para las cuentas de Kitsu. Surte efecto la próxima vez que se cargue la cuenta. Ambas usan el mismo inicio de sesión de Kitsu."
+
+#: hakubun/ui/qt/settings.py:498 hakubun/ui/gtk/data/settingswindow.ui:2436
+msgid "Kitsu API:"
+msgstr "API de Kitsu:"
+
+#: hakubun/ui/qt/settings.py:510
 msgid "Language"
 msgstr "Idioma"
 
-#: hakubun/ui/qt/settings.py:514 hakubun/ui/gtk/data/settingswindow.ui:2173
+#: hakubun/ui/qt/settings.py:515 hakubun/ui/gtk/data/settingswindow.ui:2173
 msgid "Takes effect after restarting Hakubun+."
 msgstr "Se aplica al reiniciar Hakubun+."
 
-#: hakubun/ui/qt/settings.py:516
+#: hakubun/ui/qt/settings.py:517
 msgid "UI language:"
 msgstr "Idioma de la interfaz:"
+
+#: hakubun/ui/qt/settings.py:521
+msgid "Notification Icon"
+msgstr "Icono de notificación"
+
+#: hakubun/ui/qt/settings.py:523 hakubun/ui/gtk/data/settingswindow.ui:1654
+msgid "Show tray icon"
+msgstr "Mostrar icono de bandeja"
+
+#: hakubun/ui/qt/settings.py:525 hakubun/ui/gtk/data/settingswindow.ui:1675
+msgid "Close to tray"
+msgstr "Cerrar a la bandeja"
+
+#: hakubun/ui/qt/settings.py:526 hakubun/ui/gtk/data/settingswindow.ui:1689
+msgid "Start minimized to tray"
+msgstr "Iniciar minimizado en la bandeja"
+
+#: hakubun/ui/qt/settings.py:527
+msgid "Use API icon as tray icon"
+msgstr "Usar el icono de la API como icono de bandeja"
+
+#: hakubun/ui/qt/settings.py:529
+msgid "Show notification when tracker detects new media"
+msgstr "Mostrar notificación cuando el rastreador detecte contenido nuevo"
+
+#: hakubun/ui/qt/settings.py:539
+msgid "Window"
+msgstr "Ventana"
+
+#: hakubun/ui/qt/settings.py:541
+msgid "Remember window size and position"
+msgstr "Recordar tamaño y posición de la ventana"
+
+#: hakubun/ui/qt/settings.py:542
+msgid "Remember column layouts and widths"
+msgstr "Recordar diseños y anchos de columnas"
+
+#: hakubun/ui/qt/settings.py:544
+msgid "Use different visible columns per API"
+msgstr "Usar columnas visibles distintas por API"
+
+#: hakubun/ui/qt/settings.py:546
+msgid "Remember visible columns (and, if \"Remember column layouts and widths\" above is also on, their widths/order) separately for each API/account, instead of sharing one column layout across all of them."
+msgstr "Recuerda las columnas visibles (y, si «Recordar diseños y anchos de columnas» también está activado, sus anchos/orden) por separado para cada API/cuenta, en lugar de compartir un único diseño de columnas entre todas."
+
+#: hakubun/ui/qt/settings.py:557 hakubun/ui/gtk/data/settingswindow.ui:1586
+#: hakubun/ui/gtk/data/shortcuts.ui:11
+msgid "Lists"
+msgstr "Listas"
+
+#: hakubun/ui/qt/settings.py:560
+msgid "Hidden"
+msgstr "Oculta"
+
+#: hakubun/ui/qt/settings.py:561
+msgid "Above lists"
+msgstr "Encima de las listas"
+
+#: hakubun/ui/qt/settings.py:562
+msgid "Below lists"
+msgstr "Debajo de las listas"
+
+#: hakubun/ui/qt/settings.py:565
+msgid "Enable in-line editing"
+msgstr "Activar edición en línea"
+
+#: hakubun/ui/qt/settings.py:566 hakubun/ui/gtk/data/settingswindow.ui:1639
+msgid "Switch to the All category when filtering"
+msgstr "Cambiar a la categoría Todos al filtrar"
+
+#: hakubun/ui/qt/settings.py:568
+msgid "When typing in the filter bar while on a specific status tab (e.g. Watching), automatically switch to the All tab so the filter searches your whole list instead of just that status."
+msgstr "Al escribir en la barra de filtro mientras estás en una pestaña de estado concreta (p. ej. Viendo), cambia automáticamente a la pestaña Todos para que el filtro busque en toda tu lista en lugar de solo en ese estado."
+
+#: hakubun/ui/qt/settings.py:573
+msgid "Filter bar position:"
+msgstr "Posición de la barra de filtro:"
+
+#: hakubun/ui/qt/settings.py:579 hakubun/ui/qt/settings.py:1139
+#: hakubun/ui/qt/settings.py:1142
+msgid "MAL Scores"
+msgstr "Puntuaciones de MAL"
+
+#: hakubun/ui/qt/settings.py:582 hakubun/ui/gtk/data/settingswindow.ui:2122
+msgid "Add MAL Scores (must be signed into MAL)"
+msgstr "Añadir puntuaciones de MAL (debes iniciar sesión en MAL)"
+
+#: hakubun/ui/qt/settings.py:584 hakubun/ui/gtk/data/settingswindow.ui:2127
+msgid "Automatically cross-references MyAnimeList's community score for shows on your list after every sync, using a MyAnimeList account added in Hakubun+. Not needed if this account already is MyAnimeList."
+msgstr "Después de cada sincronización, coteja automáticamente la puntuación de la comunidad de MyAnimeList para las series de tu lista, usando una cuenta de MyAnimeList añadida en Hakubun+. No es necesario si esta cuenta ya es de MyAnimeList."
+
+#: hakubun/ui/qt/settings.py:588 hakubun/ui/gtk/data/settingswindow.ui:2137
+msgid "Load MAL Scores Now"
+msgstr "Cargar puntuaciones de MAL ahora"
+
+#: hakubun/ui/qt/settings.py:590 hakubun/ui/gtk/data/settingswindow.ui:2142
+msgid "Fetch MAL scores for the current list right now, without waiting for a sync or enabling the automatic option above."
+msgstr "Obtén las puntuaciones de MAL para la lista actual ahora mismo, sin esperar a una sincronización ni activar la opción automática anterior."
+
+#: hakubun/ui/qt/settings.py:600 hakubun/ui/gtk/data/window.ui:71
+msgid "SubMiner"
+msgstr "SubMiner"
+
+#: hakubun/ui/qt/settings.py:603
+msgid "Show the SubMiner toggle (toolbar / Tools menu)"
+msgstr "Mostrar el interruptor de SubMiner (barra de herramientas / menú Herramientas)"
+
+#: hakubun/ui/qt/settings.py:605
+msgid "SubMiner itself is switched on and off from that toggle, not here -- this only controls whether the toggle is shown at all."
+msgstr "SubMiner en sí se activa y desactiva con ese interruptor; esto solo controla si el interruptor se muestra."
+
+#: hakubun/ui/qt/settings.py:627
+msgid "Episode Bar"
+msgstr "Barra de episodios"
+
+#: hakubun/ui/qt/settings.py:630
+msgid "Basic"
+msgstr "Básico"
+
+#: hakubun/ui/qt/settings.py:632
+msgid "Hybrid"
+msgstr "Híbrido"
+
+#: hakubun/ui/qt/settings.py:636
+msgid "Show text label"
+msgstr "Mostrar etiqueta de texto"
+
+#: hakubun/ui/qt/settings.py:638
+msgid "Style:"
+msgstr "Estilo:"
+
+#: hakubun/ui/qt/settings.py:643
+msgid "Color Scheme"
+msgstr "Esquema de color"
+
+#: hakubun/ui/qt/settings.py:645
+msgid "&Row highlights"
+msgstr "Resaltados de &fila"
+
+#: hakubun/ui/qt/settings.py:646
+msgid "&Progress widget"
+msgstr "Widget de &progreso"
+
+#: hakubun/ui/qt/settings.py:648 hakubun/ui/gtk/data/settingswindow.ui:1817
+msgid "Playing"
+msgstr "Viendo"
+
+#: hakubun/ui/qt/settings.py:649 hakubun/ui/gtk/data/settingswindow.ui:1829
+msgid "Queued"
+msgstr "En cola"
+
+#: hakubun/ui/qt/settings.py:650 hakubun/ui/gtk/data/settingswindow.ui:1841
+msgid "New episode"
+msgstr "Episodio nuevo"
+
+#: hakubun/ui/qt/settings.py:651 hakubun/ui/gtk/data/settingswindow.ui:1867
+msgid "Airing"
+msgstr "En emisión"
+
+#: hakubun/ui/qt/settings.py:652 hakubun/ui/gtk/data/settingswindow.ui:1903
+msgid "Unaired"
+msgstr "Sin emitir"
+
+#: hakubun/ui/qt/settings.py:653 hakubun/ui/gtk/data/settingswindow.ui:2005
+msgid "Background"
+msgstr "Fondo"
+
+#: hakubun/ui/qt/settings.py:654
+msgid "Watched bar"
+msgstr "Barra de vistos"
+
+#: hakubun/ui/qt/settings.py:655
+msgid "Aired episodes"
+msgstr "Episodios emitidos"
+
+#: hakubun/ui/qt/settings.py:656
+msgid "Stored episodes"
+msgstr "Episodios almacenados"
+
+#: hakubun/ui/qt/settings.py:657
+msgid "Complete"
+msgstr "Completo"
+
+#: hakubun/ui/qt/settings.py:673
+msgid "System Colors"
+msgstr "Colores del sistema"
+
+#: hakubun/ui/qt/settings.py:1011
+msgid "Restart required"
+msgstr "Se requiere reiniciar"
+
+#: hakubun/ui/qt/settings.py:1013
+msgid "Taiga Mode takes effect after restarting Hakubun+."
+msgstr "El modo Taiga se aplica al reiniciar Hakubun+."
+
+#: hakubun/ui/qt/settings.py:1015
+msgid "Restart Now"
+msgstr "Reiniciar ahora"
+
+#: hakubun/ui/qt/settings.py:1016
+msgid "Later"
+msgstr "Más tarde"
+
+#: hakubun/ui/qt/settings.py:1133
+msgid "Choose player executable"
+msgstr "Elegir ejecutable del reproductor"
+
+#: hakubun/ui/qt/settings.py:1142
+msgid "Fetching MAL scores in the background."
+msgstr "Obteniendo puntuaciones de MAL en segundo plano."
+
+#: hakubun/ui/qt/settings.py:1146
+msgid "Choose media directory"
+msgstr "Elegir directorio multimedia"
+
+#: hakubun/ui/qt/mainwindow.py:194
+msgid "Play &Next"
+msgstr "Reproducir &siguiente"
+
+#: hakubun/ui/qt/mainwindow.py:195
+msgid "Play the next unwatched episode."
+msgstr "Reproduce el siguiente episodio no visto."
+
+#: hakubun/ui/qt/mainwindow.py:198
+msgid "Play Episode..."
+msgstr "Reproducir episodio..."
+
+#: hakubun/ui/qt/mainwindow.py:199
+msgid "Select an episode to play."
+msgstr "Selecciona un episodio para reproducir."
+
+#: hakubun/ui/qt/mainwindow.py:207
+msgid "SubMiner: Off"
+msgstr "SubMiner: desactivado"
+
+#: hakubun/ui/qt/mainwindow.py:211 hakubun/ui/qt/mainwindow.py:214
+msgid "Open episodes with SubMiner instead of the configured player."
+msgstr "Abre los episodios con SubMiner en lugar del reproductor configurado."
+
+#: hakubun/ui/qt/mainwindow.py:219
+msgid "SubMiner was not found on PATH. Install it to enable this."
+msgstr "No se encontró SubMiner en el PATH. Instálalo para activar esto."
+
+#: hakubun/ui/qt/mainwindow.py:226
+msgid "Show &details..."
+msgstr "Mostrar &detalles..."
+
+#: hakubun/ui/qt/mainwindow.py:228
+msgid "Show detailed information about the selected show."
+msgstr "Muestra información detallada sobre la serie seleccionada."
+
+#: hakubun/ui/qt/mainwindow.py:230
+msgid "Change &alternate name..."
+msgstr "Cambiar nombre &alternativo..."
+
+#: hakubun/ui/qt/mainwindow.py:232
+msgid "Set an alternate title for the tracker."
+msgstr "Establece un título alternativo para el rastreador."
+
+#: hakubun/ui/qt/mainwindow.py:234
+msgid "Play &random show"
+msgstr "Reproducir serie al a&zar"
+
+#: hakubun/ui/qt/mainwindow.py:236
+msgid "Pick a random show with a new episode and play it."
+msgstr "Elige una serie al azar con un episodio nuevo y la reproduce."
+
+#: hakubun/ui/qt/mainwindow.py:240 hakubun/ui/qt/mainwindow.py:420
+#: hakubun/ui/gtk/data/app-menu.ui:8 hakubun/ui/gtk/data/searchwindow.ui:15
+#: hakubun/ui/gtk/data/window.ui:20
+msgid "Search"
+msgstr "Buscar"
+
+#: hakubun/ui/qt/mainwindow.py:244 hakubun/ui/gtk/data/app-menu.ui:12
+#: hakubun/ui/gtk/data/window.ui:36
+msgid "Airing Schedule"
+msgstr "Calendario de emisión"
+
+#: hakubun/ui/qt/mainwindow.py:246
+msgid "See when the airing shows in your list air next."
+msgstr "Consulta cuándo se emiten a continuación las series en emisión de tu lista."
+
+#: hakubun/ui/qt/mainwindow.py:248
+msgid "&Multi-provider Sync..."
+msgstr "Sincronización &multiproveedor..."
+
+#: hakubun/ui/qt/mainwindow.py:250
+msgid "Reconcile your lists across every configured provider."
+msgstr "Concilia tus listas entre todos los proveedores configurados."
+
+#: hakubun/ui/qt/mainwindow.py:252
+msgid "&Delete"
+msgstr "&Eliminar"
+
+#: hakubun/ui/qt/mainwindow.py:253
+msgid "Remove this show from your list."
+msgstr "Elimina esta serie de tu lista."
+
+#: hakubun/ui/qt/mainwindow.py:256
+msgid "&Quit"
+msgstr "&Salir"
+
+#: hakubun/ui/qt/mainwindow.py:258
+msgid "Exit Hakubun+."
+msgstr "Salir de Hakubun+."
+
+#: hakubun/ui/qt/mainwindow.py:261
+msgid "&Undo"
+msgstr "&Deshacer"
+
+#: hakubun/ui/qt/mainwindow.py:262
+msgid "Undo the last episode/score/status/tags change."
+msgstr "Deshace el último cambio de episodio/puntuación/estado/etiquetas."
+
+#: hakubun/ui/qt/mainwindow.py:266
+msgid "&Redo"
+msgstr "&Rehacer"
+
+#: hakubun/ui/qt/mainwindow.py:267
+msgid "Redo the last undone change."
+msgstr "Rehace el último cambio deshecho."
+
+#: hakubun/ui/qt/mainwindow.py:272
+msgid "&Sync"
+msgstr "&Sincronizar"
+
+#: hakubun/ui/qt/mainwindow.py:276
+msgid "S&end changes"
+msgstr "&Enviar cambios"
+
+#: hakubun/ui/qt/mainwindow.py:279
+msgid "Upload any changes made to the list immediately."
+msgstr "Sube inmediatamente cualquier cambio hecho en la lista."
+
+#: hakubun/ui/qt/mainwindow.py:281
+msgid "Re&download list"
+msgstr "Volver a &descargar la lista"
+
+#: hakubun/ui/qt/mainwindow.py:284
+msgid "Discard any changes made to the list and re-download it."
+msgstr "Descarta cualquier cambio hecho en la lista y la vuelve a descargar."
+
+#: hakubun/ui/qt/mainwindow.py:287
+msgid "Rescan &Library (quick)"
+msgstr "Reescanear &biblioteca (rápido)"
+
+#: hakubun/ui/qt/mainwindow.py:291
+msgid "Rescan &Library (full)"
+msgstr "Reescanear &biblioteca (completo)"
+
+#: hakubun/ui/qt/mainwindow.py:293 hakubun/ui/gtk/mainview.py:1032
+msgid "Open containing folder"
+msgstr "Abrir carpeta contenedora"
+
+#: hakubun/ui/qt/mainwindow.py:295 hakubun/ui/gtk/mainview.py:1038
+msgid "Set folder..."
+msgstr "Establecer carpeta..."
+
+#: hakubun/ui/qt/mainwindow.py:297 hakubun/ui/gtk/mainview.py:1040
+msgid "Manually point this show at a local folder, bypassing filename guessing -- for folders the parser can't match."
+msgstr "Apunta manualmente esta serie a una carpeta local, evitando la detección por nombre de archivo, para carpetas que el analizador no puede reconocer."
+
+#: hakubun/ui/qt/mainwindow.py:300 hakubun/ui/gtk/mainview.py:1045
+msgid "Clear folder"
+msgstr "Borrar carpeta"
+
+#: hakubun/ui/qt/mainwindow.py:303
+msgid "Switch &Account"
+msgstr "Cambiar de &cuenta"
+
+#: hakubun/ui/qt/mainwindow.py:304
+msgid "Switch to a different account."
+msgstr "Cambia a otra cuenta."
+
+#: hakubun/ui/qt/mainwindow.py:306
+msgid "&Settings..."
+msgstr "&Ajustes..."
+
+#: hakubun/ui/qt/mainwindow.py:309
+msgid "About..."
+msgstr "Acerca de..."
+
+#: hakubun/ui/qt/mainwindow.py:311
+msgid "About Qt..."
+msgstr "Acerca de Qt..."
+
+#: hakubun/ui/qt/mainwindow.py:324 hakubun/ui/qt/mainwindow.py:369
+msgid "Library folders"
+msgstr "Carpetas de biblioteca"
+
+#: hakubun/ui/qt/mainwindow.py:325
+msgid "Mediatype"
+msgstr "Tipo de medio"
+
+#: hakubun/ui/qt/mainwindow.py:330
+msgid "&File"
+msgstr "&Archivo"
+
+#: hakubun/ui/qt/mainwindow.py:337
+msgid "&Services"
+msgstr "&Servicios"
+
+#: hakubun/ui/qt/mainwindow.py:347
+msgid "&Tools"
+msgstr "&Herramientas"
+
+#: hakubun/ui/qt/mainwindow.py:355 hakubun/ui/qt/mainwindow.py:501
+msgid "&Help"
+msgstr "Ay&uda"
+
+#: hakubun/ui/qt/mainwindow.py:364 hakubun/ui/qt/mainwindow.py:392
+msgid "Main"
+msgstr "Principal"
+
+#: hakubun/ui/qt/mainwindow.py:376
+msgid "&Show"
+msgstr "&Serie"
+
+#: hakubun/ui/qt/mainwindow.py:405
+msgid "Play"
+msgstr "Reproducir"
+
+#: hakubun/ui/qt/mainwindow.py:408 hakubun/ui/qt/search.py:140
+#: hakubun/ui/qt/add.py:202 hakubun/ui/qt/seasons.py:216
+#: hakubun/ui/gtk/searchwindow.py:236 hakubun/ui/gtk/mainview.py:1026
+msgid "Move to"
+msgstr "Mover a"
+
+#: hakubun/ui/qt/mainwindow.py:434
+msgid "Set score"
+msgstr "Establecer puntuación"
+
+#: hakubun/ui/qt/mainwindow.py:445
+msgid "Set date started"
+msgstr "Establecer fecha de inicio"
+
+#: hakubun/ui/qt/mainwindow.py:448
+msgid "Set date completed"
+msgstr "Establecer fecha de finalización"
+
+#: hakubun/ui/qt/mainwindow.py:478
+msgid "&List"
+msgstr "&Lista"
+
+#: hakubun/ui/qt/mainwindow.py:493
+msgid "&Mediatype"
+msgstr "Tipo de &medio"
+
+#: hakubun/ui/qt/mainwindow.py:497
+msgid "&Options"
+msgstr "&Opciones"
+
+#: hakubun/ui/qt/mainwindow.py:1031 hakubun/ui/gtk/statusicon.py:46
+msgid "Show/Hide"
+msgstr "Mostrar/ocultar"
+
+#: hakubun/ui/qt/details.py:26 hakubun/ui/gtk/data/showinfowindow.ui:16
+msgid "Details"
+msgstr "Detalles"
+
+#: hakubun/ui/qt/details.py:43
+msgid "Main information"
+msgstr "Información principal"
+
+#: hakubun/ui/qt/details.py:44
+msgid "My list and settings"
+msgstr "Mi lista y ajustes"
+
+#: hakubun/ui/qt/details.py:58
+msgid "Go to"
+msgstr "Ir a"
+
+#: hakubun/ui/qt/widgets.py:206
+msgid "Loading details..."
+msgstr "Cargando detalles..."
+
+#: hakubun/ui/qt/widgets.py:221
+msgid "Downloading..."
+msgstr "Descargando..."
+
+#: hakubun/ui/qt/widgets.py:227
+msgid "No image"
+msgstr "Sin imagen"
+
+#: hakubun/ui/qt/widgets.py:239
+msgid "There was an error while getting details."
+msgstr "Se produjo un error al obtener los detalles."
+
+#: hakubun/ui/qt/widgets.py:250
+msgid "Platform"
+msgstr "Plataforma"
+
+#: hakubun/ui/qt/widgets.py:255
+#, python-format
+msgid "<b>%s ID:</b>"
+msgstr "<b>ID de %s:</b>"
+
+#: hakubun/ui/qt/widgets.py:280
+msgid "No details available."
+msgstr "No hay detalles disponibles."
+
+#: hakubun/ui/qt/search.py:146 hakubun/ui/qt/seasons.py:222
+msgid "Add to list..."
+msgstr "Añadir a la lista..."
+
+#: hakubun/ui/qt/syncwindow.py:366 hakubun/ui/gtk/multisyncwindow.py:360
+#, python-format
+msgid "Never create this on %s"
+msgstr "No crear esto nunca en %s"
+
+#: hakubun/ui/qt/syncwindow.py:907 hakubun/ui/qt/syncwindow.py:935
+#: hakubun/ui/gtk/multisyncwindow.py:758 hakubun/ui/gtk/multisyncwindow.py:787
+#, python-format
+msgid "Ask me about %s again"
+msgstr "Pregúntame de nuevo sobre %s"
+
+#: hakubun/ui/qt/syncwindow.py:1546 hakubun/ui/qt/syncwindow.py:1576
+#, python-format
+msgid "Open on %s"
+msgstr "Abrir en %s"
+
+#: hakubun/ui/qt/syncwindow.py:1569
+msgid "Inspect"
+msgstr "Inspeccionar"
+
+#: hakubun/ui/gtk/statusicon.py:48
+msgid "About"
+msgstr "Acerca de"
+
+#: hakubun/ui/gtk/statusicon.py:49 hakubun/ui/gtk/data/app-menu.ui:73
+msgid "Quit"
+msgstr "Salir"
+
+#: hakubun/ui/gtk/showinfobox.py:76
+msgid "No Image"
+msgstr "Sin imagen"
+
+#: hakubun/ui/gtk/showinfobox.py:106
+#, python-format
+msgid "%s ID"
+msgstr "ID de %s"
+
+#: hakubun/ui/gtk/showinfobox.py:126
+msgid "Error while getting details."
+msgstr "Error al obtener los detalles."
+
+#: hakubun/ui/gtk/showtreeview.py:653
+#, python-format
+msgid "Watched: %d"
+msgstr "Visto: %d"
+
+#: hakubun/ui/gtk/showtreeview.py:658
+#, python-format
+msgid "Aired%s: %d"
+msgstr "Emitido%s: %d"
+
+#: hakubun/ui/gtk/showtreeview.py:659
+msgid " (estimated)"
+msgstr " (estimado)"
+
+#: hakubun/ui/gtk/showtreeview.py:663
+#, python-format
+msgid "Available: %d"
+msgstr "Disponible: %d"
+
+#: hakubun/ui/gtk/showtreeview.py:665
+#, python-format
+msgid "Total: %s"
+msgstr "Total: %s"
+
+#: hakubun/ui/gtk/showtreeview.py:680
+#, python-format
+msgid "Score owned by %s, shown in its rating system"
+msgstr "Puntuación propiedad de %s, mostrada en su sistema de puntuación"
+
+#: hakubun/ui/gtk/showtreeview.py:688
+#, python-format
+msgid "Synced from %s, in its rating system"
+msgstr "Sincronizado desde %s, en su sistema de puntuación"
+
+#: hakubun/ui/gtk/showtreeview.py:690
+msgid "Platform-specific entry — not synced to another tracker"
+msgstr "Entrada específica de la plataforma: no sincronizada con otro rastreador"
+
+#: hakubun/ui/gtk/mainview.py:1016 hakubun/ui/gtk/data/mainview.ui:205
+msgid "Play Next"
+msgstr "Reproducir siguiente"
+
+#: hakubun/ui/gtk/mainview.py:1022
+msgid "Show details..."
+msgstr "Mostrar detalles..."
+
+#: hakubun/ui/gtk/mainview.py:1028
+msgid "Open web site"
+msgstr "Abrir sitio web"
+
+#: hakubun/ui/gtk/mainview.py:1038
+msgid "Change folder..."
+msgstr "Cambiar carpeta..."
+
+#: hakubun/ui/gtk/mainview.py:1050
+msgid "Copy title to clipboard"
+msgstr "Copiar título al portapapeles"
+
+#: hakubun/ui/gtk/mainview.py:1054
+msgid "Set alternate title..."
+msgstr "Establecer título alternativo..."
+
+#: hakubun/ui/gtk/mainview.py:1058
+msgid "Delete"
+msgstr "Eliminar"
+
+#: hakubun/ui/gtk/mainview.py:1069
+msgid "Play episode"
+msgstr "Reproducir episodio"
+
+#: hakubun/ui/gtk/mainview.py:1118
+msgid "Play episode..."
+msgstr "Reproducir episodio..."
+
+#: hakubun/ui/gtk/mainview.py:1128
+#, python-format
+msgid "%s - Next"
+msgstr "%s - Siguiente"
 
 #: hakubun/ui/gtk/data/accountswindow.ui:15
 #: hakubun/ui/gtk/data/accountswindow.ui:278 hakubun/ui/gtk/data/app-menu.ui:20
@@ -112,17 +1026,6 @@ msgstr "Solicitar PIN"
 msgid "New Account"
 msgstr "Nueva cuenta"
 
-#: hakubun/ui/gtk/data/app-menu.ui:8 hakubun/ui/gtk/data/searchwindow.ui:15
-#: hakubun/ui/gtk/data/window.ui:20 hakubun/ui/qt/mainwindow.py:240
-#: hakubun/ui/qt/mainwindow.py:420
-msgid "Search"
-msgstr "Buscar"
-
-#: hakubun/ui/gtk/data/app-menu.ui:12 hakubun/ui/gtk/data/window.ui:36
-#: hakubun/ui/qt/mainwindow.py:244
-msgid "Airing Schedule"
-msgstr "Calendario de emisión"
-
 #: hakubun/ui/gtk/data/app-menu.ui:16 hakubun/ui/gtk/data/shortcuts.ui:29
 msgid "Filter list"
 msgstr "Filtrar lista"
@@ -166,10 +1069,6 @@ msgstr "Atajos de teclado"
 #: hakubun/ui/gtk/data/app-menu.ui:69
 msgid "About Hakubun+"
 msgstr "Acerca de Hakubun+"
-
-#: hakubun/ui/gtk/data/app-menu.ui:73
-msgid "Quit"
-msgstr "Salir"
 
 #: hakubun/ui/gtk/data/app-menu.ui:80
 msgid "_File"
@@ -275,10 +1174,6 @@ msgstr "Puntuación"
 msgid "Status"
 msgstr "Estado"
 
-#: hakubun/ui/gtk/data/mainview.ui:205
-msgid "Play Next"
-msgstr "Reproducir siguiente"
-
 #: hakubun/ui/gtk/data/mainview.ui:227
 msgid "On: rate this cross-tracker entry in its owner's synced rating system. Off: rate it in this account's own system."
 msgstr "Activado: puntúa esta entrada multirrastreador en el sistema de puntuación sincronizado de su propietario. Desactivado: puntúala en el sistema propio de esta cuenta."
@@ -343,14 +1238,6 @@ msgstr "Seleccionar ejecutable del reproductor"
 msgid "Reuse an existing mpv window instead of opening a new one"
 msgstr "Reutilizar una ventana de mpv existente en lugar de abrir una nueva"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:363
-msgid "Only applies when the player above is mpv. Hands off playback to the already-running mpv window via its IPC socket instead of starting a new process each time."
-msgstr "Solo se aplica cuando el reproductor anterior es mpv. Transfiere la reproducción a la ventana de mpv ya en ejecución mediante su socket IPC, en lugar de iniciar un proceso nuevo cada vez."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:375
-msgid "Parser"
-msgstr "Analizador"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:388
 msgid "AnimeInfoExtractor (Default)"
 msgstr "AnimeInfoExtractor (predeterminado)"
@@ -379,10 +1266,6 @@ msgstr "Buscar archivos nuevos al iniciar"
 msgid "Scan through whole list when matching local files"
 msgstr "Recorrer toda la lista al emparejar archivos locales"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:447
-msgid "When library scanning matches your media directories against the list, only Watching/Plan to Watch shows are considered by default. Enable this to also match against Completed, Dropped, and other statuses."
-msgstr "Cuando el escaneo de biblioteca empareja tus directorios multimedia con la lista, de forma predeterminada solo se consideran las series en Viendo/Planeo ver. Activa esto para emparejar también con Completado, Abandonado y otros estados."
-
 #: hakubun/ui/gtk/data/settingswindow.ui:457
 msgid "Check subdirectory name when searching"
 msgstr "Comprobar el nombre del subdirectorio al buscar"
@@ -403,29 +1286,9 @@ msgstr ""
 msgid "seconds"
 msgstr "segundos"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:564
-msgid "Use this wait time for Plex/Kodi trackers"
-msgstr "Usar este tiempo de espera para rastreadores Plex/Kodi"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:569
 msgid "Plex and Kodi normally estimate when an episode is \"watched\" from playback position instead of a fixed timer. Enable this to make the currently selected one (Plex or Kodi) use the fixed wait time above instead. Has no effect for other tracker types."
 msgstr "Plex y Kodi normalmente estiman que un episodio se ha «visto» según la posición de reproducción en lugar de un temporizador fijo. Activa esto para que el seleccionado actualmente (Plex o Kodi) use en su lugar el tiempo de espera fijo anterior. No afecta a otros tipos de rastreador."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:586
-msgid "Update when (MPRIS)"
-msgstr "Actualizar cuándo (MPRIS)"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:598
-msgid "How the tracker decides an episode counts as watched: after the fixed wait above, or once playback reaches a percentage of the episode's actual duration. The latter needs the player to report its length over MPRIS, so it only applies when Tracker type is MPRIS."
-msgstr "Cómo decide el rastreador que un episodio se ha visto: tras la espera fija anterior, o al alcanzar un porcentaje de la duración real del episodio. Esto último requiere que el reproductor informe su duración por MPRIS, así que solo se aplica cuando el tipo de rastreador es MPRIS."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:600
-msgid "Fixed wait (above)"
-msgstr "Espera fija (arriba)"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:601
-msgid "Percentage complete"
-msgstr "Porcentaje completado"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:627
 msgid "%"
@@ -443,14 +1306,6 @@ msgstr "Pedir confirmación"
 msgid "Ask to add if not in list"
 msgstr "Preguntar si añadir cuando no esté en la lista"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:707
-msgid "Streaming Credentials"
-msgstr "Credenciales de streaming"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:735
-msgid "Jellyfin"
-msgstr "Jellyfin"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:760
 #: hakubun/ui/gtk/data/settingswindow.ui:895
 #: hakubun/ui/gtk/data/settingswindow.ui:1030
@@ -467,10 +1322,6 @@ msgstr "Host"
 msgid "8096"
 msgstr ""
 
-#: hakubun/ui/gtk/data/settingswindow.ui:870
-msgid "Kodi"
-msgstr "Kodi"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:930
 #: hakubun/ui/gtk/data/settingswindow.ui:1065
 msgid "32400"
@@ -479,10 +1330,6 @@ msgstr ""
 #: hakubun/ui/gtk/data/settingswindow.ui:1005
 msgid "Plex media server"
 msgstr "Servidor multimedia Plex"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1132
-msgid "Use SSL"
-msgstr "Usar SSL"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1194
 #: hakubun/ui/gtk/data/shortcuts.ui:50
@@ -532,34 +1379,17 @@ msgstr "Tras cada cambio"
 msgid "When closing the application"
 msgstr "Al cerrar la aplicación"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:1499
-msgid "Additional options"
-msgstr "Opciones adicionales"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:1517
 msgid "Change status when updating"
 msgstr "Cambiar el estado al actualizar"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1522
-msgid "Moves a show to its start status (e.g. Watching) when you set episode 1, and to its finish status (e.g. Completed) when you set its last episode."
-msgstr "Mueve una serie a su estado inicial (p. ej. Viendo) al poner el episodio 1, y a su estado final (p. ej. Completado) al poner su último episodio."
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1532
 msgid "Change status only if it has a score"
 msgstr "Cambiar el estado solo si tiene puntuación"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:1538
-msgid "Only applies to the finish-status change above: hold off moving the show to its finish status until it has a score, instead of doing it as soon as the last episode is set."
-msgstr "Solo se aplica al cambio de estado final anterior: retrasa mover la serie a su estado final hasta que tenga puntuación, en lugar de hacerlo en cuanto se pone el último episodio."
-
 #: hakubun/ui/gtk/data/settingswindow.ui:1548
 msgid "Update start and finish dates"
 msgstr "Actualizar fechas de inicio y fin"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1586
-#: hakubun/ui/gtk/data/shortcuts.ui:11
-msgid "Lists"
-msgstr "Listas"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1611
 msgid "Remember window size"
@@ -569,25 +1399,9 @@ msgstr "Recordar tamaño de ventana"
 msgid "Use classic progress bar"
 msgstr "Usar barra de progreso clásica"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:1639
-msgid "Switch to the All category when filtering"
-msgstr "Cambiar a la categoría Todos al filtrar"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:1644
 msgid "When typing in the filter bar while on a specific status tab, automatically switch to the All tab so the filter searches your whole list instead of just that status."
 msgstr "Al escribir en la barra de filtro mientras estás en una pestaña de estado concreta, cambia automáticamente a la pestaña Todos para que el filtro busque en toda tu lista en lugar de solo en ese estado."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1654
-msgid "Show tray icon"
-msgstr "Mostrar icono de bandeja"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1675
-msgid "Close to tray"
-msgstr "Cerrar a la bandeja"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1689
-msgid "Start minimized to tray"
-msgstr "Iniciar minimizado en la bandeja"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:1703
 msgid "Use website icon in tray"
@@ -605,33 +1419,9 @@ msgstr "Puramente estético: ocultar el interruptor no desactiva SubMiner. Ajust
 msgid "Colors for row text"
 msgstr "Colores del texto de fila"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:1817
-msgid "Playing"
-msgstr "Viendo"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1829
-msgid "Queued"
-msgstr "En cola"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1841
-msgid "New episode"
-msgstr "Episodio nuevo"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1867
-msgid "Airing"
-msgstr "En emisión"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:1903
-msgid "Unaired"
-msgstr "Sin emitir"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:1942
 msgid "Colors for progress bar"
 msgstr "Colores de la barra de progreso"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2005
-msgid "Background"
-msgstr "Fondo"
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2017
 msgid "Watched"
@@ -648,22 +1438,6 @@ msgstr "Almacenado"
 #: hakubun/ui/gtk/data/settingswindow.ui:2091
 msgid "Completed"
 msgstr "Completado"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2122
-msgid "Add MAL Scores (must be signed into MAL)"
-msgstr "Añadir puntuaciones de MAL (debes iniciar sesión en MAL)"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2127
-msgid "Automatically cross-references MyAnimeList's community score for shows on your list after every sync, using a MyAnimeList account added in Hakubun+. Not needed if this account already is MyAnimeList."
-msgstr "Después de cada sincronización, coteja automáticamente la puntuación de la comunidad de MyAnimeList para las series de tu lista, usando una cuenta de MyAnimeList añadida en Hakubun+. No es necesario si esta cuenta ya es de MyAnimeList."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2137
-msgid "Load MAL Scores Now"
-msgstr "Cargar puntuaciones de MAL ahora"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2142
-msgid "Fetch MAL scores for the current list right now, without waiting for a sync or enabling the automatic option above."
-msgstr "Obtén las puntuaciones de MAL para la lista actual ahora mismo, sin esperar a una sincronización ni activar la opción automática anterior."
 
 #: hakubun/ui/gtk/data/settingswindow.ui:2160
 msgid "Language:"
@@ -697,77 +1471,13 @@ msgstr ""
 msgid "Interface"
 msgstr "Interfaz"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2232
-msgid "Adding shows"
-msgstr "Añadir series"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2252
-msgid "Default status when adding a show:"
-msgstr "Estado predeterminado al añadir una serie:"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2266
-msgid "Currently active tab"
-msgstr "Pestaña activa actualmente"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2267
-msgid "Plan to Watch"
-msgstr "Planeo ver"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2300
-msgid "Apply behavior"
-msgstr "Comportamiento al aplicar"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2311
-msgid "Push a sync when applying settings"
-msgstr "Enviar una sincronización al aplicar los ajustes"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:2317
 msgid "Sends any queued changes to the API right after you close this settings window, instead of waiting for the next scheduled or manual sync. This only pushes -- it doesn't also pull a fresh copy of the list from the API."
 msgstr "Envía cualquier cambio en cola a la API justo después de cerrar esta ventana de ajustes, en lugar de esperar a la siguiente sincronización programada o manual. Esto solo envía; no también obtiene una copia actualizada de la lista desde la API."
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2353
-msgid "Enable multi-sync (BETA)"
-msgstr "Activar sincronización múltiple (BETA)"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2359
-msgid "BETA: Sync will now multi-sync across every configured provider by default, reconciling them with your local list instead of just uploading/downloading one account. Turn this off to fall back to the classic single-account sync."
-msgstr "BETA: Sincronizar ahora hará una sincronización múltiple con todos los proveedores configurados de forma predeterminada, conciliándolos con tu lista local en lugar de solo subir/descargar una cuenta. Desactiva esto para volver a la sincronización clásica de una sola cuenta."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2369
-msgid "Always review changes before syncing"
-msgstr "Revisar siempre los cambios antes de sincronizar"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2375
-msgid "Sync fetches every provider and works out what would change per each field's sync rule, then always opens the sync window so you can review and sync it yourself. Turn this off to let Sync carry out clean changes headlessly -- decisions and new-entry adds still always stop for review either way."
-msgstr "Sincronizar obtiene todos los proveedores y calcula qué cambiaría según la regla de sincronización de cada campo; luego siempre abre la ventana de sincronización para que puedas revisar y sincronizar tú mismo. Desactiva esto para que Sincronizar realice cambios limpios sin supervisión; las decisiones y las nuevas entradas siempre se detienen para revisión de todos modos."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2385
-msgid "Edit owned scores in the owner's rating system"
-msgstr "Editar puntuaciones propias en el sistema de puntuación del propietario"
-
 #: hakubun/ui/gtk/data/settingswindow.ui:2391
 msgid "When a show's Score is owned by another tracker, let the sidebar score editor rate it in that owner's own system (e.g. AniList's 8.4 while signed into Kitsu), toggled live via the Synced/Platform switch by the slider. Turn this off to always edit in the signed-in account's own system."
 msgstr "Cuando la puntuación de una serie pertenece a otro rastreador, permite que el editor de puntuación de la barra lateral puntúe en el sistema propio de ese propietario (p. ej. el 8.4 de AniList mientras estás conectado a Kitsu), alternado en vivo mediante el interruptor Sincronizado/Plataforma del control deslizante. Desactívalo para editar siempre en el sistema propio de la cuenta conectada."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2416
-msgid "Kitsu"
-msgstr "Kitsu"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2436
-msgid "Kitsu API:"
-msgstr "API de Kitsu:"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2438
-msgid "Which Kitsu API to use for Kitsu accounts. Takes effect the next time the account is loaded. Both use the same Kitsu login."
-msgstr "Qué API de Kitsu usar para las cuentas de Kitsu. Surte efecto la próxima vez que se cargue la cuenta. Ambas usan el mismo inicio de sesión de Kitsu."
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2451
-msgid "Legacy (REST)"
-msgstr "Antigua (REST)"
-
-#: hakubun/ui/gtk/data/settingswindow.ui:2452
-msgid "New (GraphQL)"
-msgstr "Nueva (GraphQL)"
 
 #: hakubun/ui/gtk/data/shortcuts.ui:66 hakubun/ui/gtk/data/shortcuts.ui:93
 msgid "Shows"
@@ -813,10 +1523,6 @@ msgstr "Abrir ventana de atajos"
 msgid "Quit application"
 msgstr "Salir de la aplicación"
 
-#: hakubun/ui/gtk/data/showinfowindow.ui:16
-msgid "Details"
-msgstr "Detalles"
-
 #: hakubun/ui/gtk/data/showinfowindow.ui:20
 msgid "View in website"
 msgstr "Ver en el sitio web"
@@ -824,236 +1530,3 @@ msgstr "Ver en el sitio web"
 #: hakubun/ui/gtk/data/window.ui:51
 msgid "Now Playing"
 msgstr "Reproduciendo ahora"
-
-#: hakubun/ui/gtk/data/window.ui:71
-msgid "SubMiner"
-msgstr "SubMiner"
-
-#: hakubun/ui/qt/mainwindow.py:194
-msgid "Play &Next"
-msgstr "Reproducir &siguiente"
-
-#: hakubun/ui/qt/mainwindow.py:195
-msgid "Play the next unwatched episode."
-msgstr "Reproduce el siguiente episodio no visto."
-
-#: hakubun/ui/qt/mainwindow.py:198
-msgid "Play Episode..."
-msgstr "Reproducir episodio..."
-
-#: hakubun/ui/qt/mainwindow.py:199
-msgid "Select an episode to play."
-msgstr "Selecciona un episodio para reproducir."
-
-#: hakubun/ui/qt/mainwindow.py:207
-msgid "SubMiner: Off"
-msgstr "SubMiner: desactivado"
-
-#: hakubun/ui/qt/mainwindow.py:211 hakubun/ui/qt/mainwindow.py:214
-msgid "Open episodes with SubMiner instead of the configured player."
-msgstr "Abre los episodios con SubMiner en lugar del reproductor configurado."
-
-#: hakubun/ui/qt/mainwindow.py:219
-msgid "SubMiner was not found on PATH. Install it to enable this."
-msgstr "No se encontró SubMiner en el PATH. Instálalo para activar esto."
-
-#: hakubun/ui/qt/mainwindow.py:226
-msgid "Show &details..."
-msgstr "Mostrar &detalles..."
-
-#: hakubun/ui/qt/mainwindow.py:228
-msgid "Show detailed information about the selected show."
-msgstr "Muestra información detallada sobre la serie seleccionada."
-
-#: hakubun/ui/qt/mainwindow.py:230
-msgid "Change &alternate name..."
-msgstr "Cambiar nombre &alternativo..."
-
-#: hakubun/ui/qt/mainwindow.py:232
-msgid "Set an alternate title for the tracker."
-msgstr "Establece un título alternativo para el rastreador."
-
-#: hakubun/ui/qt/mainwindow.py:234
-msgid "Play &random show"
-msgstr "Reproducir serie al a&zar"
-
-#: hakubun/ui/qt/mainwindow.py:236
-msgid "Pick a random show with a new episode and play it."
-msgstr "Elige una serie al azar con un episodio nuevo y la reproduce."
-
-#: hakubun/ui/qt/mainwindow.py:246
-msgid "See when the airing shows in your list air next."
-msgstr "Consulta cuándo se emiten a continuación las series en emisión de tu lista."
-
-#: hakubun/ui/qt/mainwindow.py:248
-msgid "&Multi-provider Sync..."
-msgstr "Sincronización &multiproveedor..."
-
-#: hakubun/ui/qt/mainwindow.py:250
-msgid "Reconcile your lists across every configured provider."
-msgstr "Concilia tus listas entre todos los proveedores configurados."
-
-#: hakubun/ui/qt/mainwindow.py:252
-msgid "&Delete"
-msgstr "&Eliminar"
-
-#: hakubun/ui/qt/mainwindow.py:253
-msgid "Remove this show from your list."
-msgstr "Elimina esta serie de tu lista."
-
-#: hakubun/ui/qt/mainwindow.py:256
-msgid "&Quit"
-msgstr "&Salir"
-
-#: hakubun/ui/qt/mainwindow.py:258
-msgid "Exit Hakubun+."
-msgstr "Salir de Hakubun+."
-
-#: hakubun/ui/qt/mainwindow.py:261
-msgid "&Undo"
-msgstr "&Deshacer"
-
-#: hakubun/ui/qt/mainwindow.py:262
-msgid "Undo the last episode/score/status/tags change."
-msgstr "Deshace el último cambio de episodio/puntuación/estado/etiquetas."
-
-#: hakubun/ui/qt/mainwindow.py:266
-msgid "&Redo"
-msgstr "&Rehacer"
-
-#: hakubun/ui/qt/mainwindow.py:267
-msgid "Redo the last undone change."
-msgstr "Rehace el último cambio deshecho."
-
-#: hakubun/ui/qt/mainwindow.py:272
-msgid "&Sync"
-msgstr "&Sincronizar"
-
-#: hakubun/ui/qt/mainwindow.py:276
-msgid "S&end changes"
-msgstr "&Enviar cambios"
-
-#: hakubun/ui/qt/mainwindow.py:279
-msgid "Upload any changes made to the list immediately."
-msgstr "Sube inmediatamente cualquier cambio hecho en la lista."
-
-#: hakubun/ui/qt/mainwindow.py:281
-msgid "Re&download list"
-msgstr "Volver a &descargar la lista"
-
-#: hakubun/ui/qt/mainwindow.py:284
-msgid "Discard any changes made to the list and re-download it."
-msgstr "Descarta cualquier cambio hecho en la lista y la vuelve a descargar."
-
-#: hakubun/ui/qt/mainwindow.py:287
-msgid "Rescan &Library (quick)"
-msgstr "Reescanear &biblioteca (rápido)"
-
-#: hakubun/ui/qt/mainwindow.py:291
-msgid "Rescan &Library (full)"
-msgstr "Reescanear &biblioteca (completo)"
-
-#: hakubun/ui/qt/mainwindow.py:293
-msgid "Open containing folder"
-msgstr "Abrir carpeta contenedora"
-
-#: hakubun/ui/qt/mainwindow.py:295
-msgid "Set folder..."
-msgstr "Establecer carpeta..."
-
-#: hakubun/ui/qt/mainwindow.py:297
-msgid "Manually point this show at a local folder, bypassing filename guessing -- for folders the parser can't match."
-msgstr "Apunta manualmente esta serie a una carpeta local, evitando la detección por nombre de archivo, para carpetas que el analizador no puede reconocer."
-
-#: hakubun/ui/qt/mainwindow.py:300
-msgid "Clear folder"
-msgstr "Borrar carpeta"
-
-#: hakubun/ui/qt/mainwindow.py:303
-msgid "Switch &Account"
-msgstr "Cambiar de &cuenta"
-
-#: hakubun/ui/qt/mainwindow.py:304
-msgid "Switch to a different account."
-msgstr "Cambia a otra cuenta."
-
-#: hakubun/ui/qt/mainwindow.py:306
-msgid "&Settings..."
-msgstr "&Ajustes..."
-
-#: hakubun/ui/qt/mainwindow.py:309
-msgid "About..."
-msgstr "Acerca de..."
-
-#: hakubun/ui/qt/mainwindow.py:311
-msgid "About Qt..."
-msgstr "Acerca de Qt..."
-
-#: hakubun/ui/qt/mainwindow.py:324 hakubun/ui/qt/mainwindow.py:369
-msgid "Library folders"
-msgstr "Carpetas de biblioteca"
-
-#: hakubun/ui/qt/mainwindow.py:325
-msgid "Mediatype"
-msgstr "Tipo de medio"
-
-#: hakubun/ui/qt/mainwindow.py:330
-msgid "&File"
-msgstr "&Archivo"
-
-#: hakubun/ui/qt/mainwindow.py:337
-msgid "&Services"
-msgstr "&Servicios"
-
-#: hakubun/ui/qt/mainwindow.py:347
-msgid "&Tools"
-msgstr "&Herramientas"
-
-#: hakubun/ui/qt/mainwindow.py:355 hakubun/ui/qt/mainwindow.py:501
-msgid "&Help"
-msgstr "Ay&uda"
-
-#: hakubun/ui/qt/mainwindow.py:364 hakubun/ui/qt/mainwindow.py:392
-msgid "Main"
-msgstr "Principal"
-
-#: hakubun/ui/qt/mainwindow.py:376
-msgid "&Show"
-msgstr "&Serie"
-
-#: hakubun/ui/qt/mainwindow.py:405
-msgid "Play"
-msgstr "Reproducir"
-
-#: hakubun/ui/qt/mainwindow.py:408
-msgid "Move to"
-msgstr "Mover a"
-
-#: hakubun/ui/qt/mainwindow.py:434
-msgid "Set score"
-msgstr "Establecer puntuación"
-
-#: hakubun/ui/qt/mainwindow.py:445
-msgid "Set date started"
-msgstr "Establecer fecha de inicio"
-
-#: hakubun/ui/qt/mainwindow.py:448
-msgid "Set date completed"
-msgstr "Establecer fecha de finalización"
-
-#: hakubun/ui/qt/mainwindow.py:478
-msgid "&List"
-msgstr "&Lista"
-
-#: hakubun/ui/qt/mainwindow.py:493
-msgid "&Mediatype"
-msgstr "Tipo de &medio"
-
-#: hakubun/ui/qt/mainwindow.py:497
-msgid "&Options"
-msgstr "&Opciones"
-
-#: hakubun/ui/qt/mainwindow.py:1031
-msgid "Show/Hide"
-msgstr "Mostrar/ocultar"
-
