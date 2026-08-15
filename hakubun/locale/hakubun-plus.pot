@@ -1,14 +1,14 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
+# This file is distributed under the same license as the hakubun-plus package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PACKAGE VERSION\n"
+"Project-Id-Version: hakubun-plus 0.13\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-14 19:26-0500\n"
+"POT-Creation-Date: 2026-08-15 00:37-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1166,11 +1166,11 @@ msgstr ""
 msgid "Progress"
 msgstr ""
 
-#: hakubun/ui/gtk/data/mainview.ui:183
+#: hakubun/ui/gtk/data/mainview.ui:183 hakubun/i18n.py:85
 msgid "Score"
 msgstr ""
 
-#: hakubun/ui/gtk/data/mainview.ui:195
+#: hakubun/ui/gtk/data/mainview.ui:195 hakubun/i18n.py:84
 msgid "Status"
 msgstr ""
 
@@ -1447,7 +1447,7 @@ msgstr ""
 msgid "System Default"
 msgstr ""
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2176
+#: hakubun/ui/gtk/data/settingswindow.ui:2176 hakubun/i18n.py:82
 msgid "English"
 msgstr ""
 
@@ -1529,4 +1529,120 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/window.ui:51
 msgid "Now Playing"
+msgstr ""
+
+#: hakubun/i18n.py:82
+msgid "Romaji"
+msgstr ""
+
+#: hakubun/i18n.py:82
+msgid "Japanese"
+msgstr ""
+
+#: hakubun/i18n.py:82
+msgid "Synonyms"
+msgstr ""
+
+#: hakubun/i18n.py:82
+msgid "Season"
+msgstr ""
+
+#: hakubun/i18n.py:83
+msgid "Genres"
+msgstr ""
+
+#: hakubun/i18n.py:83
+msgid "Studios"
+msgstr ""
+
+#: hakubun/i18n.py:83
+msgid "Synopsis"
+msgstr ""
+
+#: hakubun/i18n.py:83
+msgid "Type"
+msgstr ""
+
+#: hakubun/i18n.py:83
+msgid "Average score"
+msgstr ""
+
+#: hakubun/i18n.py:84
+msgid "Mean score"
+msgstr ""
+
+#: hakubun/i18n.py:84
+msgid "Description"
+msgstr ""
+
+#: hakubun/i18n.py:84
+msgid "Russian title"
+msgstr ""
+
+#: hakubun/i18n.py:85
+msgid "Japanese title"
+msgstr ""
+
+#: hakubun/i18n.py:85
+msgid "English title"
+msgstr ""
+
+#: hakubun/i18n.py:85
+msgid "Age Rating"
+msgstr ""
+
+#: hakubun/i18n.py:86
+msgid "Titles"
+msgstr ""
+
+#: hakubun/i18n.py:86
+msgid "Average Rating"
+msgstr ""
+
+#: hakubun/i18n.py:86
+msgid "Rank"
+msgstr ""
+
+#: hakubun/i18n.py:86
+msgid "NSFW"
+msgstr ""
+
+#: hakubun/i18n.py:87
+msgid "Serialization"
+msgstr ""
+
+#: hakubun/i18n.py:87
+msgid "Expected Release"
+msgstr ""
+
+#: hakubun/i18n.py:87
+msgid "Original Name"
+msgstr ""
+
+#: hakubun/i18n.py:88
+msgid "Released"
+msgstr ""
+
+#: hakubun/i18n.py:88
+msgid "Languages"
+msgstr ""
+
+#: hakubun/i18n.py:88
+msgid "Original Language"
+msgstr ""
+
+#: hakubun/i18n.py:88
+msgid "Platforms"
+msgstr ""
+
+#: hakubun/i18n.py:89
+msgid "Aliases"
+msgstr ""
+
+#: hakubun/i18n.py:89
+msgid "Length"
+msgstr ""
+
+#: hakubun/i18n.py:89
+msgid "Links"
 msgstr ""

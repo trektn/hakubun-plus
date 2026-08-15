@@ -266,7 +266,8 @@ class DetailsWidget(QWidget):
                 # utils.clean_synopsis) -- escape first, then turn those
                 # into <br> since RichText otherwise collapses them.
                 body = html.escape(str_value).replace('\n', '<br>')
-                prose_blocks.append(f"<h3>{html.escape(key)}</h3><p>{body}</p>")
+                prose_blocks.append(
+                    f"<h3>{html.escape(_(key))}</h3><p>{body}</p>")
                 continue
 
             value_label = QLabel(str_value)
@@ -274,7 +275,7 @@ class DetailsWidget(QWidget):
             value_label.setWordWrap(True)
             value_label.setTextInteractionFlags(
                 QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.facts_layout.addRow(f'<b>{key}:</b>', value_label)
+            self.facts_layout.addRow(f'<b>{_(key)}:</b>', value_label)
 
         if self.facts_layout.rowCount() == 0:
             self.facts_layout.addRow(QLabel(_('No details available.')))

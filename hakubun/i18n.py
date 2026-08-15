@@ -52,6 +52,44 @@ SUPPORTED_LANGUAGES = [
 _translation = gettext.NullTranslations()
 
 
+def _(msgid):
+    """Live-redirecting translation lookup for code that can't rely on
+    the ambient builtin `_()` -- notably hakubun/lib/*.py, which is also
+    imported by the (gettext-less) CLI/curses front-end. Unlike the
+    builtin, which install() rebinds by name, this indirects through the
+    module-level _translation on every call, so it picks up whatever
+    language (or NullTranslations identity, if install() was never
+    called) is current at call time regardless of import order."""
+    return _translation.gettext(msgid)
+
+
+# The Details view's facts table is built from (label, value) tuples that
+# hakubun/lib/*.py adapters return per-provider (see e.g. libanilist.py's
+# 'extra' list). Those labels double as identifiers -- hakubun/data.py and
+# DetailsWidget.PROSE_KEYS both compare against the literal English string
+# (key == 'Synopsis') to special-case that field's rendering -- so the
+# adapters themselves must keep returning untranslated English keys, or
+# every non-English locale would silently break that comparison.
+#
+# Translation therefore happens display-side only: DetailsWidget and
+# ShowInfoBox look up _(key) when building each row's label, after any
+# identity comparison against the raw key has already happened. Because
+# that lookup passes a runtime variable, xgettext can't discover the
+# messages by scanning the call site -- this literal list exists purely
+# so extraction finds them; it is never iterated at runtime. Keep it in
+# sync with the labels the adapters actually emit.
+_DETAILS_FIELD_LABELS = (
+    _('English'), _('Romaji'), _('Japanese'), _('Synonyms'), _('Season'),
+    _('Genres'), _('Studios'), _('Synopsis'), _('Type'), _('Average score'),
+    _('Mean score'), _('Status'), _('Description'), _('Russian title'),
+    _('Japanese title'), _('English title'), _('Score'), _('Age Rating'),
+    _('Titles'), _('Average Rating'), _('Rank'), _('NSFW'),
+    _('Serialization'), _('Expected Release'), _('Original Name'),
+    _('Released'), _('Languages'), _('Original Language'), _('Platforms'),
+    _('Aliases'), _('Length'), _('Links'),
+)
+
+
 def _languages_for(language):
     """Resolves a config 'language' value to the list gettext.translation's
     `languages` argument expects, or None to let gettext fall back to the

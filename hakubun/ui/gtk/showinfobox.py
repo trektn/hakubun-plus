@@ -117,7 +117,7 @@ class ShowInfoBox(Gtk.Box):
                     if isinstance(content, list):
                         content = ", ".join(filter(None, content))
 
-                    detail.append("<b>%s</b>\n%s" % (html.escape(str(title)),
+                    detail.append("<b>%s</b>\n%s" % (html.escape(_(str(title))),
                                                      html.escape(str(content))))
 
             self.data_label.set_text("\n\n".join(detail))
