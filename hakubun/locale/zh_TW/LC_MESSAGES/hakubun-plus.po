@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ui-i 18n\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-14 19:26-0500\n"
+"POT-Creation-Date: 2026-08-15 00:37-0500\n"
 "PO-Revision-Date: 2026-08-13 00:17-0500\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1165,11 +1165,11 @@ msgstr "API 使用者名稱"
 msgid "Progress"
 msgstr "進度"
 
-#: hakubun/ui/gtk/data/mainview.ui:183
+#: hakubun/ui/gtk/data/mainview.ui:183 hakubun/i18n.py:85
 msgid "Score"
 msgstr "評分"
 
-#: hakubun/ui/gtk/data/mainview.ui:195
+#: hakubun/ui/gtk/data/mainview.ui:195 hakubun/i18n.py:84
 msgid "Status"
 msgstr "狀態"
 
@@ -1446,7 +1446,7 @@ msgstr "語言:"
 msgid "System Default"
 msgstr "系統預設"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2176
+#: hakubun/ui/gtk/data/settingswindow.ui:2176 hakubun/i18n.py:82
 msgid "English"
 msgstr ""
 
@@ -1529,3 +1529,120 @@ msgstr "在網站中檢視"
 #: hakubun/ui/gtk/data/window.ui:51
 msgid "Now Playing"
 msgstr "正在播放"
+
+#: hakubun/i18n.py:82
+msgid "Romaji"
+msgstr "羅馬拼音"
+
+#: hakubun/i18n.py:82
+msgid "Japanese"
+msgstr "日語"
+
+#: hakubun/i18n.py:82
+msgid "Synonyms"
+msgstr "別名"
+
+#: hakubun/i18n.py:82
+msgid "Season"
+msgstr "季度"
+
+#: hakubun/i18n.py:83
+msgid "Genres"
+msgstr "題材"
+
+#: hakubun/i18n.py:83
+msgid "Studios"
+msgstr "製作公司"
+
+#: hakubun/i18n.py:83
+msgid "Synopsis"
+msgstr "簡介"
+
+#: hakubun/i18n.py:83
+msgid "Type"
+msgstr "類型"
+
+#: hakubun/i18n.py:83
+msgid "Average score"
+msgstr "平均分"
+
+#: hakubun/i18n.py:84
+msgid "Mean score"
+msgstr "平均分"
+
+#: hakubun/i18n.py:84
+msgid "Description"
+msgstr "簡介"
+
+#: hakubun/i18n.py:84
+msgid "Russian title"
+msgstr "俄文標題"
+
+#: hakubun/i18n.py:85
+msgid "Japanese title"
+msgstr "日文標題"
+
+#: hakubun/i18n.py:85
+msgid "English title"
+msgstr "英文標題"
+
+#: hakubun/i18n.py:85
+msgid "Age Rating"
+msgstr "年齡分級"
+
+#: hakubun/i18n.py:86
+msgid "Titles"
+msgstr "標題"
+
+#: hakubun/i18n.py:86
+msgid "Average Rating"
+msgstr "平均評分"
+
+#: hakubun/i18n.py:86
+msgid "Rank"
+msgstr "排名"
+
+#: hakubun/i18n.py:86
+msgid "NSFW"
+msgstr "NSFW"
+
+#: hakubun/i18n.py:87
+msgid "Serialization"
+msgstr "連載"
+
+#: hakubun/i18n.py:87
+msgid "Expected Release"
+msgstr "預計發布"
+
+#: hakubun/i18n.py:87
+msgid "Original Name"
+msgstr "原名"
+
+#: hakubun/i18n.py:88
+msgid "Released"
+msgstr "發布日期"
+
+#: hakubun/i18n.py:88
+msgid "Languages"
+msgstr "語言"
+
+#: hakubun/i18n.py:88
+msgid "Original Language"
+msgstr "原始語言"
+
+#: hakubun/i18n.py:88
+msgid "Platforms"
+msgstr "平台"
+
+#: hakubun/i18n.py:89
+msgid "Aliases"
+msgstr "別名"
+
+#: hakubun/i18n.py:89
+msgid "Length"
+msgstr "長度"
+
+#: hakubun/i18n.py:89
+msgid "Links"
+msgstr "連結"
+

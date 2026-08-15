@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ui-i 18n\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-14 19:26-0500\n"
+"POT-Creation-Date: 2026-08-15 00:37-0500\n"
 "PO-Revision-Date: 2026-08-13 00:17-0500\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1166,11 +1166,11 @@ msgstr "nombre de usuario de la API"
 msgid "Progress"
 msgstr "Progreso"
 
-#: hakubun/ui/gtk/data/mainview.ui:183
+#: hakubun/ui/gtk/data/mainview.ui:183 hakubun/i18n.py:85
 msgid "Score"
 msgstr "Puntuación"
 
-#: hakubun/ui/gtk/data/mainview.ui:195
+#: hakubun/ui/gtk/data/mainview.ui:195 hakubun/i18n.py:84
 msgid "Status"
 msgstr "Estado"
 
@@ -1447,7 +1447,7 @@ msgstr "Idioma:"
 msgid "System Default"
 msgstr "Predeterminado del sistema"
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2176
+#: hakubun/ui/gtk/data/settingswindow.ui:2176 hakubun/i18n.py:82
 msgid "English"
 msgstr ""
 
@@ -1530,3 +1530,120 @@ msgstr "Ver en el sitio web"
 #: hakubun/ui/gtk/data/window.ui:51
 msgid "Now Playing"
 msgstr "Reproduciendo ahora"
+
+#: hakubun/i18n.py:82
+msgid "Romaji"
+msgstr "Rōmaji"
+
+#: hakubun/i18n.py:82
+msgid "Japanese"
+msgstr "Japonés"
+
+#: hakubun/i18n.py:82
+msgid "Synonyms"
+msgstr "Sinónimos"
+
+#: hakubun/i18n.py:82
+msgid "Season"
+msgstr "Temporada"
+
+#: hakubun/i18n.py:83
+msgid "Genres"
+msgstr "Géneros"
+
+#: hakubun/i18n.py:83
+msgid "Studios"
+msgstr "Estudios"
+
+#: hakubun/i18n.py:83
+msgid "Synopsis"
+msgstr "Sinopsis"
+
+#: hakubun/i18n.py:83
+msgid "Type"
+msgstr "Tipo"
+
+#: hakubun/i18n.py:83
+msgid "Average score"
+msgstr "Puntuación media"
+
+#: hakubun/i18n.py:84
+msgid "Mean score"
+msgstr "Puntuación media"
+
+#: hakubun/i18n.py:84
+msgid "Description"
+msgstr "Descripción"
+
+#: hakubun/i18n.py:84
+msgid "Russian title"
+msgstr "Título en ruso"
+
+#: hakubun/i18n.py:85
+msgid "Japanese title"
+msgstr "Título en japonés"
+
+#: hakubun/i18n.py:85
+msgid "English title"
+msgstr "Título en inglés"
+
+#: hakubun/i18n.py:85
+msgid "Age Rating"
+msgstr "Clasificación por edad"
+
+#: hakubun/i18n.py:86
+msgid "Titles"
+msgstr "Títulos"
+
+#: hakubun/i18n.py:86
+msgid "Average Rating"
+msgstr "Valoración media"
+
+#: hakubun/i18n.py:86
+msgid "Rank"
+msgstr "Clasificación"
+
+#: hakubun/i18n.py:86
+msgid "NSFW"
+msgstr "NSFW"
+
+#: hakubun/i18n.py:87
+msgid "Serialization"
+msgstr "Serialización"
+
+#: hakubun/i18n.py:87
+msgid "Expected Release"
+msgstr "Lanzamiento previsto"
+
+#: hakubun/i18n.py:87
+msgid "Original Name"
+msgstr "Nombre original"
+
+#: hakubun/i18n.py:88
+msgid "Released"
+msgstr "Publicado"
+
+#: hakubun/i18n.py:88
+msgid "Languages"
+msgstr "Idiomas"
+
+#: hakubun/i18n.py:88
+msgid "Original Language"
+msgstr "Idioma original"
+
+#: hakubun/i18n.py:88
+msgid "Platforms"
+msgstr "Plataformas"
+
+#: hakubun/i18n.py:89
+msgid "Aliases"
+msgstr "Alias"
+
+#: hakubun/i18n.py:89
+msgid "Length"
+msgstr "Duración"
+
+#: hakubun/i18n.py:89
+msgid "Links"
+msgstr "Enlaces"
+
