@@ -281,10 +281,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
-            return self.columns[section]
+            return _(self.columns[section]) if self.columns[section] else self.columns[section]
         elif role == QtCore.Qt.ItemDataRole.ToolTipRole and orientation == QtCore.Qt.Orientation.Horizontal:
             if section == ShowListModel.COL_LAST_UPDATED:
-                return 'Date and time of the last synced update'
+                return _('Date and time of the last synced update')
 
     def setData(self, index, value, role):
         row, column = index.row(), index.column()
@@ -461,6 +461,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
 
 class AddTableModel(QtCore.QAbstractTableModel):
+    # Not translated here -- this is a class attribute, evaluated once at
+    # import time (almost always before i18n.install() has run; imports
+    # happen before MainWindow.__init__ does). headerData() below
+    # translates for display instead.
     columns = ["Name", "Type", "Season", "Total", "In Your List"]
 
     def __init__(self, parent=None, mylist=None, statuses_dict=None):
@@ -496,7 +500,7 @@ class AddTableModel(QtCore.QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
-            return self.columns[section]
+            return _(self.columns[section])
 
     def _mylist_entry(self, item):
         return self.mylist.get(item.get('id'))

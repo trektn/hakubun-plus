@@ -37,8 +37,50 @@ from hakubun import accounts
 from hakubun import data
 from hakubun import messenger
 from hakubun import utils
+from hakubun.i18n import _p
 from hakubun.extras import redirections
 from hakubun.parser import get_parser_class
+
+
+def _localize_mediainfo(mediainfo):
+    """Returns a copy of a lib adapter's mediainfo dict with
+    statuses_dict's values translated for display.
+
+    mediainfo (and the statuses_dict inside it) is the *class-level*
+    dict a hakubun/lib/*.py adapter defines (e.g. libanilist.py's
+    mediatypes['anime']), shared by every account using that library.
+    Two things follow from that:
+
+    - It can't be translated at its definition site. Class bodies run
+      at import time, almost always before the UI has called
+      i18n.install() with the user's chosen language (module imports
+      happen before Qt/GTK have parsed the config to know what that
+      choice even is), so any translation baked in there would be
+      stuck on whatever _translation was default at that point.
+    - It must never be mutated in place here -- every account sharing
+      the class would see the translated copy, including a
+      hypothetical later account whose own language differs.
+
+    Called once per account/mediatype load (see get_api_info() and
+    start()), which happens well after i18n.install(), and returns
+    fresh copies both times -- cheap dicts, and it means every UI
+    consumer reading self.mediainfo['statuses_dict'] gets a translated
+    value for free, without patching each of the many call sites
+    individually.
+
+    The status *codes* statuses_dict keys on ('CURRENT', 'watching',
+    ...) are provider-internal and untouched -- only the English
+    display strings they map to are translated.
+    """
+    statuses_dict = mediainfo.get('statuses_dict')
+    if not statuses_dict:
+        return mediainfo
+
+    localized = dict(mediainfo)
+    localized['statuses_dict'] = {
+        code: _p('status', label) for code, label in statuses_dict.items()
+    }
+    return localized
 
 
 class Engine:
@@ -181,6 +223,7 @@ class Engine:
 
         # Record the API details
         (self.api_info, self.mediainfo) = self.data_handler.get_api_info()
+        self.mediainfo = _localize_mediainfo(self.mediainfo)
 
         # The undo/redo history is tied to this account+mediatype's data,
         # so it's reset whenever that changes (initial load, account
@@ -439,6 +482,7 @@ class Engine:
         # Start the data handler
         try:
             (self.api_info, self.mediainfo) = self.data_handler.start()
+            self.mediainfo = _localize_mediainfo(self.mediainfo)
         except utils.DataError as e:
             raise utils.DataFatal(str(e))
         except utils.APIError as e:

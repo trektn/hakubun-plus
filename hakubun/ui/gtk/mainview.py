@@ -289,7 +289,7 @@ class MainView(Gtk.Box):
         statuses_nums = self._engine.mediainfo['statuses'].copy()
         statuses_names = self._engine.mediainfo['statuses_dict'].copy()
         statuses_nums.append(None)
-        statuses_names[None] = 'All'
+        statuses_names[None] = _('All')
         self.notebook.handler_block(self.notebook_switch_handler)
         # Clear notebook
         for i in range(self.notebook.get_n_pages()):
@@ -537,7 +537,7 @@ class MainView(Gtk.Box):
     def _on_spinbtn_score_output(self, widget):
         adjustment = widget.get_adjustment()
         if adjustment.get_value() == adjustment.get_lower():
-            widget.set_text('Unrated')
+            widget.set_text(_('Unrated'))
             return True
         return False
 
@@ -896,7 +896,7 @@ class NotebookPage(Gtk.ScrolledWindow):
         self._list = _list
         self._title = title
         self._title_text = self._engine.mediainfo['statuses_dict'][status] if status in self._engine.mediainfo['statuses_dict'].keys(
-        ) else 'All'
+        ) else _('All')
         self._init_widgets(page_num, status, config)
 
     def _init_widgets(self, page_num, status, config):

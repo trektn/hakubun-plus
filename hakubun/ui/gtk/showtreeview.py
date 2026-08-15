@@ -494,13 +494,13 @@ class ShowTreeView(Gtk.TreeView):
             self.cols[name] = Gtk.TreeViewColumn(name)
 
             # This is a hack to allow for right-clickable header
-            label = Gtk.Label(name)
+            label = Gtk.Label(_(name))
             label.show()
             self.cols[name].set_widget(label)
 
             if name == "Last updated":
                 self.cols[name].set_sort_column_id(18)
-                label.set_tooltip_text("Date and time of the last synced update")
+                label.set_tooltip_text(_("Date and time of the last synced update"))
             else:
                 self.cols[name].set_sort_column_id(sort)
 
@@ -617,7 +617,7 @@ class ShowTreeView(Gtk.TreeView):
             for name, sort in self.available_columns:
                 is_active = name in self.visible_columns
 
-                item = Gtk.CheckMenuItem(name)
+                item = Gtk.CheckMenuItem(_(name))
                 item.set_active(is_active)
                 item.connect('activate', self._header_menu_item,
                              name, not is_active)
