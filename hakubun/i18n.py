@@ -63,6 +63,17 @@ def _(msgid):
     return _translation.gettext(msgid)
 
 
+def _p(context, msgid):
+    """Context-qualified counterpart to _() -- same live redirection, but
+    for words that are ambiguous stripped of context ('Completed' the
+    watch status vs. 'Completed' the progress-bar-color swatch label in
+    Settings > Theme -- both plain English "Completed"). Without a
+    context, translating one would silently retranslate the other to
+    the same text, which is wrong for languages where the two don't
+    share a word."""
+    return _translation.pgettext(context, msgid)
+
+
 # The Details view's facts table is built from (label, value) tuples that
 # hakubun/lib/*.py adapters return per-provider (see e.g. libanilist.py's
 # 'extra' list). Those labels double as identifiers -- hakubun/data.py and
@@ -87,6 +98,54 @@ _DETAILS_FIELD_LABELS = (
     _('Serialization'), _('Expected Release'), _('Original Name'),
     _('Released'), _('Languages'), _('Original Language'), _('Platforms'),
     _('Aliases'), _('Length'), _('Links'),
+)
+
+# Same reasoning as _DETAILS_FIELD_LABELS above, but for the watch/read
+# status names each hakubun/lib/*.py adapter's statuses_dict returns
+# (e.g. libanilist.py's mediatypes['anime']['statuses_dict']) -- covers
+# every mediatype across every adapter, including VNDB's vnlist
+# (Playing/Finished/Stalled/...) and wishlist (High/Medium/Low/...),
+# since engine._localize_mediainfo() translates whichever
+# mediainfo['statuses_dict'] it's handed the same way regardless of
+# provider or mediatype. Those dicts key on the *provider's own status
+# code* ('CURRENT', 'watching', 1, ...), never on the English display
+# string, so translating the values at the source is safe -- nothing
+# compares against them by identity. Spelling variants ('On Hold' /
+# 'On hold' / 'On-Hold') are each their own adapter's exact string and
+# need their own catalog entry.
+#
+# Uses the 'status' msgctxt (_p, not _) since some of these words --
+# "Completed" above all -- collide with unrelated same-spelled UI
+# strings elsewhere (the Settings > Theme progress-bar-color swatch
+# label) that must not share a translation.
+_STATUS_LABELS = (
+    _p('status', 'Watching'), _p('status', 'Completed'),
+    _p('status', 'Rewatching'), _p('status', 'Paused'),
+    _p('status', 'Dropped'), _p('status', 'Plan to Watch'),
+    _p('status', 'On Hold'), _p('status', 'On hold'),
+    _p('status', 'On-Hold'), _p('status', 'Reading'),
+    _p('status', 'Rereading'), _p('status', 'Re-reading'),
+    _p('status', 'Plan to Read'),
+    # VNDB vnlist (play/read progress) and wishlist (priority).
+    _p('status', 'Playing'), _p('status', 'Finished'),
+    _p('status', 'Stalled'), _p('status', 'Unknown'),
+    _p('status', 'High'), _p('status', 'Medium'),
+    _p('status', 'Low'), _p('status', 'Blacklist'),
+)
+
+# Same reasoning again, for the list/table column headers -- Qt's
+# ShowListModel.columns and AddTableModel.columns, and GTK's
+# ShowTreeView.available_columns. All three are consulted by identity
+# (config's 'visible_columns', the column-toggle menus, the Qt sort
+# column keys) so they stay English at the source; headerData() and
+# the column-header Gtk.Label/menu items call _(name) for display only.
+_COLUMN_LABELS = (
+    _('ID'), _('Title'), _('Progress'), _('Score'), _('Percent'),
+    _('Next Episode'), _('Start date'), _('End date'), _('My start'),
+    _('My finish'), _('Tags'), _('Status'), _('Last updated'),
+    _('Season'), _('Type'), _('Platform Score'), _('MAL Score'),
+    _('Synced Score'), _('Name'), _('Total'), _('In Your List'),
+    _('Start'), _('End'), _('My end'), _('Airing Status'),
 )
 
 

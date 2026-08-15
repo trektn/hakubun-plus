@@ -590,10 +590,16 @@ class MainWindow(QMainWindow):
             # "Progress" for Taiga mode -- match that name here too, or
             # this entry would read "Percent" while the header (and the
             # column it toggles) actually says "Progress".
-            label = 'Progress' if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
-                else column_name
+            label = _('Progress') if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
+                else _(column_name)
             action = QAction(label, self, checkable=True)
             action.setData(i)
+            # The untranslated identity, kept separate from the
+            # (possibly translated) display text above -- s_toggle_column
+            # and the checked-state sync in reload() key the
+            # visible_columns config off this, not action.text(), so a
+            # non-English label can't break persistence.
+            action._column_name = column_name
             if column_name in self.api_config['visible_columns']:
                 action.setChecked(True)
 
@@ -1087,7 +1093,7 @@ class MainWindow(QMainWindow):
         self.menu_columns.setEnabled(False)
         for action in self.menu_columns.actions():
             action.setChecked(
-                action.text() in self.api_config['visible_columns'])
+                action._column_name in self.api_config['visible_columns'])
         self.menu_columns.setEnabled(True)
 
         self.show()
@@ -1344,7 +1350,7 @@ class MainWindow(QMainWindow):
             action.triggered.connect(
                 lambda checked=False, s=status: self._set_show_status_from_menu(s))
 
-        self.notebook.addTab("All")
+        self.notebook.addTab(_("All"))
 
         if self._taiga_mode:
             self._rebuild_quick_score_menu()
@@ -1505,7 +1511,7 @@ class MainWindow(QMainWindow):
             if status is not None:
                 status_name = self.mediainfo['statuses_dict'][status]
             else:
-                status_name = "All"
+                status_name = _("All")
                 status = "!ALL"
 
             self.notebook.setTabText(page, "{} ({})".format(
@@ -2725,7 +2731,7 @@ class MainWindow(QMainWindow):
 
     def s_toggle_column(self, visible):
         w = self.sender()
-        index, column_name = w.data(), w.text()
+        index, column_name = w.data(), w._column_name
         MIN_WIDTH = 30  # Width to restore columns to if too small to see
 
         if visible:

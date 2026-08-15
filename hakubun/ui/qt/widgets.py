@@ -548,7 +548,7 @@ class ScoreSlider(QWidget):
 
         self.spin = QDoubleSpinBox()
         self.spin.setMinimumWidth(70)
-        self.spin.setSpecialValueText('Unrated')
+        self.spin.setSpecialValueText(_('Unrated'))
         self.spin.valueChanged.connect(self._on_spin_changed)
 
         # The slider needs real width to be usable (fine-grained scales

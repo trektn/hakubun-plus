@@ -1,14 +1,14 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the hakubun-plus package.
+# This file is distributed under the same license as the PACKAGE package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: hakubun-plus 0.13\n"
+"Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-15 00:37-0500\n"
+"POT-Creation-Date: 2026-08-15 00:53-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,647 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+
+#: hakubun/i18n.py:93 hakubun/ui/gtk/data/settingswindow.ui:2176
+msgid "English"
+msgstr ""
+
+#: hakubun/i18n.py:93
+msgid "Romaji"
+msgstr ""
+
+#: hakubun/i18n.py:93
+msgid "Japanese"
+msgstr ""
+
+#: hakubun/i18n.py:93
+msgid "Synonyms"
+msgstr ""
+
+#: hakubun/i18n.py:93 hakubun/i18n.py:146
+msgid "Season"
+msgstr ""
+
+#: hakubun/i18n.py:94
+msgid "Genres"
+msgstr ""
+
+#: hakubun/i18n.py:94
+msgid "Studios"
+msgstr ""
+
+#: hakubun/i18n.py:94
+msgid "Synopsis"
+msgstr ""
+
+#: hakubun/i18n.py:94 hakubun/i18n.py:146
+msgid "Type"
+msgstr ""
+
+#: hakubun/i18n.py:94
+msgid "Average score"
+msgstr ""
+
+#: hakubun/i18n.py:95
+msgid "Mean score"
+msgstr ""
+
+#: hakubun/i18n.py:95 hakubun/i18n.py:145 hakubun/ui/gtk/data/mainview.ui:195
+msgid "Status"
+msgstr ""
+
+#: hakubun/i18n.py:95
+msgid "Description"
+msgstr ""
+
+#: hakubun/i18n.py:95
+msgid "Russian title"
+msgstr ""
+
+#: hakubun/i18n.py:96
+msgid "Japanese title"
+msgstr ""
+
+#: hakubun/i18n.py:96
+msgid "English title"
+msgstr ""
+
+#: hakubun/i18n.py:96 hakubun/i18n.py:143 hakubun/ui/gtk/data/mainview.ui:183
+msgid "Score"
+msgstr ""
+
+#: hakubun/i18n.py:96
+msgid "Age Rating"
+msgstr ""
+
+#: hakubun/i18n.py:97
+msgid "Titles"
+msgstr ""
+
+#: hakubun/i18n.py:97
+msgid "Average Rating"
+msgstr ""
+
+#: hakubun/i18n.py:97
+msgid "Rank"
+msgstr ""
+
+#: hakubun/i18n.py:97
+msgid "NSFW"
+msgstr ""
+
+#: hakubun/i18n.py:98
+msgid "Serialization"
+msgstr ""
+
+#: hakubun/i18n.py:98
+msgid "Expected Release"
+msgstr ""
+
+#: hakubun/i18n.py:98
+msgid "Original Name"
+msgstr ""
+
+#: hakubun/i18n.py:99
+msgid "Released"
+msgstr ""
+
+#: hakubun/i18n.py:99
+msgid "Languages"
+msgstr ""
+
+#: hakubun/i18n.py:99
+msgid "Original Language"
+msgstr ""
+
+#: hakubun/i18n.py:99
+msgid "Platforms"
+msgstr ""
+
+#: hakubun/i18n.py:100
+msgid "Aliases"
+msgstr ""
+
+#: hakubun/i18n.py:100
+msgid "Length"
+msgstr ""
+
+#: hakubun/i18n.py:100
+msgid "Links"
+msgstr ""
+
+#: hakubun/i18n.py:122
+msgctxt "status"
+msgid "Watching"
+msgstr ""
+
+#: hakubun/i18n.py:122
+msgctxt "status"
+msgid "Completed"
+msgstr ""
+
+#: hakubun/i18n.py:123
+msgctxt "status"
+msgid "Rewatching"
+msgstr ""
+
+#: hakubun/i18n.py:123
+msgctxt "status"
+msgid "Paused"
+msgstr ""
+
+#: hakubun/i18n.py:124
+msgctxt "status"
+msgid "Dropped"
+msgstr ""
+
+#: hakubun/i18n.py:124
+msgctxt "status"
+msgid "Plan to Watch"
+msgstr ""
+
+#: hakubun/i18n.py:125
+msgctxt "status"
+msgid "On Hold"
+msgstr ""
+
+#: hakubun/i18n.py:125
+msgctxt "status"
+msgid "On hold"
+msgstr ""
+
+#: hakubun/i18n.py:126
+msgctxt "status"
+msgid "On-Hold"
+msgstr ""
+
+#: hakubun/i18n.py:126
+msgctxt "status"
+msgid "Reading"
+msgstr ""
+
+#: hakubun/i18n.py:127
+msgctxt "status"
+msgid "Rereading"
+msgstr ""
+
+#: hakubun/i18n.py:127
+msgctxt "status"
+msgid "Re-reading"
+msgstr ""
+
+#: hakubun/i18n.py:128
+msgctxt "status"
+msgid "Plan to Read"
+msgstr ""
+
+#: hakubun/i18n.py:130
+msgctxt "status"
+msgid "Playing"
+msgstr ""
+
+#: hakubun/i18n.py:130
+msgctxt "status"
+msgid "Finished"
+msgstr ""
+
+#: hakubun/i18n.py:131
+msgctxt "status"
+msgid "Stalled"
+msgstr ""
+
+#: hakubun/i18n.py:131
+msgctxt "status"
+msgid "Unknown"
+msgstr ""
+
+#: hakubun/i18n.py:132
+msgctxt "status"
+msgid "High"
+msgstr ""
+
+#: hakubun/i18n.py:132
+msgctxt "status"
+msgid "Medium"
+msgstr ""
+
+#: hakubun/i18n.py:133
+msgctxt "status"
+msgid "Low"
+msgstr ""
+
+#: hakubun/i18n.py:133
+msgctxt "status"
+msgid "Blacklist"
+msgstr ""
+
+#: hakubun/i18n.py:143
+msgid "ID"
+msgstr ""
+
+#: hakubun/i18n.py:143
+msgid "Title"
+msgstr ""
+
+#: hakubun/i18n.py:143 hakubun/ui/qt/mainwindow.py:593
+#: hakubun/ui/gtk/data/mainview.ui:171
+msgid "Progress"
+msgstr ""
+
+#: hakubun/i18n.py:143
+msgid "Percent"
+msgstr ""
+
+#: hakubun/i18n.py:144
+msgid "Next Episode"
+msgstr ""
+
+#: hakubun/i18n.py:144
+msgid "Start date"
+msgstr ""
+
+#: hakubun/i18n.py:144
+msgid "End date"
+msgstr ""
+
+#: hakubun/i18n.py:144
+msgid "My start"
+msgstr ""
+
+#: hakubun/i18n.py:145
+msgid "My finish"
+msgstr ""
+
+#: hakubun/i18n.py:145
+msgid "Tags"
+msgstr ""
+
+#: hakubun/i18n.py:145
+msgid "Last updated"
+msgstr ""
+
+#: hakubun/i18n.py:146
+msgid "Platform Score"
+msgstr ""
+
+#: hakubun/i18n.py:146
+msgid "MAL Score"
+msgstr ""
+
+#: hakubun/i18n.py:147
+msgid "Synced Score"
+msgstr ""
+
+#: hakubun/i18n.py:147
+msgid "Name"
+msgstr ""
+
+#: hakubun/i18n.py:147
+msgid "Total"
+msgstr ""
+
+#: hakubun/i18n.py:147
+msgid "In Your List"
+msgstr ""
+
+#: hakubun/i18n.py:148
+msgid "Start"
+msgstr ""
+
+#: hakubun/i18n.py:148
+msgid "End"
+msgstr ""
+
+#: hakubun/i18n.py:148
+msgid "My end"
+msgstr ""
+
+#: hakubun/i18n.py:148
+msgid "Airing Status"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:194
+msgid "Play &Next"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:195
+msgid "Play the next unwatched episode."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:198
+msgid "Play Episode..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:199
+msgid "Select an episode to play."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:207
+msgid "SubMiner: Off"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:211 hakubun/ui/qt/mainwindow.py:214
+msgid "Open episodes with SubMiner instead of the configured player."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:219
+msgid "SubMiner was not found on PATH. Install it to enable this."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:226
+msgid "Show &details..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:228
+msgid "Show detailed information about the selected show."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:230
+msgid "Change &alternate name..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:232
+msgid "Set an alternate title for the tracker."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:234
+msgid "Play &random show"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:236
+msgid "Pick a random show with a new episode and play it."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:240 hakubun/ui/qt/mainwindow.py:420
+#: hakubun/ui/gtk/data/app-menu.ui:8 hakubun/ui/gtk/data/searchwindow.ui:15
+#: hakubun/ui/gtk/data/window.ui:20
+msgid "Search"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:244 hakubun/ui/gtk/data/app-menu.ui:12
+#: hakubun/ui/gtk/data/window.ui:36
+msgid "Airing Schedule"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:246
+msgid "See when the airing shows in your list air next."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:248
+msgid "&Multi-provider Sync..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:250
+msgid "Reconcile your lists across every configured provider."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:252
+msgid "&Delete"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:253
+msgid "Remove this show from your list."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:256
+msgid "&Quit"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:258
+msgid "Exit Hakubun+."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:261
+msgid "&Undo"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:262
+msgid "Undo the last episode/score/status/tags change."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:266
+msgid "&Redo"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:267
+msgid "Redo the last undone change."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:272
+msgid "&Sync"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:276
+msgid "S&end changes"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:279
+msgid "Upload any changes made to the list immediately."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:281
+msgid "Re&download list"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:284
+msgid "Discard any changes made to the list and re-download it."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:287
+msgid "Rescan &Library (quick)"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:291
+msgid "Rescan &Library (full)"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:293 hakubun/ui/gtk/mainview.py:1032
+msgid "Open containing folder"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:295 hakubun/ui/gtk/mainview.py:1038
+msgid "Set folder..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:297 hakubun/ui/gtk/mainview.py:1040
+msgid "Manually point this show at a local folder, bypassing filename guessing -- for folders the parser can't match."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:300 hakubun/ui/gtk/mainview.py:1045
+msgid "Clear folder"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:303
+msgid "Switch &Account"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:304
+msgid "Switch to a different account."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:306
+msgid "&Settings..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:309
+msgid "About..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:311
+msgid "About Qt..."
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:324 hakubun/ui/qt/mainwindow.py:369
+msgid "Library folders"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:325
+msgid "Mediatype"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:330
+msgid "&File"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:337
+msgid "&Services"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:347
+msgid "&Tools"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:355 hakubun/ui/qt/mainwindow.py:501
+msgid "&Help"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:364 hakubun/ui/qt/mainwindow.py:392
+msgid "Main"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:376
+msgid "&Show"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:405
+msgid "Play"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:408 hakubun/ui/qt/search.py:140
+#: hakubun/ui/qt/add.py:202 hakubun/ui/qt/seasons.py:216
+#: hakubun/ui/gtk/mainview.py:1026 hakubun/ui/gtk/searchwindow.py:236
+msgid "Move to"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:434
+msgid "Set score"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:445
+msgid "Set date started"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:448
+msgid "Set date completed"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:478
+msgid "&List"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:493
+msgid "&Mediatype"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:497
+msgid "&Options"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:1037 hakubun/ui/gtk/statusicon.py:46
+msgid "Show/Hide"
+msgstr ""
+
+#: hakubun/ui/qt/mainwindow.py:1353 hakubun/ui/qt/mainwindow.py:1514
+#: hakubun/ui/gtk/mainview.py:292 hakubun/ui/gtk/mainview.py:899
+msgid "All"
+msgstr ""
+
+#: hakubun/ui/qt/models.py:287 hakubun/ui/gtk/showtreeview.py:503
+msgid "Date and time of the last synced update"
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:206
+msgid "Loading details..."
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:221
+msgid "Downloading..."
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:227
+msgid "No image"
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:239
+msgid "There was an error while getting details."
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:250
+msgid "Platform"
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:255
+#, python-format
+msgid "<b>%s ID:</b>"
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:281
+msgid "No details available."
+msgstr ""
+
+#: hakubun/ui/qt/widgets.py:551 hakubun/ui/gtk/mainview.py:540
+msgid "Unrated"
+msgstr ""
+
+#: hakubun/ui/qt/details.py:26 hakubun/ui/gtk/data/showinfowindow.ui:16
+msgid "Details"
+msgstr ""
+
+#: hakubun/ui/qt/details.py:43
+msgid "Main information"
+msgstr ""
+
+#: hakubun/ui/qt/details.py:44
+msgid "My list and settings"
+msgstr ""
+
+#: hakubun/ui/qt/details.py:58
+msgid "Go to"
+msgstr ""
+
+#: hakubun/ui/qt/search.py:146 hakubun/ui/qt/seasons.py:222
+msgid "Add to list..."
+msgstr ""
+
+#: hakubun/ui/qt/syncwindow.py:366 hakubun/ui/gtk/multisyncwindow.py:360
+#, python-format
+msgid "Never create this on %s"
+msgstr ""
+
+#: hakubun/ui/qt/syncwindow.py:907 hakubun/ui/qt/syncwindow.py:935
+#: hakubun/ui/gtk/multisyncwindow.py:758 hakubun/ui/gtk/multisyncwindow.py:787
+#, python-format
+msgid "Ask me about %s again"
+msgstr ""
+
+#: hakubun/ui/qt/syncwindow.py:1546 hakubun/ui/qt/syncwindow.py:1576
+#, python-format
+msgid "Open on %s"
+msgstr ""
+
+#: hakubun/ui/qt/syncwindow.py:1569
+msgid "Inspect"
+msgstr ""
 
 #: hakubun/ui/qt/settings.py:48
 msgid "Settings"
@@ -561,335 +1202,45 @@ msgstr ""
 msgid "Choose media directory"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:194
-msgid "Play &Next"
+#: hakubun/ui/gtk/mainview.py:1016 hakubun/ui/gtk/data/mainview.ui:205
+msgid "Play Next"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:195
-msgid "Play the next unwatched episode."
+#: hakubun/ui/gtk/mainview.py:1022
+msgid "Show details..."
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:198
-msgid "Play Episode..."
+#: hakubun/ui/gtk/mainview.py:1028
+msgid "Open web site"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:199
-msgid "Select an episode to play."
+#: hakubun/ui/gtk/mainview.py:1038
+msgid "Change folder..."
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:207
-msgid "SubMiner: Off"
+#: hakubun/ui/gtk/mainview.py:1050
+msgid "Copy title to clipboard"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:211 hakubun/ui/qt/mainwindow.py:214
-msgid "Open episodes with SubMiner instead of the configured player."
+#: hakubun/ui/gtk/mainview.py:1054
+msgid "Set alternate title..."
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:219
-msgid "SubMiner was not found on PATH. Install it to enable this."
+#: hakubun/ui/gtk/mainview.py:1058
+msgid "Delete"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:226
-msgid "Show &details..."
+#: hakubun/ui/gtk/mainview.py:1069
+msgid "Play episode"
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:228
-msgid "Show detailed information about the selected show."
+#: hakubun/ui/gtk/mainview.py:1118
+msgid "Play episode..."
 msgstr ""
 
-#: hakubun/ui/qt/mainwindow.py:230
-msgid "Change &alternate name..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:232
-msgid "Set an alternate title for the tracker."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:234
-msgid "Play &random show"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:236
-msgid "Pick a random show with a new episode and play it."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:240 hakubun/ui/qt/mainwindow.py:420
-#: hakubun/ui/gtk/data/app-menu.ui:8 hakubun/ui/gtk/data/searchwindow.ui:15
-#: hakubun/ui/gtk/data/window.ui:20
-msgid "Search"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:244 hakubun/ui/gtk/data/app-menu.ui:12
-#: hakubun/ui/gtk/data/window.ui:36
-msgid "Airing Schedule"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:246
-msgid "See when the airing shows in your list air next."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:248
-msgid "&Multi-provider Sync..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:250
-msgid "Reconcile your lists across every configured provider."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:252
-msgid "&Delete"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:253
-msgid "Remove this show from your list."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:256
-msgid "&Quit"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:258
-msgid "Exit Hakubun+."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:261
-msgid "&Undo"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:262
-msgid "Undo the last episode/score/status/tags change."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:266
-msgid "&Redo"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:267
-msgid "Redo the last undone change."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:272
-msgid "&Sync"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:276
-msgid "S&end changes"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:279
-msgid "Upload any changes made to the list immediately."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:281
-msgid "Re&download list"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:284
-msgid "Discard any changes made to the list and re-download it."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:287
-msgid "Rescan &Library (quick)"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:291
-msgid "Rescan &Library (full)"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:293 hakubun/ui/gtk/mainview.py:1032
-msgid "Open containing folder"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:295 hakubun/ui/gtk/mainview.py:1038
-msgid "Set folder..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:297 hakubun/ui/gtk/mainview.py:1040
-msgid "Manually point this show at a local folder, bypassing filename guessing -- for folders the parser can't match."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:300 hakubun/ui/gtk/mainview.py:1045
-msgid "Clear folder"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:303
-msgid "Switch &Account"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:304
-msgid "Switch to a different account."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:306
-msgid "&Settings..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:309
-msgid "About..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:311
-msgid "About Qt..."
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:324 hakubun/ui/qt/mainwindow.py:369
-msgid "Library folders"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:325
-msgid "Mediatype"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:330
-msgid "&File"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:337
-msgid "&Services"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:347
-msgid "&Tools"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:355 hakubun/ui/qt/mainwindow.py:501
-msgid "&Help"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:364 hakubun/ui/qt/mainwindow.py:392
-msgid "Main"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:376
-msgid "&Show"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:405
-msgid "Play"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:408 hakubun/ui/qt/search.py:140
-#: hakubun/ui/qt/add.py:202 hakubun/ui/qt/seasons.py:216
-#: hakubun/ui/gtk/searchwindow.py:236 hakubun/ui/gtk/mainview.py:1026
-msgid "Move to"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:434
-msgid "Set score"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:445
-msgid "Set date started"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:448
-msgid "Set date completed"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:478
-msgid "&List"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:493
-msgid "&Mediatype"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:497
-msgid "&Options"
-msgstr ""
-
-#: hakubun/ui/qt/mainwindow.py:1031 hakubun/ui/gtk/statusicon.py:46
-msgid "Show/Hide"
-msgstr ""
-
-#: hakubun/ui/qt/details.py:26 hakubun/ui/gtk/data/showinfowindow.ui:16
-msgid "Details"
-msgstr ""
-
-#: hakubun/ui/qt/details.py:43
-msgid "Main information"
-msgstr ""
-
-#: hakubun/ui/qt/details.py:44
-msgid "My list and settings"
-msgstr ""
-
-#: hakubun/ui/qt/details.py:58
-msgid "Go to"
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:206
-msgid "Loading details..."
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:221
-msgid "Downloading..."
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:227
-msgid "No image"
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:239
-msgid "There was an error while getting details."
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:250
-msgid "Platform"
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:255
+#: hakubun/ui/gtk/mainview.py:1128
 #, python-format
-msgid "<b>%s ID:</b>"
-msgstr ""
-
-#: hakubun/ui/qt/widgets.py:280
-msgid "No details available."
-msgstr ""
-
-#: hakubun/ui/qt/search.py:146 hakubun/ui/qt/seasons.py:222
-msgid "Add to list..."
-msgstr ""
-
-#: hakubun/ui/qt/syncwindow.py:366 hakubun/ui/gtk/multisyncwindow.py:360
-#, python-format
-msgid "Never create this on %s"
-msgstr ""
-
-#: hakubun/ui/qt/syncwindow.py:907 hakubun/ui/qt/syncwindow.py:935
-#: hakubun/ui/gtk/multisyncwindow.py:758 hakubun/ui/gtk/multisyncwindow.py:787
-#, python-format
-msgid "Ask me about %s again"
-msgstr ""
-
-#: hakubun/ui/qt/syncwindow.py:1546 hakubun/ui/qt/syncwindow.py:1576
-#, python-format
-msgid "Open on %s"
-msgstr ""
-
-#: hakubun/ui/qt/syncwindow.py:1569
-msgid "Inspect"
-msgstr ""
-
-#: hakubun/ui/gtk/statusicon.py:48
-msgid "About"
-msgstr ""
-
-#: hakubun/ui/gtk/statusicon.py:49 hakubun/ui/gtk/data/app-menu.ui:73
-msgid "Quit"
-msgstr ""
-
-#: hakubun/ui/gtk/showinfobox.py:76
-msgid "No Image"
-msgstr ""
-
-#: hakubun/ui/gtk/showinfobox.py:106
-#, python-format
-msgid "%s ID"
-msgstr ""
-
-#: hakubun/ui/gtk/showinfobox.py:126
-msgid "Error while getting details."
+msgid "%s - Next"
 msgstr ""
 
 #: hakubun/ui/gtk/showtreeview.py:653
@@ -930,45 +1281,25 @@ msgstr ""
 msgid "Platform-specific entry — not synced to another tracker"
 msgstr ""
 
-#: hakubun/ui/gtk/mainview.py:1016 hakubun/ui/gtk/data/mainview.ui:205
-msgid "Play Next"
+#: hakubun/ui/gtk/statusicon.py:48
+msgid "About"
 msgstr ""
 
-#: hakubun/ui/gtk/mainview.py:1022
-msgid "Show details..."
+#: hakubun/ui/gtk/statusicon.py:49 hakubun/ui/gtk/data/app-menu.ui:73
+msgid "Quit"
 msgstr ""
 
-#: hakubun/ui/gtk/mainview.py:1028
-msgid "Open web site"
+#: hakubun/ui/gtk/showinfobox.py:76
+msgid "No Image"
 msgstr ""
 
-#: hakubun/ui/gtk/mainview.py:1038
-msgid "Change folder..."
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1050
-msgid "Copy title to clipboard"
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1054
-msgid "Set alternate title..."
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1058
-msgid "Delete"
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1069
-msgid "Play episode"
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1118
-msgid "Play episode..."
-msgstr ""
-
-#: hakubun/ui/gtk/mainview.py:1128
+#: hakubun/ui/gtk/showinfobox.py:106
 #, python-format
-msgid "%s - Next"
+msgid "%s ID"
+msgstr ""
+
+#: hakubun/ui/gtk/showinfobox.py:126
+msgid "Error while getting details."
 msgstr ""
 
 #: hakubun/ui/gtk/data/accountswindow.ui:15
@@ -1160,18 +1491,6 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/mainview.ui:118
 msgid "api username"
-msgstr ""
-
-#: hakubun/ui/gtk/data/mainview.ui:171
-msgid "Progress"
-msgstr ""
-
-#: hakubun/ui/gtk/data/mainview.ui:183 hakubun/i18n.py:85
-msgid "Score"
-msgstr ""
-
-#: hakubun/ui/gtk/data/mainview.ui:195 hakubun/i18n.py:84
-msgid "Status"
 msgstr ""
 
 #: hakubun/ui/gtk/data/mainview.ui:227
@@ -1447,10 +1766,6 @@ msgstr ""
 msgid "System Default"
 msgstr ""
 
-#: hakubun/ui/gtk/data/settingswindow.ui:2176 hakubun/i18n.py:82
-msgid "English"
-msgstr ""
-
 #: hakubun/ui/gtk/data/settingswindow.ui:2177
 msgid "日本語 (Japanese)"
 msgstr ""
@@ -1529,120 +1844,4 @@ msgstr ""
 
 #: hakubun/ui/gtk/data/window.ui:51
 msgid "Now Playing"
-msgstr ""
-
-#: hakubun/i18n.py:82
-msgid "Romaji"
-msgstr ""
-
-#: hakubun/i18n.py:82
-msgid "Japanese"
-msgstr ""
-
-#: hakubun/i18n.py:82
-msgid "Synonyms"
-msgstr ""
-
-#: hakubun/i18n.py:82
-msgid "Season"
-msgstr ""
-
-#: hakubun/i18n.py:83
-msgid "Genres"
-msgstr ""
-
-#: hakubun/i18n.py:83
-msgid "Studios"
-msgstr ""
-
-#: hakubun/i18n.py:83
-msgid "Synopsis"
-msgstr ""
-
-#: hakubun/i18n.py:83
-msgid "Type"
-msgstr ""
-
-#: hakubun/i18n.py:83
-msgid "Average score"
-msgstr ""
-
-#: hakubun/i18n.py:84
-msgid "Mean score"
-msgstr ""
-
-#: hakubun/i18n.py:84
-msgid "Description"
-msgstr ""
-
-#: hakubun/i18n.py:84
-msgid "Russian title"
-msgstr ""
-
-#: hakubun/i18n.py:85
-msgid "Japanese title"
-msgstr ""
-
-#: hakubun/i18n.py:85
-msgid "English title"
-msgstr ""
-
-#: hakubun/i18n.py:85
-msgid "Age Rating"
-msgstr ""
-
-#: hakubun/i18n.py:86
-msgid "Titles"
-msgstr ""
-
-#: hakubun/i18n.py:86
-msgid "Average Rating"
-msgstr ""
-
-#: hakubun/i18n.py:86
-msgid "Rank"
-msgstr ""
-
-#: hakubun/i18n.py:86
-msgid "NSFW"
-msgstr ""
-
-#: hakubun/i18n.py:87
-msgid "Serialization"
-msgstr ""
-
-#: hakubun/i18n.py:87
-msgid "Expected Release"
-msgstr ""
-
-#: hakubun/i18n.py:87
-msgid "Original Name"
-msgstr ""
-
-#: hakubun/i18n.py:88
-msgid "Released"
-msgstr ""
-
-#: hakubun/i18n.py:88
-msgid "Languages"
-msgstr ""
-
-#: hakubun/i18n.py:88
-msgid "Original Language"
-msgstr ""
-
-#: hakubun/i18n.py:88
-msgid "Platforms"
-msgstr ""
-
-#: hakubun/i18n.py:89
-msgid "Aliases"
-msgstr ""
-
-#: hakubun/i18n.py:89
-msgid "Length"
-msgstr ""
-
-#: hakubun/i18n.py:89
-msgid "Links"
 msgstr ""
