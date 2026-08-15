@@ -203,7 +203,7 @@ class DetailsWidget(QWidget):
 
         # Load show info
         self._clear_facts()
-        self.facts_layout.addRow(QLabel('Loading details...'))
+        self.facts_layout.addRow(QLabel(_('Loading details...')))
         self.show_description.setText('')
         self._loaded_show_id = show.get('id')
         self.worker_call('get_show_details', self.r_details_loaded, show)
@@ -218,13 +218,13 @@ class DetailsWidget(QWidget):
                 self.s_show_image(filename)
             else:
                 utils.make_dir(utils.to_cache_path())
-                self.show_image.setText('Downloading...')
+                self.show_image.setText(_('Downloading...'))
                 self.image_worker = ImageWorker(
                     show['image'], filename, (200, 280))
                 self.image_worker.finished.connect(self.s_show_image)
                 self.image_worker.start()
         else:
-            self.show_image.setText('No image')
+            self.show_image.setText(_('No image'))
 
     def s_show_image(self, filename):
         self.show_image.setPixmap(QtGui.QPixmap(filename).scaled(
@@ -236,7 +236,7 @@ class DetailsWidget(QWidget):
 
         if not result['success']:
             self.facts_layout.addRow(
-                QLabel('There was an error while getting details.'))
+                QLabel(_('There was an error while getting details.')))
             return
 
         details = result['result']
@@ -247,12 +247,12 @@ class DetailsWidget(QWidget):
         if getattr(self, '_loaded_show_id', None) is not None:
             api_info = self.worker.engine.api_info
             platform = api_info.get('name') \
-                or (api_info.get('shortname') or 'Platform').capitalize()
+                or (api_info.get('shortname') or _('Platform')).capitalize()
             id_label = QLabel(str(self._loaded_show_id))
             id_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             id_label.setTextInteractionFlags(
                 QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.facts_layout.addRow('<b>%s ID:</b>' % platform, id_label)
+            self.facts_layout.addRow(_('<b>%s ID:</b>') % platform, id_label)
 
         for key, value in details['extra']:
             if not key or not value:
@@ -277,7 +277,7 @@ class DetailsWidget(QWidget):
             self.facts_layout.addRow(f'<b>{key}:</b>', value_label)
 
         if self.facts_layout.rowCount() == 0:
-            self.facts_layout.addRow(QLabel('No details available.'))
+            self.facts_layout.addRow(QLabel(_('No details available.')))
 
         self.show_description.setText(''.join(prose_blocks))
 

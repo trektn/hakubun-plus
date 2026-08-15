@@ -1013,49 +1013,49 @@ class NotebookPage(Gtk.ScrolledWindow):
         show = self._engine.get_show_info(self._selected_show)
 
         menu = Gtk.Menu()
-        mb_play = Gtk.ImageMenuItem('Play Next',
+        mb_play = Gtk.ImageMenuItem(_('Play Next'),
                                     Gtk.Image.new_from_icon_name(
                                         "media-playback-start", Gtk.IconSize.MENU))
         mb_play.connect("activate",
                         self._on_mb_activate,
                         ShowEventType.PLAY_NEXT)
-        mb_info = Gtk.MenuItem("Show details...")
+        mb_info = Gtk.MenuItem(_("Show details..."))
         mb_info.connect("activate",
                         self._on_mb_activate,
                         ShowEventType.DETAILS)
-        mb_move_to = Gtk.MenuItem("Move to")
+        mb_move_to = Gtk.MenuItem(_("Move to"))
         mb_move_to.set_submenu(self._build_move_to_menu())
-        mb_web = Gtk.MenuItem("Open web site")
+        mb_web = Gtk.MenuItem(_("Open web site"))
         mb_web.connect("activate",
                        self._on_mb_activate,
                        ShowEventType.OPEN_WEBSITE)
-        mb_folder = Gtk.MenuItem("Open containing folder")
+        mb_folder = Gtk.MenuItem(_("Open containing folder"))
         mb_folder.connect("activate",
                           self._on_mb_activate,
                           ShowEventType.OPEN_FOLDER)
         has_folder = bool(self._engine.get_show_folder(self._selected_show))
         mb_set_folder = Gtk.MenuItem(
-            "Change folder..." if has_folder else "Set folder...")
-        mb_set_folder.set_tooltip_text(
+            _("Change folder...") if has_folder else _("Set folder..."))
+        mb_set_folder.set_tooltip_text(_(
             "Manually point this show at a local folder, bypassing "
-            "filename guessing -- for folders the parser can't match.")
+            "filename guessing -- for folders the parser can't match."))
         mb_set_folder.connect("activate",
                               self._on_mb_activate,
                               ShowEventType.SET_FOLDER)
-        mb_clear_folder = Gtk.MenuItem("Clear folder")
+        mb_clear_folder = Gtk.MenuItem(_("Clear folder"))
         mb_clear_folder.set_sensitive(has_folder)
         mb_clear_folder.connect("activate",
                                 self._on_mb_activate,
                                 ShowEventType.CLEAR_FOLDER)
-        mb_copy = Gtk.MenuItem("Copy title to clipboard")
+        mb_copy = Gtk.MenuItem(_("Copy title to clipboard"))
         mb_copy.connect("activate",
                         self._on_mb_activate,
                         ShowEventType.COPY_TITLE)
-        mb_alt_title = Gtk.MenuItem("Set alternate title...")
+        mb_alt_title = Gtk.MenuItem(_("Set alternate title..."))
         mb_alt_title.connect("activate",
                              self._on_mb_activate,
                              ShowEventType.CHANGE_ALTERNATIVE_TITLE)
-        mb_delete = Gtk.ImageMenuItem('Delete',
+        mb_delete = Gtk.ImageMenuItem(_('Delete'),
                                       Gtk.Image.new_from_icon_name(
                                           "edit-delete", Gtk.IconSize.MENU))
         mb_delete.connect("activate",
@@ -1066,7 +1066,7 @@ class NotebookPage(Gtk.ScrolledWindow):
 
         menu_eps = self._build_episode_menu(show)
 
-        mb_playep = Gtk.MenuItem("Play episode")
+        mb_playep = Gtk.MenuItem(_("Play episode"))
         mb_playep.set_submenu(menu_eps)
         mb_playep.set_sensitive(bool(menu_eps.get_children()))
         menu.append(mb_playep)
@@ -1115,7 +1115,7 @@ class NotebookPage(Gtk.ScrolledWindow):
         menu_eps = Gtk.Menu()
 
         if total > self.EPISODE_MENU_LIMIT:
-            mb_pick = Gtk.MenuItem("Play episode...")
+            mb_pick = Gtk.MenuItem(_("Play episode..."))
             mb_pick.connect("activate",
                             self._on_mb_activate,
                             ShowEventType.PLAY_EPISODE_PICK)
@@ -1125,7 +1125,7 @@ class NotebookPage(Gtk.ScrolledWindow):
         for i in range(1, total + 1):
             mb_playep = Gtk.CheckMenuItem(str(i))
             if i == next_ep:
-                mb_playep.set_label(str(i) + " - Next")
+                mb_playep.set_label(_("%s - Next") % i)
                 menu_eps.set_focus_child(mb_playep)
             if i >= next_ep:
                 mb_playep.set_margin_left(10)

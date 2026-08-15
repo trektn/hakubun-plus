@@ -43,10 +43,10 @@ class HakubunStatusIcon(Gtk.StatusIcon):
     def _tray_status_menu_event(self, _icon, button, time):
         # Called when the tray icon is right-clicked
         menu = Gtk.Menu()
-        mb_show = Gtk.MenuItem("Show/Hide")
+        mb_show = Gtk.MenuItem(_("Show/Hide"))
         mb_about = Gtk.ImageMenuItem(
-            'About', Gtk.Image.new_from_icon_name("help-about", Gtk.IconSize.MENU))
-        mb_quit = Gtk.ImageMenuItem('Quit', Gtk.Image.new_from_icon_name(
+            _('About'), Gtk.Image.new_from_icon_name("help-about", Gtk.IconSize.MENU))
+        mb_quit = Gtk.ImageMenuItem(_('Quit'), Gtk.Image.new_from_icon_name(
             "application-exit", Gtk.IconSize.MENU))
 
         mb_show.connect("activate", self._tray_status_event)

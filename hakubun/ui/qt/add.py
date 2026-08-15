@@ -199,7 +199,7 @@ class AddDialog(QDialog):
         show = view.model().sourceModel().results[source_row]
 
         menu = QMenu(self)
-        move_to = menu.addMenu('Move to')
+        move_to = menu.addMenu(_('Move to'))
         for status in self.worker.engine.mediainfo['statuses']:
             action = move_to.addAction(self.statuses_dict.get(status, str(status)))
             action.triggered.connect(

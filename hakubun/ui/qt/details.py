@@ -23,7 +23,7 @@ class DetailsDialog(QDialog):
     def __init__(self, parent, worker, show, edit_widget=None, on_go_to=None):
         QDialog.__init__(self, parent)
         self.setMinimumSize(530, 550)
-        self.setWindowTitle('Details')
+        self.setWindowTitle(_('Details'))
         self.worker = worker
         # In Taiga mode this is MainWindow's own progress/score/status/tags
         # widget, on loan for as long as this dialog is open (see
@@ -40,8 +40,8 @@ class DetailsDialog(QDialog):
             # MainWindow.s_show_details) -- these labels match real
             # Taiga's own Anime Information dialog tabs.
             tabs = QTabWidget()
-            tabs.addTab(details, 'Main information')
-            tabs.addTab(edit_widget, 'My list and settings')
+            tabs.addTab(details, _('Main information'))
+            tabs.addTab(edit_widget, _('My list and settings'))
             main_layout.addWidget(tabs)
         else:
             main_layout.addWidget(details)
@@ -55,7 +55,7 @@ class DetailsDialog(QDialog):
         # in the main list instead of going through Add again.
         if on_go_to is not None:
             go_to_btn = bottom_buttons.addButton(
-                'Go to', QDialogButtonBox.ButtonRole.ActionRole)
+                _('Go to'), QDialogButtonBox.ButtonRole.ActionRole)
             go_to_btn.clicked.connect(self.s_go_to)
 
         main_layout.addWidget(bottom_buttons)

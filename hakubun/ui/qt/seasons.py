@@ -213,13 +213,13 @@ class SeasonsWidget(QWidget):
 
         menu = QMenu(self)
         if show['id'] in self.mylist:
-            move_to = menu.addMenu('Move to')
+            move_to = menu.addMenu(_('Move to'))
             for status in self.statuses:
                 action = move_to.addAction(self.statuses_dict.get(status, str(status)))
                 action.triggered.connect(
                     lambda checked=False, s=status, showid=show['id']: self.s_move_to(showid, s))
         else:
-            add_action = menu.addAction('Add to list...')
+            add_action = menu.addAction(_('Add to list...'))
             add_action.triggered.connect(lambda checked=False, s=show: self.s_add(s))
         menu.exec(self.card_view.viewport().mapToGlobal(pos))
 

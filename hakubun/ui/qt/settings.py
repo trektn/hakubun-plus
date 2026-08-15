@@ -75,7 +75,7 @@ class SettingsDialog(QDialog):
         page_media_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Group: Media settings
-        g_media = QGroupBox('Media settings')
+        g_media = QGroupBox(_('Media settings'))
         g_media.setFlat(True)
         g_media_layout = QFormLayout()
         self.tracker_enabled = QCheckBox()
@@ -96,14 +96,14 @@ class SettingsDialog(QDialog):
         self.tracker_update_close = QCheckBox()
 
         self.mpris_update_mode = QComboBox()
-        self.mpris_update_mode.addItem('Fixed wait (above)', True)
-        self.mpris_update_mode.addItem('Percentage complete', False)
-        self.mpris_update_mode.setToolTip(
+        self.mpris_update_mode.addItem(_('Fixed wait (above)'), True)
+        self.mpris_update_mode.addItem(_('Percentage complete'), False)
+        self.mpris_update_mode.setToolTip(_(
             "How the tracker decides an episode counts as watched: "
             "after the fixed wait above, or once playback reaches a "
             "percentage of the episode's actual duration. The latter "
             "needs the player to report its length over MPRIS, so it "
-            "only applies when Tracker type is MPRIS.")
+            "only applies when Tracker type is MPRIS."))
         self.mpris_update_mode.currentIndexChanged.connect(
             self.s_mpris_update_mode)
 
@@ -116,41 +116,41 @@ class SettingsDialog(QDialog):
         self.tracker_not_found_prompt = QCheckBox()
 
         self.streaming_obey_wait = QCheckBox()
-        self.streaming_obey_wait.setToolTip(
+        self.streaming_obey_wait.setToolTip(_(
             "Plex and Kodi normally estimate when an episode is \"watched\" "
             "from playback position instead of a fixed timer. Enable this "
             "to make the currently selected one (Plex or Kodi) use the "
             "fixed \"Wait before updating\" time above instead. Has no "
-            "effect for other tracker types.")
+            "effect for other tracker types."))
         self.streaming_obey_wait.toggled.connect(self.s_streaming_obey_wait)
         self._plex_obey_wait = False
         self._kodi_obey_wait = False
 
-        g_media_layout.addRow('Enable tracker', self.tracker_enabled)
-        g_media_layout.addRow('Tracker type', self.tracker_type)
+        g_media_layout.addRow(_('Enable tracker'), self.tracker_enabled)
+        g_media_layout.addRow(_('Tracker type'), self.tracker_type)
         g_media_layout.addRow(
-            'Tracker interval (seconds)', self.tracker_interval)
-        g_media_layout.addRow('Process name (regex)', self.tracker_process)
+            _('Tracker interval (seconds)'), self.tracker_interval)
+        g_media_layout.addRow(_('Process name (regex)'), self.tracker_process)
         g_media_layout.addRow(
-            'Wait before updating (seconds)', self.tracker_update_wait)
+            _('Wait before updating (seconds)'), self.tracker_update_wait)
         g_media_layout.addRow(
-            'Use this wait time for Plex/Kodi trackers',
+            _('Use this wait time for Plex/Kodi trackers'),
             self.streaming_obey_wait)
         g_media_layout.addRow(
-            'Update when (MPRIS)', self.mpris_update_mode)
+            _('Update when (MPRIS)'), self.mpris_update_mode)
         g_media_layout.addRow(
-            'Completion percentage (MPRIS)', self.tracker_update_percentage)
+            _('Completion percentage (MPRIS)'), self.tracker_update_percentage)
         g_media_layout.addRow(
-            'Wait until the player is closed', self.tracker_update_close)
-        g_media_layout.addRow('Ask before updating',
+            _('Wait until the player is closed'), self.tracker_update_close)
+        g_media_layout.addRow(_('Ask before updating'),
                               self.tracker_update_prompt)
-        g_media_layout.addRow('Ask to add new shows',
+        g_media_layout.addRow(_('Ask to add new shows'),
                               self.tracker_not_found_prompt)
 
         g_media.setLayout(g_media_layout)
 
         # Group: Jellyfin settings
-        g_jellyfin = QGroupBox('Jellyfin')
+        g_jellyfin = QGroupBox(_('Jellyfin'))
         g_jellyfin.setFlat(True)
         self.jellyfin_host = QLineEdit()
         self.jellyfin_port = QLineEdit()
@@ -159,13 +159,13 @@ class SettingsDialog(QDialog):
 
         g_jellyfin_layout = QGridLayout()
         g_jellyfin_layout.addWidget(
-            QLabel('Host and Port'),                   0, 0, 1, 1)
+            QLabel(_('Host and Port')),                   0, 0, 1, 1)
         g_jellyfin_layout.addWidget(self.jellyfin_host,
                                 0, 1, 1, 1)
         g_jellyfin_layout.addWidget(self.jellyfin_port,
                                 0, 2, 1, 2)
         g_jellyfin_layout.addWidget(
-            QLabel('API and User'),                   1, 0, 1, 1)
+            QLabel(_('API and User')),                   1, 0, 1, 1)
         g_jellyfin_layout.addWidget(self.jellyfin_api_key,
                                 1, 1, 1, 1)
         g_jellyfin_layout.addWidget(self.jellyfin_user,
@@ -174,7 +174,7 @@ class SettingsDialog(QDialog):
         g_jellyfin.setLayout(g_jellyfin_layout)
 
         # Group: Kodi settings
-        g_kodi = QGroupBox('Kodi')
+        g_kodi = QGroupBox(_('Kodi'))
         g_kodi.setFlat(True)
         self.kodi_host = QLineEdit()
         self.kodi_port = QLineEdit()
@@ -184,12 +184,12 @@ class SettingsDialog(QDialog):
 
         g_kodi_layout = QGridLayout()
         g_kodi_layout.addWidget(
-            QLabel('Host and Port'),                   0, 0, 1, 1)
+            QLabel(_('Host and Port')),                   0, 0, 1, 1)
         g_kodi_layout.addWidget(self.kodi_host,
                                 0, 1, 1, 1)
         g_kodi_layout.addWidget(self.kodi_port,
                                 0, 2, 1, 2)
-        g_kodi_layout.addWidget(QLabel('Kodi login'),   1, 0, 1, 1)
+        g_kodi_layout.addWidget(QLabel(_('Kodi login')),   1, 0, 1, 1)
         g_kodi_layout.addWidget(self.kodi_user,
                                 1, 1, 1, 1)
         g_kodi_layout.addWidget(self.kodi_passw,
@@ -198,7 +198,7 @@ class SettingsDialog(QDialog):
         g_kodi.setLayout(g_kodi_layout)
 
         # Group: Plex settings
-        g_plex = QGroupBox('Plex Media Server')
+        g_plex = QGroupBox(_('Plex Media Server'))
         g_plex.setFlat(True)
         self.plex_host = QLineEdit()
         self.plex_port = QLineEdit()
@@ -209,17 +209,17 @@ class SettingsDialog(QDialog):
 
         g_plex_layout = QGridLayout()
         g_plex_layout.addWidget(
-            QLabel('Host and Port'),                   0, 0, 1, 1)
+            QLabel(_('Host and Port')),                   0, 0, 1, 1)
         g_plex_layout.addWidget(self.plex_host,
                                 0, 1, 1, 1)
         g_plex_layout.addWidget(self.plex_port,
                                 0, 2, 1, 2)
         g_plex_layout.addWidget(
-            QLabel('Use SSL'), 1, 0, 1, 1)
+            QLabel(_('Use SSL')), 1, 0, 1, 1)
         g_plex_layout.addWidget(self.plex_ssl,
                                 1, 2, 1, 1)
         g_plex_layout.addWidget(
-            QLabel('myPlex login (claimed server)'),   2, 0, 1, 1)
+            QLabel(_('myPlex login (claimed server)')),   2, 0, 1, 1)
         g_plex_layout.addWidget(self.plex_user,
                                 2, 1, 1, 1)
         g_plex_layout.addWidget(self.plex_passw,
@@ -231,7 +231,8 @@ class SettingsDialog(QDialog):
         # type selector above and only one is ever active at a time, so
         # their login fields are grouped together at the bottom instead of
         # being interleaved with the general tracker options.
-        lbl_streaming_credentials = QLabel('<b style="font-size: 12pt;">Streaming Credentials</b>')
+        lbl_streaming_credentials = QLabel(
+            '<b style="font-size: 12pt;">%s</b>' % _('Streaming Credentials'))
 
         # Media form
         page_media_layout.addWidget(g_media)
@@ -247,25 +248,25 @@ class SettingsDialog(QDialog):
         page_library_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Group: Library
-        g_playnext = QGroupBox('Library')
+        g_playnext = QGroupBox(_('Library'))
         g_playnext.setFlat(True)
         self.title_parser = QComboBox()
         for (n, label) in utils.available_parsers:
             self.title_parser.addItem(label, n)
         self.player = QLineEdit()
-        self.player_browse = QPushButton('Browse...')
+        self.player_browse = QPushButton(_('Browse...'))
         self.player_browse.clicked.connect(self.s_player_browse)
         self.player_reuse_mpv = QCheckBox()
-        self.player_reuse_mpv.setToolTip(
+        self.player_reuse_mpv.setToolTip(_(
             'Only applies when the player above is mpv. Hands off playback '
             'to the already-running mpv window via its IPC socket instead '
-            'of starting a new process each time.')
-        lbl_searchdirs = QLabel('Media directories')
+            'of starting a new process each time.'))
+        lbl_searchdirs = QLabel(_('Media directories'))
         lbl_searchdirs.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.searchdirs = QListWidget()
-        self.searchdirs_add = QPushButton('Add...')
+        self.searchdirs_add = QPushButton(_('Add...'))
         self.searchdirs_add.clicked.connect(self.s_searchdirs_add)
-        self.searchdirs_remove = QPushButton('Remove')
+        self.searchdirs_remove = QPushButton(_('Remove'))
         self.searchdirs_remove.clicked.connect(self.s_searchdirs_remove)
         self.searchdirs_buttons = QVBoxLayout()
         self.searchdirs_buttons.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
@@ -274,26 +275,26 @@ class SettingsDialog(QDialog):
         self.searchdirs_buttons.addWidget(QSplitter())
         self.library_autoscan = QCheckBox()
         self.scan_whole_list = QCheckBox()
-        self.scan_whole_list.setToolTip(
+        self.scan_whole_list.setToolTip(_(
             "When library scanning matches your media directories against "
             "the list, only Watching/Plan to Watch shows are considered by "
             "default. Enable this to also match against Completed, "
-            "Dropped, and other statuses.")
+            "Dropped, and other statuses."))
         self.library_full_path = QCheckBox()
 
         g_playnext_layout = QGridLayout()
         g_playnext_layout.addWidget(
-            QLabel('Parser'),                    0, 0, 1, 1)
+            QLabel(_('Parser')),                    0, 0, 1, 1)
         g_playnext_layout.addWidget(
             self.title_parser,                   0, 1, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Player'),                    1, 0, 1, 1)
+            QLabel(_('Player')),                    1, 0, 1, 1)
         g_playnext_layout.addWidget(self.player,
                                                  1, 1, 1, 1)
         g_playnext_layout.addWidget(
             self.player_browse,                  1, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Reuse existing mpv window'), 2, 0, 1, 2)
+            QLabel(_('Reuse existing mpv window')), 2, 0, 1, 2)
         g_playnext_layout.addWidget(
             self.player_reuse_mpv,               2, 2, 1, 1)
         g_playnext_layout.addWidget(
@@ -303,15 +304,15 @@ class SettingsDialog(QDialog):
         g_playnext_layout.addLayout(
             self.searchdirs_buttons,             3, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Rescan Library at startup'), 4, 0, 1, 2)
+            QLabel(_('Rescan Library at startup')), 4, 0, 1, 2)
         g_playnext_layout.addWidget(
             self.library_autoscan,               4, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Scan through whole list'),   5, 0, 1, 2)
+            QLabel(_('Scan through whole list')),   5, 0, 1, 2)
         g_playnext_layout.addWidget(
             self.scan_whole_list,                5, 2, 1, 1)
         g_playnext_layout.addWidget(
-            QLabel('Take subdirectory name into account'), 6, 0, 1, 2)
+            QLabel(_('Take subdirectory name into account')), 6, 0, 1, 2)
         g_playnext_layout.addWidget(
             self.library_full_path,              6, 2, 1, 1)
 
@@ -326,11 +327,11 @@ class SettingsDialog(QDialog):
         page_sync_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Group: Autoretrieve
-        g_autoretrieve = QGroupBox('Autoretrieve')
+        g_autoretrieve = QGroupBox(_('Autoretrieve'))
         g_autoretrieve.setFlat(True)
-        self.autoretrieve_off = QRadioButton('Disabled')
-        self.autoretrieve_always = QRadioButton('Always at start')
-        self.autoretrieve_days = QRadioButton('After n days')
+        self.autoretrieve_off = QRadioButton(_('Disabled'))
+        self.autoretrieve_always = QRadioButton(_('Always at start'))
+        self.autoretrieve_days = QRadioButton(_('After n days'))
         self.autoretrieve_days.toggled.connect(self.s_autoretrieve_days)
         self.autoretrieve_days_n = QSpinBox()
         self.autoretrieve_days_n.setRange(1, 100)
@@ -343,19 +344,19 @@ class SettingsDialog(QDialog):
         g_autoretrieve.setLayout(g_autoretrieve_layout)
 
         # Group: Autosend
-        g_autosend = QGroupBox('Autosend')
+        g_autosend = QGroupBox(_('Autosend'))
         g_autosend.setFlat(True)
-        self.autosend_off = QRadioButton('Disabled')
-        self.autosend_always = QRadioButton('Immediately after every change')
-        self.autosend_minutes = QRadioButton('After n minutes')
+        self.autosend_off = QRadioButton(_('Disabled'))
+        self.autosend_always = QRadioButton(_('Immediately after every change'))
+        self.autosend_minutes = QRadioButton(_('After n minutes'))
         self.autosend_minutes.toggled.connect(self.s_autosend_minutes)
         self.autosend_minutes_n = QSpinBox()
         self.autosend_minutes_n.setRange(1, 1000)
-        self.autosend_size = QRadioButton('After the queue reaches n items')
+        self.autosend_size = QRadioButton(_('After the queue reaches n items'))
         self.autosend_size.toggled.connect(self.s_autosend_size)
         self.autosend_size_n = QSpinBox()
         self.autosend_size_n.setRange(2, 20)
-        self.autosend_at_exit = QCheckBox('At exit')
+        self.autosend_at_exit = QCheckBox(_('At exit'))
         g_autosend_layout = QGridLayout()
         g_autosend_layout.setColumnStretch(0, 1)
         g_autosend_layout.addWidget(self.autosend_off,      0, 0, 1, 1)
@@ -368,22 +369,22 @@ class SettingsDialog(QDialog):
         g_autosend.setLayout(g_autosend_layout)
 
         # Group: Extra
-        g_extra = QGroupBox('Additional options')
+        g_extra = QGroupBox(_('Additional options'))
         g_extra.setFlat(True)
-        self.auto_status_change = QCheckBox('Change status automatically')
-        self.auto_status_change.setToolTip(
+        self.auto_status_change = QCheckBox(_('Change status automatically'))
+        self.auto_status_change.setToolTip(_(
             "Moves a show to its start status (e.g. Watching) when you set "
             "episode 1, and to its finish status (e.g. Completed) when you "
-            "set its last episode.")
+            "set its last episode."))
         self.auto_status_change.toggled.connect(self.s_auto_status_change)
         self.auto_status_change_if_scored = QCheckBox(
-            'Change status automatically only if scored')
-        self.auto_status_change_if_scored.setToolTip(
+            _('Change status automatically only if scored'))
+        self.auto_status_change_if_scored.setToolTip(_(
             "Only applies to the finish-status change above: hold off "
             "moving the show to its finish status until it has a score, "
-            "instead of doing it as soon as the last episode is set.")
+            "instead of doing it as soon as the last episode is set."))
         self.auto_date_change = QCheckBox(
-            'Change start and finish dates automatically')
+            _('Change start and finish dates automatically'))
         g_extra_layout = QVBoxLayout()
         g_extra_layout.addWidget(self.auto_status_change)
         g_extra_layout.addWidget(self.auto_status_change_if_scored)
@@ -402,30 +403,30 @@ class SettingsDialog(QDialog):
         page_behavior_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Group: Adding shows
-        g_add_dialog = QGroupBox('Adding shows')
+        g_add_dialog = QGroupBox(_('Adding shows'))
         g_add_dialog.setFlat(True)
         self.add_dialog_default_status = QComboBox()
         self.add_dialog_default_status.addItem(
-            'Currently active tab', 'current')
+            _('Currently active tab'), 'current')
         self.add_dialog_default_status.addItem(
-            'Plan to Watch', 'start')
+            _('Plan to Watch'), 'start')
         g_add_dialog_layout = QFormLayout()
         g_add_dialog_layout.addRow(
-            'Default status when adding a show:', self.add_dialog_default_status)
+            _('Default status when adding a show:'), self.add_dialog_default_status)
         g_add_dialog.setLayout(g_add_dialog_layout)
 
         page_behavior_layout.addWidget(g_add_dialog)
 
         # Group: Apply behavior
-        g_apply = QGroupBox('Apply behavior')
+        g_apply = QGroupBox(_('Apply behavior'))
         g_apply.setFlat(True)
         self.sync_on_settings_apply = QCheckBox(
-            'Push a sync when applying settings')
-        self.sync_on_settings_apply.setToolTip(
+            _('Push a sync when applying settings'))
+        self.sync_on_settings_apply.setToolTip(_(
             "Sends any queued changes to the API right after you click "
             "Apply/OK here, instead of waiting for the next scheduled or "
             "manual sync. This only pushes -- it doesn't also pull a fresh "
-            "copy of the list from the API.")
+            "copy of the list from the API."))
         g_apply_layout = QVBoxLayout()
         g_apply_layout.addWidget(self.sync_on_settings_apply)
         g_apply.setLayout(g_apply_layout)
@@ -433,40 +434,40 @@ class SettingsDialog(QDialog):
         page_behavior_layout.addWidget(g_apply)
 
         # Group: Sync
-        g_sync = QGroupBox('Sync')
+        g_sync = QGroupBox(_('Sync'))
         g_sync.setFlat(True)
         self.multisync_enabled = QCheckBox(
-            'Enable multi-sync (BETA)')
-        self.multisync_enabled.setToolTip(
+            _('Enable multi-sync (BETA)'))
+        self.multisync_enabled.setToolTip(_(
             'BETA: Sync will now multi-sync across every configured '
             'provider by default, reconciling them with your local '
             'list instead of just uploading/downloading one account. '
             'Turn this off to fall back to the classic single-account '
-            'sync.')
+            'sync.'))
         self.multisync_mode = QComboBox()
-        self.multisync_mode.addItem('Merge (reconcile every provider)',
+        self.multisync_mode.addItem(_('Merge (reconcile every provider)'),
                                     'merge')
-        self.multisync_mode.addItem('Pull (providers update local)',
+        self.multisync_mode.addItem(_('Pull (providers update local)'),
                                     'pull')
-        self.multisync_mode.addItem('Push (local overwrites providers)',
+        self.multisync_mode.addItem(_('Push (local overwrites providers)'),
                                     'push')
         self.multisync_plan_only = QCheckBox(
-            'Fetch && plan only (review before applying)')
-        self.multisync_plan_only.setToolTip(
+            _('Fetch && plan only (review before applying)'))
+        self.multisync_plan_only.setToolTip(_(
             'Sync fetches every provider and works out what would '
             'change in the mode above, then always opens the sync '
             'window so you can review and apply it yourself. Turn this '
             'off to let Sync apply clean changes headlessly -- '
             'conflicts and first-time syncs still always stop for '
-            'review either way.')
+            'review either way.'))
         self.multisync_edit_owned_score = QCheckBox(
-            'Edit owned scores in the owner\'s rating system')
-        self.multisync_edit_owned_score.setToolTip(
+            _('Edit owned scores in the owner\'s rating system'))
+        self.multisync_edit_owned_score.setToolTip(_(
             'When a show\'s Score is owned by another tracker, let the '
             'sidebar score editor rate it in that owner\'s own system '
             '(e.g. AniList\'s 8.4 while signed into Kitsu), toggled live '
             'via the Synced/Platform switch under the slider. Turn this '
-            'off to always edit in the signed-in account\'s own system.')
+            'off to always edit in the signed-in account\'s own system.'))
         self.multisync_enabled.toggled.connect(
             self.multisync_mode.setEnabled)
         self.multisync_enabled.toggled.connect(
@@ -485,10 +486,10 @@ class SettingsDialog(QDialog):
         page_behavior_layout.addWidget(g_sync)
 
         # Group: Taiga Mode
-        g_taiga = QGroupBox('Taiga Mode')
+        g_taiga = QGroupBox(_('Taiga Mode'))
         g_taiga.setFlat(True)
         self.taiga_mode = QCheckBox(
-            'Emulate Taiga\'s look (Qt only, requires restart)')
+            _('Emulate Taiga\'s look (Qt only, requires restart)'))
         g_taiga_layout = QVBoxLayout()
         g_taiga_layout.addWidget(self.taiga_mode)
         g_taiga.setLayout(g_taiga_layout)
@@ -496,17 +497,17 @@ class SettingsDialog(QDialog):
         page_behavior_layout.addWidget(g_taiga)
 
         # Group: Kitsu
-        g_kitsu = QGroupBox('Kitsu')
+        g_kitsu = QGroupBox(_('Kitsu'))
         g_kitsu.setFlat(True)
         self.kitsu_api = QComboBox()
-        self.kitsu_api.addItem('Legacy (REST)', 'legacy')
-        self.kitsu_api.addItem('New (GraphQL)', 'graphql')
-        self.kitsu_api.setToolTip(
+        self.kitsu_api.addItem(_('Legacy (REST)'), 'legacy')
+        self.kitsu_api.addItem(_('New (GraphQL)'), 'graphql')
+        self.kitsu_api.setToolTip(_(
             'Which Kitsu API to use for Kitsu accounts. Takes effect the '
             'next time the account is loaded. Both use the same Kitsu '
-            'login.')
+            'login.'))
         g_kitsu_layout = QFormLayout()
-        g_kitsu_layout.addRow('Kitsu API:', self.kitsu_api)
+        g_kitsu_layout.addRow(_('Kitsu API:'), self.kitsu_api)
         g_kitsu.setLayout(g_kitsu_layout)
 
         page_behavior_layout.addWidget(g_kitsu)
@@ -529,15 +530,15 @@ class SettingsDialog(QDialog):
         g_language.setLayout(g_language_layout)
 
         # Group: Icon
-        g_icon = QGroupBox('Notification Icon')
+        g_icon = QGroupBox(_('Notification Icon'))
         g_icon.setFlat(True)
-        self.tray_icon = QCheckBox('Show tray icon')
+        self.tray_icon = QCheckBox(_('Show tray icon'))
         self.tray_icon.toggled.connect(self.s_tray_icon)
-        self.close_to_tray = QCheckBox('Close to tray')
-        self.start_in_tray = QCheckBox('Start minimized to tray')
-        self.tray_api_icon = QCheckBox('Use API icon as tray icon')
+        self.close_to_tray = QCheckBox(_('Close to tray'))
+        self.start_in_tray = QCheckBox(_('Start minimized to tray'))
+        self.tray_api_icon = QCheckBox(_('Use API icon as tray icon'))
         self.notifications = QCheckBox(
-            'Show notification when tracker detects new media')
+            _('Show notification when tracker detects new media'))
         g_icon_layout = QVBoxLayout()
         g_icon_layout.addWidget(self.tray_icon)
         g_icon_layout.addWidget(self.close_to_tray)
@@ -547,17 +548,17 @@ class SettingsDialog(QDialog):
         g_icon.setLayout(g_icon_layout)
 
         # Group: Window
-        g_window = QGroupBox('Window')
+        g_window = QGroupBox(_('Window'))
         g_window.setFlat(True)
-        self.remember_geometry = QCheckBox('Remember window size and position')
-        self.remember_columns = QCheckBox('Remember column layouts and widths')
+        self.remember_geometry = QCheckBox(_('Remember window size and position'))
+        self.remember_columns = QCheckBox(_('Remember column layouts and widths'))
         self.columns_per_api = QCheckBox(
-            'Use different visible columns per API')
-        self.columns_per_api.setToolTip(
+            _('Use different visible columns per API'))
+        self.columns_per_api.setToolTip(_(
             "Remember visible columns (and, if \"Remember column layouts "
             "and widths\" above is also on, their widths/order) "
             "separately for each API/account, instead of sharing one "
-            "column layout across all of them.")
+            "column layout across all of them."))
         g_window_layout = QVBoxLayout()
         g_window_layout.addWidget(self.remember_geometry)
         g_window_layout.addWidget(self.remember_columns)
@@ -565,41 +566,41 @@ class SettingsDialog(QDialog):
         g_window.setLayout(g_window_layout)
 
         # Group: Lists
-        g_lists = QGroupBox('Lists')
+        g_lists = QGroupBox(_('Lists'))
         g_lists.setFlat(True)
         self.filter_bar_position = QComboBox()
-        filter_bar_positions = [(FilterBar.PositionHidden,     'Hidden'),
-                                (FilterBar.PositionAboveLists, 'Above lists'),
-                                (FilterBar.PositionBelowLists, 'Below lists')]
+        filter_bar_positions = [(FilterBar.PositionHidden,     _('Hidden')),
+                                (FilterBar.PositionAboveLists, _('Above lists')),
+                                (FilterBar.PositionBelowLists, _('Below lists'))]
         for (n, label) in filter_bar_positions:
             self.filter_bar_position.addItem(label, n)
-        self.inline_edit = QCheckBox('Enable in-line editing')
-        self.filter_global = QCheckBox('Switch to the All category when filtering')
-        self.filter_global.setToolTip(
+        self.inline_edit = QCheckBox(_('Enable in-line editing'))
+        self.filter_global = QCheckBox(_('Switch to the All category when filtering'))
+        self.filter_global.setToolTip(_(
             "When typing in the filter bar while on a specific status "
             "tab (e.g. Watching), automatically switch to the All tab so "
             "the filter searches your whole list instead of just that "
-            "status.")
+            "status."))
         g_lists_layout = QFormLayout()
-        g_lists_layout.addRow('Filter bar position:', self.filter_bar_position)
+        g_lists_layout.addRow(_('Filter bar position:'), self.filter_bar_position)
         g_lists_layout.addRow(self.inline_edit)
         g_lists_layout.addRow(self.filter_global)
         g_lists.setLayout(g_lists_layout)
 
         # Group: MAL Scores
-        g_mal_scores = QGroupBox('MAL Scores')
+        g_mal_scores = QGroupBox(_('MAL Scores'))
         g_mal_scores.setFlat(True)
         self.add_mal_scores = QCheckBox(
-            'Add MAL Scores (must be signed into MAL)')
-        self.add_mal_scores.setToolTip(
+            _('Add MAL Scores (must be signed into MAL)'))
+        self.add_mal_scores.setToolTip(_(
             "Automatically cross-references MyAnimeList's community score "
             "for shows on your list after every sync, using a MyAnimeList "
             "account added in Hakubun+. Not needed if this account already "
-            "is MyAnimeList.")
-        self.load_mal_scores_btn = QPushButton('Load MAL Scores Now')
-        self.load_mal_scores_btn.setToolTip(
+            "is MyAnimeList."))
+        self.load_mal_scores_btn = QPushButton(_('Load MAL Scores Now'))
+        self.load_mal_scores_btn.setToolTip(_(
             "Fetch MAL scores for the current list right now, without "
-            "waiting for a sync or enabling the automatic option above.")
+            "waiting for a sync or enabling the automatic option above."))
         self.load_mal_scores_btn.clicked.connect(self.s_load_mal_scores)
         g_mal_scores_layout = QVBoxLayout()
         g_mal_scores_layout.addWidget(self.add_mal_scores)
@@ -608,14 +609,14 @@ class SettingsDialog(QDialog):
         g_mal_scores.setLayout(g_mal_scores_layout)
 
         # Group: SubMiner
-        g_subminer = QGroupBox('SubMiner')
+        g_subminer = QGroupBox(_('SubMiner'))
         g_subminer.setFlat(True)
         self.show_subminer_toggle = QCheckBox(
-            'Show the SubMiner toggle (toolbar / Tools menu)')
-        self.show_subminer_toggle.setToolTip(
+            _('Show the SubMiner toggle (toolbar / Tools menu)'))
+        self.show_subminer_toggle.setToolTip(_(
             'SubMiner itself is switched on and off from that toggle, not '
             'here -- this only controls whether the toggle is shown at '
-            'all.')
+            'all.'))
         g_subminer_layout = QVBoxLayout()
         g_subminer_layout.addWidget(self.show_subminer_toggle)
         g_subminer.setLayout(g_subminer_layout)
@@ -635,37 +636,37 @@ class SettingsDialog(QDialog):
         page_theme_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Group: Episode Bar
-        g_ep_bar = QGroupBox('Episode Bar')
+        g_ep_bar = QGroupBox(_('Episode Bar'))
         g_ep_bar.setFlat(True)
         self.ep_bar_style = QComboBox()
-        ep_bar_styles = [(ShowsTableDelegate.BarStyleBasic,  'Basic'),
+        ep_bar_styles = [(ShowsTableDelegate.BarStyleBasic,  _('Basic')),
                          (ShowsTableDelegate.BarStyle04,     'Trackma'),
-                         (ShowsTableDelegate.BarStyleHybrid, 'Hybrid')]
+                         (ShowsTableDelegate.BarStyleHybrid, _('Hybrid'))]
         for (n, label) in ep_bar_styles:
             self.ep_bar_style.addItem(label, n)
         self.ep_bar_style.currentIndexChanged.connect(self.s_ep_bar_style)
-        self.ep_bar_text = QCheckBox('Show text label')
+        self.ep_bar_text = QCheckBox(_('Show text label'))
         g_ep_bar_layout = QFormLayout()
-        g_ep_bar_layout.addRow('Style:', self.ep_bar_style)
+        g_ep_bar_layout.addRow(_('Style:'), self.ep_bar_style)
         g_ep_bar_layout.addRow(self.ep_bar_text)
         g_ep_bar.setLayout(g_ep_bar_layout)
 
         # Group: Colour scheme
-        g_scheme = QGroupBox('Color Scheme')
+        g_scheme = QGroupBox(_('Color Scheme'))
         g_scheme.setFlat(True)
-        col_tabs = [('rows',     '&Row highlights'),
-                    ('progress', '&Progress widget')]
+        col_tabs = [('rows',     _('&Row highlights')),
+                    ('progress', _('&Progress widget'))]
         self.colors = {}
-        self.colors['rows'] = [('is_playing',  'Playing'),
-                               ('is_queued',   'Queued'),
-                               ('new_episode', 'New Episode'),
-                               ('is_airing',   'Airing'),
-                               ('not_aired',   'Unaired')]
-        self.colors['progress'] = [('progress_bg',       'Background'),
-                                   ('progress_fg',       'Watched bar'),
-                                   ('progress_sub_bg',   'Aired episodes'),
-                                   ('progress_sub_fg',   'Stored episodes'),
-                                   ('progress_complete', 'Complete')]
+        self.colors['rows'] = [('is_playing',  _('Playing')),
+                               ('is_queued',   _('Queued')),
+                               ('new_episode', _('New episode')),
+                               ('is_airing',   _('Airing')),
+                               ('not_aired',   _('Unaired'))]
+        self.colors['progress'] = [('progress_bg',       _('Background')),
+                                   ('progress_fg',       _('Watched bar')),
+                                   ('progress_sub_bg',   _('Aired episodes')),
+                                   ('progress_sub_fg',   _('Stored episodes')),
+                                   ('progress_complete', _('Complete'))]
         self.color_buttons = []
         self.syscolor_buttons = []
         g_scheme_layout = QGridLayout()
@@ -681,7 +682,7 @@ class SettingsDialog(QDialog):
                 self.color_buttons[-1].setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
                 self.color_buttons[-1].clicked.connect(
                     self.s_color_picker(key2, False))
-                self.syscolor_buttons.append(QPushButton('System Colors'))
+                self.syscolor_buttons.append(QPushButton(_('System Colors')))
                 self.syscolor_buttons[-1].clicked.connect(
                     self.s_color_picker(key2, True))
                 page_layout.addWidget(QLabel(label),             col, 0, 1, 1)
@@ -1023,12 +1024,12 @@ class SettingsDialog(QDialog):
     def _prompt_restart(self):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle('Restart required')
+        box.setWindowTitle(_('Restart required'))
         box.setText(
-            'Taiga Mode takes effect after restarting Hakubun+.')
+            _('Taiga Mode takes effect after restarting Hakubun+.'))
         restart_btn = box.addButton(
-            'Restart Now', QMessageBox.ButtonRole.AcceptRole)
-        box.addButton('Later', QMessageBox.ButtonRole.RejectRole)
+            _('Restart Now'), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(_('Later'), QMessageBox.ButtonRole.RejectRole)
         box.exec()
 
         if box.clickedButton() is restart_btn:
@@ -1145,20 +1146,20 @@ class SettingsDialog(QDialog):
 
     def s_player_browse(self):
         self.player.setText(QFileDialog.getOpenFileName(
-            caption='Choose player executable')[0])
+            caption=_('Choose player executable'))[0])
 
     def s_load_mal_scores(self):
         try:
             self.worker.engine.fetch_mal_scores()
         except utils.EngineError as e:
-            QMessageBox.warning(self, 'MAL Scores', str(e))
+            QMessageBox.warning(self, _('MAL Scores'), str(e))
         else:
             QMessageBox.information(
-                self, 'MAL Scores', 'Fetching MAL scores in the background.')
+                self, _('MAL Scores'), _('Fetching MAL scores in the background.'))
 
     def s_searchdirs_add(self):
         self._add_dir(QFileDialog.getExistingDirectory(
-            caption='Choose media directory'))
+            caption=_('Choose media directory')))
 
     def s_searchdirs_remove(self):
         row = self.searchdirs.currentRow()

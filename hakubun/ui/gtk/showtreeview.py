@@ -639,26 +639,30 @@ class ShowTreeView(Gtk.TreeView):
         if not has_path:
             return False
 
-        _, col, _, _ = view.get_path_at_pos(tx, ty)
+        # Not "_, col, _, _" -- gettext.install() makes "_" the global
+        # translation function, and Python's function-wide local scoping
+        # means shadowing it anywhere in this method would break the
+        # _() calls below.
+        _pos_ok, col, _cx, _cy = view.get_path_at_pos(tx, ty)
 
         def gv(key):
             return model.get_value(tree_iter, ShowListStore.column(key))
 
         if col is self.cols['Percent']:
             lines = []
-            lines.append("Watched: %d" % gv('stat'))
+            lines.append(_("Watched: %d") % gv('stat'))
 
             aired = gv('subvalue')
             status = gv('status')
             if aired and not status == utils.Status.NOTYET:
-                lines.append("Aired%s: %d" % (
-                    ' (estimated)' if status == utils.Status.AIRING else '', aired))
+                lines.append(_("Aired%s: %d") % (
+                    _(' (estimated)') if status == utils.Status.AIRING else '', aired))
 
             avail_eps = gv('avail-eps')
             if len(avail_eps) > 0:
-                lines.append("Available: %d" % max(avail_eps))
+                lines.append(_("Available: %d") % max(avail_eps))
 
-            lines.append("Total: %s" % (gv('total-eps') or '?'))
+            lines.append(_("Total: %s") % (gv('total-eps') or '?'))
 
             tip.set_markup('\n'.join(lines))
             renderer = next(iter(col.get_cells()))
@@ -673,7 +677,7 @@ class ShowTreeView(Gtk.TreeView):
             owner = gv('score-owner')
             if not owner:
                 return False
-            tip.set_text('Score owned by %s, shown in its rating system'
+            tip.set_text(_('Score owned by %s, shown in its rating system')
                          % owner.capitalize())
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
@@ -681,9 +685,9 @@ class ShowTreeView(Gtk.TreeView):
         elif col is self.cols['Synced Score']:
             owner = gv('score-owner')
             tip.set_text(
-                'Synced from %s, in its rating system' % owner.capitalize()
+                _('Synced from %s, in its rating system') % owner.capitalize()
                 if owner else
-                'Platform-specific entry — not synced to another tracker')
+                _('Platform-specific entry — not synced to another tracker'))
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
             return True
