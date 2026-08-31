@@ -16,8 +16,8 @@ orchestrates who owns what.
 
 from hakubun import utils
 from hakubun.sync import normalize
-from hakubun.sync.diff import eq
 from hakubun.sync.models import PolicyKind, USER_FIELDS
+from hakubun.sync.normalize import values_equal
 
 
 def _to_provider_value(field, value, mediainfo):
@@ -97,7 +97,8 @@ def build_overlay(store, active_provider, active_mediainfo,
             canonical = local[field][0]
             # Skip fields already matching what this account holds --
             # nothing to override, nothing to flag.
-            if field in remote and _eqish(remote[field][0], canonical):
+            if field in remote and _eqish(field, remote[field][0],
+                                          canonical):
                 continue
             if field == 'progress':
                 # The reconciled progress is in the LOCAL episode
@@ -166,8 +167,8 @@ def build_overlay(store, active_provider, active_mediainfo,
     return overlay
 
 
-def _eqish(a, b):
-    return eq(a, b)
+def _eqish(field, a, b):
+    return values_equal(field, a, b)
 
 
 def _is_shared(entity_mappings, active_provider):

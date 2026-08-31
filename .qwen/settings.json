@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl *)",
+      "Bash(mkdir *)",
+      "Bash(\"graphql-api/beta/reference/query/objects\")",
+      "Bash(\"graphql-api/beta/reference/query/queries\")",
+      "Bash(\"graphql-api/beta/reference/mutation/objects\")",
+      "Bash(\"graphql-api/beta/reference/mutation/mutations\")",
+      "Bash(\"graphql-api/beta/reference/enums\")",
+      "Bash(\"graphql-api/beta/reference/input-enum\")",
+      "Bash(\"graphql-api/beta/reference/scalar\")",
+      "Bash(do)",
+      "Bash(done)",
+      "Bash(wait)",
+      "Bash(do *)"
+    ]
+  },
+  "$version": 4
+}

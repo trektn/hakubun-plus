@@ -2,11 +2,10 @@
 
 Everything the Qt and GTK sync windows need in order to *describe* a
 plan -- format a value on a provider's own scale, explain why something
-needs a human, name the signed-in platform, spell out a rounding --
-lives here once. It used to live twice, and the two copies had already
-drifted (differing conflict wording, differing rounding comments), which
-is exactly the failure mode this prevents: a fix to one window's
-explanation silently not reaching the other's.
+needs a human, spell out a rounding -- lives here once. It used to live
+twice, and the two copies had already drifted, which is exactly the
+failure mode this prevents: a fix to one window's explanation silently
+not reaching the other's.
 
 Nothing here imports a toolkit. The windows supply the parts that are
 genuinely theirs -- arrow glyphs, markup escaping, widget layout -- and
@@ -16,10 +15,10 @@ delegate the wording and the arithmetic to these functions.
 import re
 
 from hakubun import messenger
-from hakubun.sync import normalize
+from hakubun.sync import normalize, strategies
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import PolicyKind, SyncMode
+from hakubun.sync.models import FieldPolicy, PolicyKind, USER_FIELDS
 
 FIELD_LABELS = {
     'score': 'Score', 'progress': 'Watched Episodes',
@@ -28,41 +27,18 @@ FIELD_LABELS = {
     'finish_date': 'Finish Date', 'tags': 'Tags', 'favorite': 'Favorites',
 }
 
-# Order matters: both windows index their mode dropdown by position.
-MODES = ((SyncMode.MERGE, 'Merge (reconcile all)'),
-         (SyncMode.MIRROR, 'Mirror (local pushes out)'),
-         (SyncMode.PULL, 'Pull (providers update local)'),
-         (SyncMode.REBASE, 'Rebase (owners overwrite all)'))
-
-# Settings' Mode dropdown (Behavior page) -> engine mode. Rebase is
-# deliberately absent: it is a deliberate one-shot from the sync window,
-# never something a headless Sync button should be configured to do.
-SETTINGS_MODES = {'merge': SyncMode.MERGE, 'pull': SyncMode.PULL,
-                  'push': SyncMode.MIRROR}
-
 # Legacy multisync_mode value, kept only so existing configs keep
-# working. It used to be a fourth entry in Settings' Mode dropdown,
-# which forced a choice between reviewing changes and choosing a
-# reconciliation -- you could have Merge, or you could have review, but
-# not "review my pulls". Reviewing is orthogonal to which mode runs, so
-# it is now its own checkbox (multisync_plan_only) and this value reads
-# back as merge + review, which is exactly what it always did.
-SETTINGS_PLAN_ONLY = 'plan_only'
+# working: it meant "always review the plan before applying".
+_LEGACY_PLAN_ONLY = 'plan_only'
 
 
-def settings_sync_mode(config):
-    """Settings' multi-sync configuration as (SyncMode, plan_only).
-
-    plan_only means: fetch and plan as normal, then always surface the
-    sync window for manual review and never call s_apply() on the user's
-    behalf -- unlike the auto-applying path, which pushes clean
-    (non-conflicting, non-first-sync) changes headlessly.
-    """
-    mode_key = config.get('multisync_mode') or 'merge'
-    if mode_key == SETTINGS_PLAN_ONLY:
-        return (SyncMode.MERGE, True)
-    return (SETTINGS_MODES.get(mode_key, SyncMode.MERGE),
-            bool(config.get('multisync_plan_only', True)))
+def settings_plan_only(config):
+    """Whether the headless Sync button must always surface the sync
+    window for manual review instead of applying clean (non-conflict,
+    non-create) changes on the user's behalf."""
+    if config.get('multisync_mode') == _LEGACY_PLAN_ONLY:
+        return True
+    return bool(config.get('multisync_plan_only', True))
 
 
 def field_label(field):
@@ -74,14 +50,154 @@ def label(name):
     return name.capitalize()
 
 
-def local_label(primary):
-    """'local' is really just whatever the signed-in account fed it (see
-    the primary fold in SyncEngine._plan_entity -- local's value always
-    equals the primary's own value when a primary is set). Naming it
-    'Local' as if it were some third, separate thing is needless jargon;
-    call it by the platform it actually is. Falls back to 'Local' only
-    when no account is signed in."""
-    return label(primary) if primary else 'Local'
+def local_label(primary=None):
+    """Display name for the 'local' side: hakubun's own reconciled
+    working copy -- the state the user actually sees in the app. It is
+    named after the APP, never after the signed-in account or any
+    provider: field policies, not the active platform, decide what each
+    field should be, and calling this side 'Local' proved too easy to
+    misread as "the currently loaded tracker". (`primary` is accepted
+    for call-site compatibility and ignored.)"""
+    return 'Hakubun'
+
+
+def source_label(source, primary=None):
+    """Display name for a SyncOperation/FieldConflict source key."""
+    if source == 'local':
+        return local_label(primary)
+    if source in ('reconcile', 'resolve'):
+        return source.capitalize()
+    return label(source)
+
+
+def strategy_label(name):
+    return strategies.get_strategy(name).label
+
+
+def policy_label(policy):
+    """Short human name for a FieldPolicy ('Owned by Kitsu',
+    'Individual (never syncs)', 'Reconcile: Manual')."""
+    if policy.kind is PolicyKind.PROVIDER:
+        return 'Owned by %s' % label(policy.provider)
+    if policy.kind is PolicyKind.INDIVIDUAL:
+        return 'Individual (never syncs)'
+    return 'Reconcile: %s' % strategy_label(policy.strategy)
+
+
+def policy_explanation(policy):
+    """Plain-language 'why couldn't this be decided automatically'
+    clause for a conflict card -- no policy/strategy jargon."""
+    if policy.kind is PolicyKind.PROVIDER:
+        return 'this field normally follows %s' % label(policy.provider)
+    if policy.kind is PolicyKind.INDIVIDUAL:
+        return 'this field is set to never sync'
+    if policy.strategy == 'manual':
+        return 'this field is set to ask you when values differ'
+    return ('the "%s" rule could not pick a value on its own'
+            % strategy_label(policy.strategy))
+
+
+# Which reconcile strategies make sense for which field -- the SIMPLE
+# per-field configuration offers only these (plus every provider and
+# "don't sync"); the advanced matrix still offers everything. Order
+# matters: a leading non-manual entry is that field's recommended rule
+# and is listed first in the choices.
+_FIELD_STRATEGIES = {
+    'score': ['manual', 'max', 'min'],
+    'progress': ['progress', 'manual', 'max', 'min'],
+    'rewatches': ['max', 'manual', 'min'],
+    'status': ['manual'],
+    'notes': ['manual'],
+    'start_date': ['manual', 'min', 'max'],
+    'finish_date': ['manual', 'max', 'min'],
+    'tags': ['union', 'manual'],
+    'favorite': ['union', 'manual'],
+}
+
+# Tags and Favorites remain understood by the storage/normalization layers so
+# existing databases and provider data stay compatible, but they are not
+# useful sync controls: no supported write adapter can apply them reliably.
+# Keep them out of both user-facing policy editors instead of offering rules
+# whose Apply result can never be meaningful.
+POLICY_FIELDS = tuple(
+    field for field in USER_FIELDS if field not in ('tags', 'favorite'))
+
+
+def provider_can_write(adapter, field):
+    """Return a write capability without coupling UI to adapter type."""
+    checker = getattr(adapter, 'can_write', None)
+    return checker(field) if checker is not None else True
+
+
+def strategy_choice_label(field, name):
+    """Consequence-first label for one strategy choice on one field
+    ('Keep the furthest progress', 'Keep the latest date')."""
+    if field in ('start_date', 'finish_date'):
+        if name == 'min':
+            return 'Keep the earliest date'
+        if name == 'max':
+            return 'Keep the latest date'
+    return {
+        'manual': 'Ask me when they differ',
+        'union': 'Combine values from every site',
+        'max': 'Keep the highest',
+        'min': 'Keep the lowest',
+        'progress': 'Keep the furthest progress',
+    }.get(name, strategy_label(name))
+
+
+def policy_choices(field, providers, current=None):
+    """[(serialized policy, friendly label)] for the simple per-field
+    sync configuration. Recommended rule first (when the field has a
+    non-manual one), then one 'Keep from <site>' per provider, then the
+    remaining sensible rules, then 'Don't sync'. If `current` (a
+    serialized policy, e.g. set through the advanced matrix) isn't in
+    the list, it is appended so the widget can always show the truth
+    rather than silently misreporting an exotic configuration."""
+    strategies = list(_FIELD_STRATEGIES.get(field, ['manual']))
+    choices = []
+    if strategies and strategies[0] != 'manual':
+        lead = strategies.pop(0)
+        choices.append(('reconcile:%s' % lead,
+                        strategy_choice_label(field, lead)))
+    choices += [('provider:%s' % p, 'Keep from %s' % label(p))
+                for p in providers]
+    choices += [('reconcile:%s' % s, strategy_choice_label(field, s))
+                for s in strategies]
+    choices.append(('individual', "Don't sync (each site keeps its own)"))
+    if current and current not in (key for key, _ in choices):
+        current_policy = FieldPolicy.parse(current)
+        current_label = policy_label(current_policy)
+        if (current_policy.kind is PolicyKind.PROVIDER
+                and current_policy.provider not in providers):
+            current_label += ' (unsupported by this tracker)'
+        choices.append((current, current_label))
+    return choices
+
+
+ENTRY_OWNER_LABEL = 'Entries'
+
+ENTRY_OWNER_HELP = (
+    'Which tracker decides what is ON your lists — as opposed to what '
+    'each entry says. Pick one and Mirror adds its entries to the '
+    'others, and offers to remove entries it no longer lists.\n\n'
+    'Entries unique to another tracker, and anything Hakubun has not '
+    'matched to this one, are left alone: not being able to find a '
+    'work here means we do not know, not that you do not want it.')
+
+
+def entry_owner_choices(providers, current=None):
+    """[(value, label)] for the entry-owner picker. '' means none --
+    the conservative default, where nothing is ever removed
+    automatically and any tracker holding an entry can justify
+    creating it elsewhere."""
+    choices = [('', 'No one (never remove entries automatically)')]
+    choices += [(p, 'Follow %s' % label(p)) for p in providers]
+    if current and current not in providers:
+        # Configured, but that account is not connected -- say so
+        # rather than silently showing "No one".
+        choices.append((current, '%s (not connected)' % label(current)))
+    return choices
 
 
 def fmt_value(field, value):
@@ -147,36 +263,27 @@ def score_round_note(adapters, target, canonical):
         fmt_target_value(adapters, 'score', canonical, target))
 
 
-# Appended to a change's text when it would overwrite a side we have no
-# shared history with (FieldChange.first_sync). Such rows are planned
-# unchecked; this says why, so an unticked box doesn't read as a glitch.
-FIRST_SYNC_NOTE = (' (first sync: no shared history with this tracker; '
-                   'tick to overwrite it)')
-
-FIRST_SYNC_HELP = (
-    'Some changes are unticked because this is the first sync for those '
-    'fields: with no shared history, there is no way to tell which side '
-    'is newer, so the value that would win is just whichever tracker '
-    'happened to be read first. Review them and tick the ones you '
-    'actually want, or use Rebase or Mirror to declare a winner '
-    'deliberately.')
-
 CREATES_ENTRY_HELP = (
-    'Some changes are unticked because they would add this show to a '
-    'tracker that does not have it yet, not just update an existing '
-    'entry. Review them and tick the ones you actually want.')
+    'These would add the title to a tracker that does not have it yet '
+    '-- a new entry on that site, not just an update to an existing '
+    'one. Each says which sites\' entries establish it. Nothing is '
+    'created unless you tick it; right-click a row to never be asked '
+    'about that title on that site again.')
 
 
 def change_line(adapters, change, primary=None):
-    """(direction, text) for one FieldChange. `direction` is 'pull' or
-    'push' so each toolkit can prefix its own arrow glyph and colour."""
+    """(direction, text) for one SyncOperation. `direction` is 'pull'
+    or 'push' so each toolkit can prefix its own arrow glyph and
+    colour. The operation's own reason -- which policy or strategy
+    produced it -- is spelled out inline: the plan is the explanation.
+    """
     name = field_label(change.field)
     if change.target == 'local':
         values = '%s → %s' % (fmt_value(change.field, change.old),
                               fmt_value(change.field, change.new))
-        source = (local_label(primary) if change.source == 'local'
-                  else label(change.source))
-        text = 'Pull from %s, %s: %s' % (source, name, values)
+        text = 'Update %s from %s, %s: %s' % (
+            local_label(primary), source_label(change.source, primary),
+            name, values)
         direction = 'pull'
     else:
         values = '%s → %s' % (
@@ -184,87 +291,616 @@ def change_line(adapters, change, primary=None):
                              change.target),
             fmt_target_value(adapters, change.field, change.new,
                              change.target))
-        verb = 'Add to' if change.creates_entry else 'Push to'
+        verb = 'Add to' if change.creates_entry else 'Update'
         text = '%s %s, %s: %s' % (verb, label(change.target), name, values)
         if change.field == 'score':
             text += score_round_note(adapters, change.target, change.new)
         if change.creates_entry:
-            # old is always None for a create (nothing existed to diff
-            # against), so the value's ORIGIN isn't inferable the way a
-            # push's old->new transition normally hints at it -- say it
-            # plainly, in the same parenthetical that invites the tick.
-            source_label = (local_label(primary) if change.source == 'local'
-                            else label(change.source))
-            text += ' (from %s; tick to create the entry)' % source_label
+            # A create must say what establishes that the entry should
+            # exist at all: the providers that actually list it (its
+            # provenance), never 'Hakubun' -- local state is not a
+            # provider and cannot justify creating anything.
+            establishes = ' and '.join(
+                label(p) for p in (change.provenance
+                                   or (change.source,)))
+            text += (' (exists on %s; tick to create the entry)'
+                     % establishes)
         direction = 'push'
-    if change.first_sync:
-        text += FIRST_SYNC_NOTE
+    if change.reason and not change.creates_entry:
+        text += '  — %s' % change.reason
     return direction, text
 
 
 def conflict_why(conflict, primary=None):
-    """Explain why this needs a human, not just what differs."""
+    """Explain why this needs a human: what each side holds, then why
+    it couldn't be decided automatically -- in plain language, no
+    policy jargon. Multi-line plain text."""
     name = field_label(conflict.field)
     others = sorted(s for s in conflict.values if s != 'local')
-    sides = ' and '.join(
-        ['%s (%s)' % (local_label(primary),
-                      fmt_value(conflict.field, conflict.values['local']))]
-        + ['%s (%s)' % (label(s), fmt_value(conflict.field,
-                                            conflict.values[s]))
-           for s in others])
-    why = ('%s changed in more than one place since the last sync (%s), '
-           'so syncing either way would overwrite someone. ' % (name, sides))
-    kind = conflict.policy.kind
-    if kind is PolicyKind.ASK:
-        why += ("The '%s' policy is set to Ask, which leaves every such "
-                'tie to you.' % name)
-    elif kind is PolicyKind.MERGE:
-        why += ('Both sides changed at effectively the same time, so '
-                "'newest wins' cannot break the tie.")
-    else:
-        why += ("The providers disagree with each other and the '%s' "
-                'policy does not name a winner among them.'
-                % conflict.policy)
-    if conflict.note:
-        why += ' Note: %s.' % conflict.note
-    return why
+    lines = ['%s differs:' % name]
+    # A MIRROR conflict is between trackers only -- there is no 'local'
+    # side, by design (mirror.py), so it must not be invented here.
+    if 'local' in conflict.values:
+        lines.append('    %s:  %s'
+                     % (local_label(primary),
+                        fmt_value(conflict.field,
+                                  conflict.values['local'])))
+    lines += ['    %s:  %s' % (label(s),
+                               fmt_value(conflict.field,
+                                         conflict.values[s]))
+              for s in others]
+    why = ('%s could not choose automatically: %s.'
+           % (local_label(primary),
+              policy_explanation(conflict.policy)))
+    if conflict.reason:
+        why += ' (%s)' % conflict.reason
+    lines.append(why)
+    return '\n'.join(lines)
 
 
 def conflict_choice_label(conflict, source, primary=None):
-    """Button text for one side of a conflict."""
-    shown = fmt_value(conflict.field, conflict.values[source])
+    """Button text for one side of a conflict. Choosing a side with no
+    value is an explicit CLEAR that propagates everywhere -- the button
+    must say so, since '-' alone reads like a no-op."""
+    value = conflict.values[source]
+    shown = fmt_value(conflict.field, value)
     if source == 'local':
-        return ('Use %s: %s' % (local_label(primary), shown) if primary
-                else 'Keep yours: %s' % shown)
-    return 'Use %s: %s' % (label(source), shown)
+        text = 'Keep %s: %s' % (local_label(primary), shown)
+    else:
+        text = 'Use %s: %s' % (label(source), shown)
+    if normalize.emptyish(value):
+        text += ' (clears it everywhere)'
+    return text
 
 
-def mode_context(mode, primary=None):
-    """One paragraph saying what the selected mode will actually do,
-    naming the signed-in account (mirror without that context is a
-    footgun). Uses <b>/<i> markup, which both Qt rich text and Pango
-    render."""
-    signed = (' You are signed into <b>%s</b>; changes you make in the '
-              'app count as local.' % label(primary) if primary else '')
-    if mode is SyncMode.MIRROR:
-        return ('<b>Mirror:</b> pushes local state out to every provider. '
-                'Remote-only changes are overwritten.%s' % signed)
-    if mode is SyncMode.PULL:
-        return ('<b>Pull:</b> providers update local state; nothing is '
-                'pushed.%s' % signed)
-    if mode is SyncMode.REBASE:
-        return ('<b>Rebase:</b> forces each field\'s declared owner (set '
-                'in the Ownership tab) onto local <i>and</i> every other '
-                'tracker, even for entries that already look in sync. Use '
-                'it right after changing who owns a field, to make that '
-                'change take effect immediately. Fields set to Merge, '
-                'Ask, or Individual have no single owner and are left '
-                'alone. Rebase also adds the show to any connected '
-                'tracker that does not have it yet, using the owned '
-                "fields' current values; those additions are planned "
-                'unticked, so you opt in per show.')
-    return ('<b>Merge:</b> reconciles every provider into local state, '
-            'then pushes the result.%s' % signed)
+def plan_context():
+    """One paragraph saying how the plan is decided. Uses <b>/<i>
+    markup, which both Qt rich text and Pango render."""
+    return ('<b>Hakubun</b> is this app\'s own copy of your lists -- '
+            'what you see in the main window. Each field syncs by the '
+            'rule set in <b>Configuration</b>: follow one site, keep '
+            'the best value (furthest progress, highest, combined), or '
+            'ask you when sites disagree. Every proposed change says '
+            'which rule produced it.')
+
+
+def plan_counts(plan):
+    """(ordinary changes, decisions needed, new entries) -- the three
+    numbers the sync workflow is organized around."""
+    creates = sum(1 for c in plan.changes if c.creates_entry)
+    return len(plan.changes) - creates, len(plan.conflicts), creates
+
+
+def plan_summary(plan):
+    """The headline over the sync tab: how much will change, how much
+    needs the user, what would create entries."""
+    changes, decisions, creates = plan_counts(plan)
+    if not (changes or decisions or creates):
+        return 'Everything is in sync.'
+    parts = ['%d change(s)' % changes]
+    if decisions:
+        parts.append('%d decision(s) needed' % decisions)
+    if creates:
+        parts.append('%d new entr%s' % (creates,
+                                        'y' if creates == 1 else 'ies'))
+    return ' · '.join(parts)
+
+
+def plan_status(plan):
+    """Status-bar line after a fetch/replan: what was found, in the
+    user's terms (not 'planned/conflicts/identity issues')."""
+    changes, decisions, creates = plan_counts(plan)
+    parts = ['%d change(s)' % changes]
+    if decisions:
+        parts.append('%d decision(s) needed' % decisions)
+    if creates:
+        parts.append('%d new entr%s to review'
+                     % (creates, 'y' if creates == 1 else 'ies'))
+    if plan.identity:
+        parts.append('%d title(s) needing matching' % len(plan.identity))
+    text = 'Found ' + ', '.join(parts) + '.'
+    if plan.errors:
+        text += ' Errors: %s.' % ', '.join('%s (%s)' % kv
+                                           for kv in plan.errors.items())
+    return text
+
+
+# -- Mirror ----------------------------------------------------------
+#
+# Mirror is tracker-to-tracker convergence (sync/mirror.py). Every
+# string below therefore talks about TRACKERS: no Hakubun side, no
+# "from Hakubun", no local value presented as a competing opinion.
+
+MIRROR_TAB_HELP = (
+    'Make your trackers agree, according to <b>Ownership</b>.\n\n'
+    'Ordinary <b>Sync</b> follows changes as they happen. <b>Mirror</b> '
+    'ignores history and asks a different question: given your '
+    'ownership rules, what should each tracker contain right now? Use '
+    'it after changing an ownership rule, or when a tracker has drifted '
+    'and normal syncing has nothing left to go on.\n\n'
+    'This can change a lot at once, so nothing is applied until you '
+    'review it and confirm. Point at a title to see what will happen '
+    'to it; tick a title to include everything under it.')
+
+
+def membership_note(want, reason=None):
+    """Why a tracker row is in the state it is, in words that are
+    actually true of how it got there.
+
+    The same `want` arrives by routes that are not the same fact, and
+    only some of them are the user's doing:
+
+        'deleted'   a fetch noticed the entry gone from the website.
+                    An OBSERVATION. Describing it as something the
+                    user chose is simply false -- they deleted an
+                    entry on a website, they never made a decision in
+                    Hakubun, and being told "you chose" about a
+                    setting they have never seen is how a UI teaches
+                    someone to distrust it.
+        'declined'  the user turned down a proposed creation. A real
+                    choice, but a narrow one: "don't add it", not
+                    "leave this tracker alone forever".
+        None        the user said so in Mirror. The only case where
+                    "you chose" is the honest word.
+    """
+    if want == 'ignore':
+        if reason == 'deleted':
+            return ('removed on the site — not offered again')
+        if reason == 'declined':
+            return ('you declined adding it here')
+        return 'you chose to leave this tracker as it is'
+    if want == 'present':
+        return 'you chose: this tracker should have it'
+    if want == 'absent':
+        return 'you chose: this tracker should not have it'
+    return ''
+
+
+
+
+
+
+MIRROR_STRUCTURAL_NOTE = (
+    'These trackers list this work with different episode counts, so '
+    'there is no single progress value to give them all. Mirror cannot '
+    'convert between the structures — set this title\'s progress from '
+    'the Sync tab instead.')
+
+
+def mirror_conflict_why(conflict):
+    """Explain a MIRROR decision: what each tracker holds, then the
+    rule that could not settle it.
+
+    Deliberately not conflict_why(): that one opens with Hakubun's
+    value and says Hakubun could not choose, which is the right framing
+    for Sync (where local IS the app's working copy being reconciled)
+    and the wrong one here. During a mirror the disagreement is between
+    trackers, and the app is not one of the parties.
+    """
+    name = field_label(conflict.field)
+    lines = ['%s differs between your trackers:' % name]
+    lines += ['    %s:  %s' % (label(s),
+                               fmt_value(conflict.field,
+                                         conflict.values[s]))
+              for s in sorted(conflict.values) if s != 'local']
+    why = 'These cannot be settled automatically: %s.' % \
+        policy_explanation(conflict.policy)
+    if conflict.reason:
+        why += ' (%s)' % conflict.reason
+    lines.append(why)
+    return '\n'.join(lines)
+
+
+def mirror_add_label(issue, provider):
+    return 'Add to %s' % label(provider)
+
+
+def mirror_remove_label(provider):
+    return 'Remove from %s' % label(provider)
+
+
+def mirror_ignore_label(provider):
+    return 'Leave %s as it is' % label(provider)
+
+
+
+
+def mirror_local_line(op):
+    """One row for a change to Hakubun's own copy.
+
+    It NAMES Hakubun, in the same 'Update <where>, <field>' shape the
+    tracker rows use. It used to open with the show's title and rely on
+    sitting under a "Hakubun's copy" heading to say what it was --
+    which stopped being true the moment the preview became one flat
+    list per title, where it read as just another tracker change with
+    the tracker's name missing.
+    """
+    return 'Update %s, %s: %s → %s  — %s' % (
+        local_label(), field_label(op.field),
+        fmt_value(op.field, op.old), fmt_value(op.field, op.new),
+        op.reason or 'matches the trackers')
+
+
+MIRROR_LOCAL_HELP = (
+    "These update Hakubun's own copy of your list so it matches what "
+    'the trackers will hold. Hakubun is not a tracker and does not vote '
+    'on any of this — but if you changed a value here and have not '
+    'synced it yet, mirroring replaces it with the trackers\' value. '
+    'Untick anything you want to keep and sync instead.')
+
+
+
+
+# -- Mirror, as CARDS -------------------------------------------------
+#
+# A Mirror plan is a set of operations, and the first version of this
+# tab showed exactly that: five tabs of operations, sorted by kind.
+# That is the shape the ENGINE needs and the wrong shape for a person.
+# A user works one title at a time -- "what happens to Cowboy Bebop?" --
+# and the answer was spread across three tabs, with the entry's tracker
+# membership in one, its field pushes in another, and the entry it would
+# gain in a third, split into one row per field.
+#
+# So the plan is re-projected here into one card per work: the values
+# ownership says it should have, then every tracker underneath it with
+# what it holds and what would change. That is the layout MALSync's list
+# sync uses (a master entry at the top of each card, slaves below as
+# deltas), with the one difference the user named: there is no single
+# master list, because ownership assigns each field its own authority.
+# The card's top row is therefore SYNTHESIZED across owners -- which is
+# precisely what ownership buys over a single master.
+#
+# Both toolkits render this same model, so the two windows cannot drift
+# apart again, and the layout is testable without a widget.
+
+# The mark that leads each row. Part of the vocabulary, not of either
+# toolkit: a grid is scanned before it is read, and the shape of the
+# change should arrive before the sentence does. Kept to glyphs every
+# ordinary UI font has -- a tofu box would be worse than no mark.
+MIRROR_MARKS = {
+    'add': '✚',
+    'remove': '✕',
+    'update': '→',
+    'local': '⌂',      # this app's own copy, never a tracker
+    'note': 'ⓘ',
+    'conflict': '!',
+}
+
+
+class MirrorChange:
+    """One line of a card: a change, or a note about one.
+
+    Split into its parts rather than handed over as a finished
+    sentence. A card is read inside a tile a couple of hundred pixels
+    wide, where "Update Mal, Score: 5 → 9  — Anilist owns score" wraps
+    into three ragged lines and every row looks like every other one.
+    Given the parts, a window can set the tracker apart from the
+    values, put the reason underneath in a quieter voice, and lead
+    with a mark that says which KIND of change this is before any of
+    it is read.
+
+    `text` remains the whole thing on one line -- the flat form, still
+    what a plain-text context (a log, a test, a tooltip) wants.
+    """
+
+    def __init__(self, op, kind, head, detail='', why='', text=None):
+        self.op = op          # None for an informational note
+        self.kind = kind      # add | remove | update | local | note
+        self.head = head      # who and what: 'Kitsu', 'Mal · Score'
+        self.detail = detail  # the values: '5 → 9', 'Score 9 · …'
+        self.why = why        # the rule behind it, if any
+        if text is None:
+            text = ' '.join(p for p in (head, detail) if p)
+            if why:
+                text += '  — %s' % why
+        # The flat sentence is its own thing, with its own grammar --
+        # "Update Mal, Score: 5 → 9" is a sentence, while the parts
+        # above are a layout. Callers pass it where the two differ.
+        self.text = text
+
+    def __iter__(self):
+        """Still unpacks as (op, text): the flat pair is what several
+        readers only ever wanted."""
+        return iter((self.op, self.text))
+
+
+class MirrorCard:
+    """Everything a Mirror plan does to one work.
+
+    One card per title, and inside it a FLAT list of changes -- the
+    same shape the Sync tab uses, for the same reason: a change is
+    legible as one line that says what happens and why, and grouping
+    them under per-tracker sub-headers made the reader expand two
+    levels to find a single value.
+    """
+
+    def __init__(self, uuid, title):
+        self.uuid = uuid
+        self.title = title
+        # Cover art URL, or '' -- the grid draws a placeholder for the
+        # works no provider gave a picture for.
+        self.image = ''
+        # [(field label, formatted value, owning tracker label, why)]
+        self.desired = []
+        # [(operation, text)] -- every tickable change, flat, in the
+        # order they read best: entries created, entries deleted, then
+        # field pushes, then this app's own copy.
+        self.rows = []
+        self.conflicts = []
+        self.issue = None
+
+    @property
+    def ops(self):
+        """The tickable operations. Informational rows carry None and
+        are excluded -- both windows derive a card's checkbox state
+        from this, and a None in it crashed the render."""
+        return [row.op for row in self.rows if row.op is not None]
+
+    @property
+    def changed(self):
+        return bool(self.rows or self.conflicts)
+
+
+def _fmt_progress(value, total):
+    text = fmt_value('progress', value)
+    if total:
+        text += ' / %s' % total
+    return text
+
+
+def mirror_cards(plan, adapters, category='all'):
+    """Re-project a MirrorPlan into one card per work.
+
+    Pure data -- no toolkit, no widgets -- so both windows render the
+    same thing and the layout can be tested directly. `category` is
+    accepted for call-site compatibility and ignored: the preview
+    shows everything, because a plan you have to filter to understand
+    is one you cannot confidently apply.
+    """
+    cards = {}
+
+    def card_for(uuid, title):
+        card = cards.get(uuid)
+        if card is None:
+            card = cards[uuid] = MirrorCard(uuid, title)
+        if title and not card.title:
+            card.title = title
+        return card
+
+    for uuid, fields in plan.desired.items():
+        card = card_for(uuid, '')
+        for field in sorted(fields):
+            value, source, reason = fields[field]
+            card.desired.append((field_label(field),
+                                 fmt_value(field, value),
+                                 label(source) if source else '',
+                                 reason))
+
+    # Entry creations first: the biggest thing that can happen to a
+    # title, and the thing the user came here for.
+    for op in plan.adds:
+        card = card_for(op.uuid, op.title)
+        detail = ' · '.join(
+            '%s %s' % (field_label(f),
+                       fmt_target_value(adapters, f, op.values[f],
+                                        op.provider))
+            for f in sorted(op.values))
+        text = 'Add to %s: %s' % (label(op.provider), detail)
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append(MirrorChange(
+            op, 'add', 'Add to %s' % label(op.provider),
+            detail=detail, why=op.reason or '', text=text))
+
+    for op in plan.removes:
+        card = card_for(op.uuid, op.title)
+        text = 'Remove from %s' % label(op.provider)
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append(MirrorChange(
+            op, 'remove', 'Remove from %s' % label(op.provider),
+            why=op.reason or '', text=text))
+
+    totals = {}
+    for uuid, observed in plan.observed.items():
+        for provider, values in observed.items():
+            if values.get('_total'):
+                totals[(uuid, provider)] = values['_total']
+
+    for op in plan.updates:
+        card = card_for(op.uuid, op.title)
+        total = totals.get((op.uuid, op.target))
+        if op.field == 'progress':
+            old = _fmt_progress(op.old, total)
+            new = _fmt_progress(op.new, total)
+        else:
+            old = fmt_target_value(adapters, op.field, op.old, op.target)
+            new = fmt_target_value(adapters, op.field, op.new, op.target)
+        text = 'Update %s, %s: %s → %s' % (
+            label(op.target), field_label(op.field), old, new)
+        note = (score_round_note(adapters, op.target, op.new)
+                if op.field == 'score' else '')
+        text += note
+        if op.reason:
+            text += '  — %s' % op.reason
+        card.rows.append(MirrorChange(
+            op, 'update',
+            '%s · %s' % (label(op.target), field_label(op.field)),
+            detail='%s → %s%s' % (old, new, note),
+            why=op.reason or '', text=text))
+
+    for op in plan.local:
+        card = card_for(op.uuid, op.title)
+        card.rows.append(MirrorChange(
+            op, 'local', '%s · %s' % (local_label(), field_label(op.field)),
+            detail='%s → %s' % (fmt_value(op.field, op.old),
+                                fmt_value(op.field, op.new)),
+            why=op.reason or 'matches the trackers',
+            text=mirror_local_line(op)))
+
+    for conflict in plan.conflicts:
+        card_for(conflict.uuid, conflict.title).conflicts.append(conflict)
+
+    # An entry whose membership the user already settled has nothing to
+    # do -- but the way BACK to that decision is offered from its card,
+    # so it must still appear.
+    for issue in plan.membership:
+        card = card_for(issue.uuid, issue.title)
+        card.issue = issue
+        for provider in sorted(issue.decisions):
+            note = membership_note(issue.decisions[provider],
+                                   issue.reasons.get(provider))
+            if note:
+                card.rows.append(MirrorChange(
+                    None, 'note', label(provider), why=note,
+                    text='%s — %s' % (label(provider), note)))
+        for provider in issue.unmapped:
+            why = ('not linked to this tracker; link a matching entry '
+                   'under Identity before adding it')
+            card.rows.append(MirrorChange(
+                None, 'note', label(provider), why=why,
+                text='%s — %s' % (label(provider), why)))
+
+    for uuid, card in cards.items():
+        card.image = plan.images.get(uuid) or ''
+
+    def rank(card):
+        # Decisions first: nothing else can be applied confidently
+        # until they are answered.
+        return (0 if card.conflicts else 1, card.title.casefold())
+
+    return sorted((c for c in cards.values() if c.changed), key=rank)
+
+
+def mirror_card_headline(card):
+    """The one-line summary beside a title: what happens to this work,
+    in the fewest words that are still true."""
+    adds, removes, updates, local = set(), set(), 0, 0
+    for row in card.rows:
+        if row.op is None:
+            continue
+        target = (getattr(row.op, 'provider', None)
+                  or getattr(row.op, 'target', None))
+        if row.kind == 'add':
+            adds.add(label(target))
+        elif row.kind == 'remove':
+            removes.add(label(target))
+        elif row.kind == 'local':
+            local += 1
+        else:
+            updates += 1
+    parts = []
+    if adds:
+        parts.append('add to %s' % ', '.join(sorted(adds)))
+    if removes:
+        parts.append('remove from %s' % ', '.join(sorted(removes)))
+    if updates:
+        parts.append('%d field(s)' % updates)
+    if card.conflicts:
+        parts.append('%d decision(s) needed' % len(card.conflicts))
+    if local and not parts:
+        parts.append("%d value(s) in %s's copy" % (local, local_label()))
+    return ' · '.join(parts)
+
+
+def mirror_plan_summary(plan):
+    """The headline over the Mirror tab."""
+    counts = plan.counts()
+    entries = sum(counts['add'].values())
+    removals = sum(counts['remove'].values())
+    fields = sum(counts['update'].values())
+    if not (entries or removals or fields or plan.conflicts):
+        if plan.local:
+            # The trackers genuinely agree; it is Hakubun's own copy
+            # that drifted. Still worth applying -- left alone, the
+            # next ordinary Sync would read Hakubun as the side that
+            # moved and push the stale value back out to everyone.
+            text = ('Your trackers already agree — %d Hakubun value(s) '
+                    'to bring into line with them.' % len(plan.local))
+        else:
+            text = 'Your trackers already agree.'
+        if plan.errors:
+            text += ' Unable to sync: %s.' % '; '.join(
+                '%s (%s)' % kv for kv in plan.errors.items())
+        return text
+    parts = []
+    if entries:
+        parts.append('%d entr%s to add' % (entries,
+                                           'y' if entries == 1 else 'ies'))
+    if removals:
+        parts.append('%d entr%s to remove'
+                     % (removals, 'y' if removals == 1 else 'ies'))
+    if fields:
+        parts.append('%d field(s) to update' % fields)
+    if plan.conflicts:
+        parts.append('%d decision(s) needed' % len(plan.conflicts))
+    if plan.errors:
+        parts.append('unable to sync: %s' % '; '.join(
+            '%s (%s)' % kv for kv in plan.errors.items()))
+    return ' · '.join(parts)
+
+
+def mirror_confirmation(plan):
+    """The text of the bulk confirmation shown BEFORE a Mirror plan is
+    applied. Mirror can create and delete entries across real accounts
+    in bulk, so the user sees the per-tracker numbers first -- and adds
+    and removals are approved separately."""
+    # Quote what will actually run, not every preview row.  Deletions start
+    # unticked; listing them here anyway made a successful no-op look like a
+    # broken Apply button.
+    counts = plan.selected_counts()
+    lines = ['Mirror will make changes across your trackers:', '']
+    for heading, key, verb in (('Add', 'add', 'entries'),
+                               ('Remove', 'remove', 'entries'),
+                               ('Update', 'update', 'fields')):
+        group = counts[key]
+        if not group:
+            continue
+        lines.append('%s:' % heading)
+        for provider in sorted(group):
+            lines.append('    %s: %d %s' % (label(provider),
+                                            group[provider], verb))
+        lines.append('')
+    if counts.get('local'):
+        # Listed apart from the trackers, and named as this app's own
+        # copy: Hakubun is not a tracker, but converging it IS a change
+        # the user is about to make, and one that can discard an edit
+        # they made here and had not synced yet.
+        lines.append("Update %s's own copy:" % local_label())
+        lines.append('    %d value(s), to match the trackers'
+                     % counts['local'])
+        lines.append('')
+    if sum(counts['remove'].values()):
+        lines.append('Removing an entry deletes it from that tracker '
+                     'account. This cannot be undone from Hakubun.')
+        lines.append('')
+    lines.append('This may make substantial changes to your tracker '
+                 'lists.')
+    return '\n'.join(lines)
+
+
+def mirror_result_status(result):
+    """Status line after applying a Mirror plan."""
+    parts = []
+    if result.get('pushed'):
+        parts.append('%d tracker change(s)' % result['pushed'])
+    if result.get('removed'):
+        parts.append('%d entr%s removed'
+                     % (result['removed'],
+                        'y' if result['removed'] == 1 else 'ies'))
+    if result.get('local'):
+        parts.append("%d value(s) in Hakubun's copy" % result['local'])
+    text = ('Mirror applied: ' + ', '.join(parts) + '.' if parts
+            else 'Mirror made no changes.')
+    if result.get('skipped'):
+        text += (' %d not applied (you did not approve that category).'
+                 % result['skipped'])
+    if result.get('cancelled'):
+        text += ' Cancelled partway -- the rest re-plans.'
+    if result.get('errors'):
+        text += ' Errors: %s.' % ', '.join('%s (%s)' % kv for kv
+                                           in result['errors'].items())
+    return text
 
 
 def display_title(title, aliases):
@@ -301,5 +937,6 @@ def build_engine(store, accountman, media_type):
         except Exception as e:
             errors.append('%s: %s' % (api, e))
     from hakubun.sync.relations import RelationsAtlas
+    # Reads local files only -- this runs on the UI thread.
     atlas = RelationsAtlas.from_file() if media_type == 'anime' else None
     return SyncEngine(store, by_provider, relations=atlas), errors

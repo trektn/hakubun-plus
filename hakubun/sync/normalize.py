@@ -116,6 +116,41 @@ def provider_date(value):
         return None
 
 
+def emptyish(v):
+    """True for a 'blank/unset/zero' value in any of the forms the
+    providers hand back: None (a field a provider left null, e.g. Kitsu
+    returning no reconsumeCount), 0/0.0/False, or an empty string/list/
+    tuple. These all mean 'nothing here', so one provider's None and
+    another's 0 (or '') are the SAME state, not a difference to sync."""
+    return v is None or v == 0 or v in ('', [], ())
+
+
+def values_equal(field, a, b):
+    """Field-aware equality over canonical (normalized) values -- the
+    planner's comparison primitive. Not a generic merge helper: each
+    field compares in its own terms. Any two emptyish values are equal,
+    so a blank response never diffs against a zero/empty one; sets
+    (tags) compare order-insensitively; scores numerically; progress
+    and rewatch counts as integers. Provider-scale equivalence (does
+    8.4 round to this provider's 8?) is the adapter's job
+    (ProviderAdapter.values_equivalent), not this function's."""
+    if emptyish(a) and emptyish(b):
+        return True
+    if isinstance(a, list) and isinstance(b, list):
+        return sorted(map(str, a)) == sorted(map(str, b))
+    if field == 'score':
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return a == b
+    if field in ('progress', 'rewatches'):
+        try:
+            return int(a) == int(b)
+        except (TypeError, ValueError):
+            return a == b
+    return a == b
+
+
 def progress_complete(value, scale):
     """True when `value` completes a `scale`-episode structure."""
     return bool(scale) and value is not None and value >= scale
@@ -202,6 +237,10 @@ def normalize_show(provider, show, mediainfo, external_ids=None):
         external_ids={k: str(v) for k, v in (external_ids or {}).items()
                       if v},
         user=user,
+        # Prefer the thumbnail: the only consumer is a poster grid, and
+        # a list-sized fetch of full-resolution art is a lot of bytes
+        # for pictures that get drawn a couple of hundred pixels wide.
+        image=(show.get('image_thumb') or show.get('image')) or None,
     )
 
 

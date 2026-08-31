@@ -19,7 +19,8 @@ pytest.importorskip('PyQt6')
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication
 
-from hakubun.sync.models import FieldChange, SyncMode, SyncPlan
+from hakubun.sync.engine import SyncEngine
+from hakubun.sync.models import SyncOperation, SyncPlan
 from hakubun.sync.store import SyncStore
 from hakubun.ui.qt.syncwindow import SyncWindow
 
@@ -39,7 +40,7 @@ class _FakeEngine:
 
 def _score_changes(n, bump_uuid=None):
     return [
-        FieldChange(uuid='u%d' % i, field='score', old=1,
+        SyncOperation(uuid='u%d' % i, field='score', old=1,
                    new=(3 if bump_uuid == 'u%d' % i else 2),
                    target='mal', source='local', title='Show %d' % i)
         for i in range(n)
@@ -48,7 +49,7 @@ def _score_changes(n, bump_uuid=None):
 
 def _progress_changes(n):
     return [
-        FieldChange(uuid='p%d' % i, field='progress', old=1, new=2,
+        SyncOperation(uuid='p%d' % i, field='progress', old=1, new=2,
                    target='mal', source='local', title='Prog %d' % i)
         for i in range(n)
     ]
@@ -63,7 +64,7 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
     win = _make_window(qapp)
     score = _score_changes(5)
     progress = _progress_changes(3)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=score + progress),
+    win.r_planned(SyncPlan(changes=score + progress),
                   None)
 
     score_tree = win._category_trees['score']
@@ -73,7 +74,7 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
 
     # A replan producing content-identical but freshly-allocated objects
     # (exactly what SyncEngine.plan() does every time).
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
 
     assert win._category_trees['score'] is score_tree
@@ -84,14 +85,14 @@ def test_identical_replan_leaves_widgets_and_ticks_untouched(qapp):
 
 def test_changed_category_rebuilds_only_itself(qapp):
     win = _make_window(qapp)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
     score_items_1 = {id(it) for it, _c
                      in win._iter_tree_changes(win._category_trees['score'])}
     progress_items_1 = {id(it) for it, _c in win._iter_tree_changes(
         win._category_trees['progress'])}
 
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5, bump_uuid='u0') + _progress_changes(3))), None)
 
     score_items_2 = {id(it) for it, _c
@@ -104,9 +105,9 @@ def test_changed_category_rebuilds_only_itself(qapp):
 
 def test_change_items_registration_stays_consistent(qapp):
     win = _make_window(qapp)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5) + _progress_changes(3))), None)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         _score_changes(5, bump_uuid='u2') + _progress_changes(3))), None)
 
     all_tree = win._category_trees['__all__']
@@ -125,13 +126,175 @@ def test_change_items_registration_stays_consistent(qapp):
     assert score_item.checkState(0) == QtCore.Qt.CheckState.Unchecked
 
 
+def _create_changes(n):
+    return [
+        SyncOperation(uuid='n%d' % i, field='progress', old=None, new=5,
+                      target='mal', source='kitsu', title='New %d' % i,
+                      selected=False, creates_entry=True)
+        for i in range(n)
+    ]
+
+
+def test_new_entries_get_their_own_category(qapp):
+    win = _make_window(qapp)
+    win.r_planned(SyncPlan(changes=(
+        _score_changes(2) + _create_changes(2))), None)
+    assert win._category_order == ['__all__', 'score', '__new__']
+
+    # Creates live only in the New entries tree, never in Changes.
+    ordinary = [c for _it, c in win._iter_tree_changes(
+        win._category_trees['__all__'])]
+    assert ordinary and not any(c.creates_entry for c in ordinary)
+    creates = [c for _it, c in win._iter_tree_changes(
+        win._category_trees['__new__'])]
+    assert len(creates) == 2 and all(c.creates_entry for c in creates)
+    assert all(not c.selected for c in creates)   # stays opt-in
+
+    # The apply path iterates BOTH trees, so an opted-in create is
+    # seen -- and a tick made in the New entries tab lands on the
+    # change object itself.
+    assert sum(1 for _ in win._iter_change_items()) == 4
+    item, change = next(win._iter_tree_changes(
+        win._category_trees['__new__']))
+    item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+    assert change.selected is True
+
+    # The headline summarizes in the user's terms.
+    assert '2 change(s)' in win.summary_label.text()
+    assert '2 new entries' in win.summary_label.text()
+
+
 def test_category_appearing_or_vanishing_falls_back_to_full_rebuild(qapp):
     win = _make_window(qapp)
     score = _score_changes(5)
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=score), None)
-    assert win.preview_tabs.count() == 2   # All, Score
+    win.r_planned(SyncPlan(changes=score), None)
+    assert win.preview_tabs.count() == 2   # Changes, Score
 
-    win.r_planned(SyncPlan(mode=SyncMode.MERGE, changes=(
+    win.r_planned(SyncPlan(changes=(
         score + _progress_changes(2))), None)
-    assert win.preview_tabs.count() == 3   # All, Score, Watched Episodes
+    # Changes, Score, Watched Episodes
+    assert win.preview_tabs.count() == 3
     assert win._category_order == ['__all__', 'score', 'progress']
+
+
+def test_config_combo_and_matrix_stay_in_agreement(qapp):
+    win = _make_window(qapp)
+    combo = win._policy_combos['progress']
+    combo.setCurrentIndex(combo.findData('reconcile:manual'))
+    assert win.store.ownership()['progress'].serialize() \
+        == 'reconcile:manual'
+    group = win._ownership_groups['progress']
+    checked = [r for r in group.buttons() if r.isChecked()]
+    assert checked and checked[0].property('policy') == 'reconcile:manual'
+    # And the other way round: the Advanced matrix updates the combo.
+    radio = next(r for r in group.buttons()
+                 if r.property('policy') == 'reconcile:progress')
+    radio.setChecked(True)
+    assert win.store.ownership()['progress'].serialize() \
+        == 'reconcile:progress'
+    assert combo.currentData() == 'reconcile:progress'
+
+
+def test_nonfunctional_tags_and_favorites_are_not_policy_controls(qapp):
+    win = _make_window(qapp)
+    try:
+        assert 'tags' not in win._policy_combos
+        assert 'favorite' not in win._policy_combos
+        assert 'tags' not in win._ownership_groups
+        assert 'favorite' not in win._ownership_groups
+    finally:
+        win.close()
+
+
+def test_tab_names_stay_correct_after_the_identity_count_lands(qapp):
+    """The identity count is stamped onto a tab found BY INDEX, and the
+    index was hardcoded. Inserting the Mirror tab at position 1 pushed
+    Configuration into the old slot, so the count landed on it: two
+    tabs called Identity, and no way to tell which was which."""
+    win = SyncWindow(None, None, engine=_FakeEngine(), active_api=None,
+                     media_type='anime')
+    try:
+        win._refresh_identity()
+        names = [win.tabs.tabText(i).split(' (')[0]
+                 for i in range(win.tabs.count())]
+        assert names == ['Sync', 'Mirror', 'Configuration', 'Identity',
+                         'Advanced']
+        assert names.count('Identity') == 1
+    finally:
+        win.close()
+
+
+def test_missing_tracker_link_is_visible_and_ignorable(qapp):
+    """Mirror used to send these entries to an empty Identity tab because
+    no fetched target entry exists to create an identity_conflicts row."""
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    win = SyncWindow(None, None, engine=engine, active_api=None,
+                     media_type='anime')
+    try:
+        assert win.identity_tree.topLevelItemCount() == 1
+        item = win.identity_tree.topLevelItem(0)
+        assert item.text(0) == 'mal'
+        assert item.text(4) == 'Link or leave alone'
+        win.identity_tree.setCurrentItem(item)
+        assert win.search_provider.currentText() == 'mal'
+        assert not win.search_provider.isEnabled()
+        assert win.rb_search.isChecked()
+
+        issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        # A gap has no MAL id to inspect, so the context-menu action uses
+        # this entity's known AniList id and performs the lookup immediately.
+        assert win._identity_inspect_target(issue) == ('anilist', '9')
+        win._inspect_from_identity(*win._identity_inspect_target(issue))
+        assert win.tabs.currentIndex() == 4
+        assert win.inspect_provider.currentData() == 'anilist'
+        assert win.inspect_id.text() == '9'
+        assert 'Anilist id 9' in win.inspect_output.toPlainText()
+
+        win._ignore_identity_gap(issue)
+        assert win.identity_tree.topLevelItemCount() == 0
+        assert store.membership_of(uid)['mal'] == 'ignore'
+    finally:
+        win.close()
+        store.close()
+
+
+def test_missing_tracker_link_accepts_an_exact_id(qapp):
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    win = SyncWindow(None, None, engine=engine, active_api=None,
+                     media_type='anime')
+    try:
+        item = win.identity_tree.topLevelItem(0)
+        win.identity_tree.setCurrentItem(item)
+        assert win.exact_id_provider.currentData() == 'mal'
+        assert not win.exact_id_provider.isEnabled()
+        win.rb_exact_id.setChecked(True)
+        win.exact_id_value.setText('77')
+        win.s_identity_resolve()
+        assert store.mapping_for('mal', '77')['uuid'] == uid
+        assert win.identity_tree.topLevelItemCount() == 0
+    finally:
+        win.close()
+        store.close()
+
+
+def test_entries_are_configured_like_any_other_field(qapp):
+    """The entry owner is a row in Configuration alongside Score and
+    Status -- the same question about whole entries rather than a
+    field, so it belongs in the same place."""
+    win = SyncWindow(None, None, engine=_FakeEngine(), active_api=None,
+                     media_type='anime')
+    try:
+        assert win.store.master() is None       # conservative default
+        index = win.entry_owner_combo.findData('')
+        assert index >= 0, 'must be able to choose no owner'
+        assert 'never remove' in win.entry_owner_combo.itemText(index)
+    finally:
+        win.close()

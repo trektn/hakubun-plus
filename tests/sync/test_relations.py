@@ -1,4 +1,4 @@
-"""anime-relations id atlas: parsing and identity enrichment."""
+"""Community id atlas parsing and identity enrichment."""
 
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.relations import RelationsAtlas
@@ -40,6 +40,35 @@ def test_atlas_parses_triples_both_sides(tmp_path):
 def test_missing_file_yields_empty_atlas(tmp_path):
     atlas = RelationsAtlas.from_file(str(tmp_path / 'nope'))
     assert len(atlas) == 0
+
+
+def test_aod_json_adds_mal_kitsu_anilist_ids(tmp_path):
+    path = tmp_path / 'aod.json'
+    path.write_text('''{"data": [{"sources": [
+        "https://myanimelist.net/anime/1/Test",
+        "https://kitsu.app/anime/2",
+        "https://anilist.co/anime/3/Test"
+    ]}]}''')
+    atlas = RelationsAtlas()
+    atlas.add_aod(str(path))
+    assert atlas.lookup('mal', '1') == {'kitsu': '2', 'anilist': '3'}
+    assert atlas.lookup_sources('mal', '1') == {
+        'kitsu': 'anime-offline-database',
+        'anilist': 'anime-offline-database'}
+
+
+def test_anime_relations_wins_aod_conflict(tmp_path):
+    relation_path = tmp_path / 'relations'
+    relation_path.write_text('- 1|2|3:1 -> 1|2|3:1\n')
+    aod_path = tmp_path / 'aod.json'
+    aod_path.write_text('''{"data": [{"sources": [
+        "https://myanimelist.net/anime/1/Test",
+        "https://kitsu.app/anime/99"
+    ]}]}''')
+    atlas = RelationsAtlas.from_file(str(relation_path))
+    atlas.add_aod(str(aod_path))
+    assert atlas.lookup('mal', '1')['kitsu'] == '2'
+    assert atlas.lookup_sources('mal', '1')['kitsu'] == 'anime-relations'
 
 
 def test_atlas_links_entries_without_published_ids(store, tmp_path):

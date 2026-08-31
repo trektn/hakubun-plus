@@ -42,22 +42,26 @@ class IdentityResolver:
     def _external_ids(self, entry):
         """{provider: (id, source)}. Provider-published ids ('published'
         -- e.g. AniList/Kitsu-GraphQL's own idMal) take priority; the
-        community anime-relations atlas ('atlas') fills in anything the
-        provider itself doesn't publish. The source is kept (not just
-        the id) so a mapping created from this can record exactly how
-        it was linked, for the Inspector.
+        community id atlas fills in anything the provider itself doesn't
+        publish. The source is kept (not just the id) so a mapping
+        created from this can record exactly how it was linked, for the
+        Inspector -- and it names the specific database
+        ('anime-relations'), since community databases are not all
+        equally authoritative.
 
-        The atlas is anime-only (it is erengy/anime-relations -- every
-        rule is a MAL|Kitsu|AniList *anime* id triple) and must never
-        be consulted for a manga entry: the same numeric id space means
-        a manga id would silently collide with an unrelated anime's
-        rule and produce a nonsense cross-reference.
+        The atlas is anime-only -- every anime-relations rule is a
+        MAL|Kitsu|AniList *anime* id triple -- and must never be
+        consulted for a manga entry: the same numeric id space means a
+        manga id would silently collide with an unrelated anime's rule
+        and produce a nonsense cross-reference.
         """
         ids = {p: (pid, 'published') for p, pid in entry.external_ids.items()}
         if self._atlas is not None and entry.media_type == 'anime':
+            sources = self._atlas.lookup_sources(
+                entry.provider, entry.provider_id)
             for provider, pid in self._atlas.lookup(
                     entry.provider, entry.provider_id).items():
-                ids.setdefault(provider, (pid, 'atlas'))
+                ids.setdefault(provider, (pid, sources.get(provider, 'atlas')))
         ids.pop(entry.provider, None)
         return ids
 
@@ -84,6 +88,15 @@ class IdentityResolver:
         if mapping:
             ent = store.get_entity(mapping['uuid']) or {}
             if ent.get('media_type') == entry.media_type:
+                # Do not let the already-mapped fast path freeze identity at
+                # the point in time when the entity was first seen.  An
+                # optional atlas may have been installed or updated since
+                # then; Inspector already reports its current opinion, so a
+                # normal fetch must backfill those exact links too.
+                # Provider-only is an explicit user boundary and remains the
+                # one exception, just as it is in _create_entity().
+                if not ent.get('provider_only'):
+                    self._record_external_ids(mapping['uuid'], entry)
                 return mapping['uuid']
             quarantined = True
             store.remove_mapping(entry.provider, entry.provider_id)
@@ -201,8 +214,7 @@ class IdentityResolver:
             if not m:
                 continue
             ent = store.get_entity(m['uuid']) or {}
-            source_desc = ('published' if source == 'published' else
-                           'anime-relations')
+            source_desc = 'published' if source == 'published' else source
             if ent.get('media_type') != entry.media_type:
                 mismatched.append((m['uuid'], source_desc, other_provider,
                                    other_id, ent.get('media_type')))
@@ -338,18 +350,49 @@ class IdentityResolver:
     def _record_external_ids(self, uid, entry):
         """Provider-published (or atlas) ids become mappings themselves
         (exact), unless that slot is taken -- a clash surfaces as
-        ambiguity on the other provider's own fetch."""
-        for other_provider, (other_id, source) in \
-                self._external_ids(entry).items():
-            if self._store.mapping_for(other_provider, other_id):
+        ambiguity on the other provider's own fetch.
+
+        Cross-ids CHAIN. The atlas is keyed by (provider, id), so
+        asking it only about the fetched entry's own id answers only
+        the questions that entry can pose. AniList publishing a MAL id
+        would plant a MAL mapping and stop -- even when the atlas knows
+        that same MAL id's Kitsu counterpart, and even though a MAL
+        mapping now exists to ask about. The work ended up linked on
+        two sites and unmapped on the third, so Mirror could not offer
+        to add it there: an entry "atlased on all three sites" that
+        only ever showed two.
+
+        So each id this plants is fed back through the atlas, until
+        nothing new appears. Bounded by the provider count, and every
+        link is still exact -- a chained id is an atlas triple entry,
+        not a title guess.
+        """
+        pending = dict(self._external_ids(entry))
+        seen = {entry.provider}
+        while pending:
+            other_provider, (other_id, source) = pending.popitem()
+            if other_provider in seen:
                 continue
-            if any(m['provider'] == other_provider
-                   for m in self._store.mappings_of(uid)):
+            seen.add(other_provider)
+            if not self._store.mapping_for(other_provider, other_id) \
+                    and not any(m['provider'] == other_provider
+                                for m in self._store.mappings_of(uid)):
+                via = ('published by %s' % entry.provider
+                       if source == 'published'
+                       else '%s atlas (seen via %s)' % (source,
+                                                        entry.provider))
+                self._store.add_mapping(uid, other_provider, other_id,
+                                        confirmed=True, via=via)
+            # Now ask the atlas what THIS id knows, which is how a
+            # third provider is reached at all.
+            if self._atlas is None or entry.media_type != 'anime':
                 continue
-            via = ('published by %s' % entry.provider if source == 'published'
-                  else 'anime-relations atlas (seen via %s)' % entry.provider)
-            self._store.add_mapping(uid, other_provider, other_id,
-                                    confirmed=True, via=via)
+            sources = self._atlas.lookup_sources(other_provider, other_id)
+            for chained, pid in self._atlas.lookup(other_provider,
+                                                   other_id).items():
+                if chained not in seen:
+                    pending.setdefault(
+                        chained, (pid, sources.get(chained, 'atlas')))
 
     # -- the user's four-option workflow ------------------------------
 

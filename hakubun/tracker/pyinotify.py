@@ -16,7 +16,6 @@
 
 import pyinotify
 
-from hakubun import utils
 from hakubun.tracker import inotifyBase
 
 

@@ -40,7 +40,7 @@ def is_rate_limited(error):
     return '429' in text or 'Too Many Requests' in text
 
 
-# Web URL templates, %-formatted with (mediatype, provider_id). MAL and
+# Web URL templates, %-formatted with the 'mt' and 'id' keys. MAL and
 # AniList route canonically by numeric id -- matches the exact patterns
 # hakubun/lib/libmal.py and libanilist.py already build for their own
 # 'url' fields. Kitsu's *canonical* URL uses a title slug (which the
@@ -49,9 +49,9 @@ def is_rate_limited(error):
 # numeric id directly, so that's used here as a pragmatic fallback
 # rather than requiring a slug just to open a page in a browser.
 _WEB_URL_TEMPLATES = {
-    'mal': 'https://myanimelist.net/%s/%s',
-    'anilist': 'https://anilist.co/%s/%s',
-    'kitsu': 'https://kitsu.app/%s/%s',
+    'mal': 'https://myanimelist.net/%(mt)s/%(id)s',
+    'anilist': 'https://anilist.co/%(mt)s/%(id)s',
+    'kitsu': 'https://kitsu.app/%(mt)s/%(id)s',
 }
 
 
@@ -65,7 +65,7 @@ def web_url(provider, media_type, provider_id):
     if not template or not provider_id:
         return None
     mt = 'manga' if media_type == 'manga' else 'anime'
-    return template % (mt, provider_id)
+    return template % {'mt': mt, 'id': provider_id}
 
 
 class ProviderAdapter:
@@ -280,6 +280,42 @@ class ProviderAdapter:
         item['title'] = title or ''
         return item, sent
 
+    def creation_values(self, changes):
+        """Canonical values a newly-created provider entry must carry.
+
+        Field policy may intentionally omit a field, but some provider
+        create schemas still require it.  Such requirements belong to the
+        adapter capability data, not to identity or reconciliation.  The
+        planner calls this too, so a required default is disclosed in the
+        preview instead of being a hidden API-side mutation.
+        """
+        values = dict(changes)
+        default_status = self.mediainfo.get('add_default_status')
+        if default_status and not values.get('status'):
+            values['status'] = default_status
+        return values
+
+    def can_write(self, field):
+        """Whether this provider can actually accept ``field``.
+
+        Planning and payload construction must share this answer.  Relying
+        only on ``_build_item`` to drop unsupported fields leaves a previewed
+        operation that Apply silently turns into an empty payload -- exactly
+        the recurring no-op a stale Kitsu date snapshot exposed.
+        """
+        info = self.mediainfo
+        return {
+            'score': info.get('can_score', True),
+            'status': info.get('can_status', True),
+            'progress': info.get('can_update', True),
+            'rewatches': info.get('can_update', True),
+            'start_date': info.get('can_date', True),
+            'finish_date': info.get('can_date', True),
+            'tags': info.get('can_tag', False),
+            'notes': False,
+            'favorite': False,
+        }.get(field, True)
+
     def _send(self, lib_call, item, cancel, on_wait):
         """Retry wrapper shared by push()/add(): paces per provider and
         retries on a rate-limit (429) response, waiting the server's
@@ -336,11 +372,11 @@ class ProviderAdapter:
 
     def add(self, provider_id, changes, title=None, on_wait=None,
            cancel=None):
-        """Create a NEW library entry (see SyncEngine._plan_rebase_add:
-        REBASE additionally creates the show on any connected, mapped
-        provider that doesn't have it yet). Same shape as push(), but
-        calls the lib's add_show(); no my_id since there's no existing
-        entry to address.
+        """Create a NEW library entry on a provider that has none (see
+        membership.py: whether an entry belongs on a tracker is its own
+        question, answered there). Same shape as push(), but calls the
+        lib's add_show(); no my_id since there's no existing entry to
+        address.
 
         Returns (sent, my_id): `my_id` is the provider's new
         library-entry id when it reports one (Kitsu, both backends),
@@ -348,11 +384,43 @@ class ProviderAdapter:
         there's no separate library-entry id to learn)."""
         if not self.mediainfo.get('can_add', True):
             return {}, None
-        item, sent = self._build_item(provider_id, changes, title)
+        item, sent = self._build_item(
+            provider_id, self.creation_values(changes), title)
         if not sent:
             return {}, None
         new_id = self._send(self.lib.add_show, item, cancel, on_wait)
         return sent, (str(new_id) if new_id is not None else None)
+
+    def can_remove(self):
+        """Whether this provider supports deleting a library entry.
+
+        Defaults to FALSE when the lib says nothing: every lib that can
+        really delete declares `can_delete` in its mediatypes dict, and
+        the base lib.delete_show only raises NotImplementedError. An
+        optimistic default would turn a silently unimplemented delete
+        into a Mirror that reports removals it never performed."""
+        return bool(self.mediainfo.get('can_delete', False))
+
+    def remove(self, provider_id, title=None, my_id=None, on_wait=None,
+               cancel=None):
+        """Delete an EXISTING library entry from this provider.
+
+        `my_id` is the provider's library-entry id, persisted from the
+        last fetch as remote-state '_my_id': AniList and both Kitsu
+        backends address a delete by it, MAL by the media id. Paced and
+        rate-limited exactly like push()/add(); a real failure raises
+        AdapterError so the engine can isolate it to this provider.
+
+        Returns True when the delete was sent, False when the provider
+        cannot delete at all (see can_remove) -- never a silent no-op
+        reported as success.
+        """
+        if not self.can_remove():
+            return False
+        item = {'id': self._coerce_id(provider_id), 'my_id': my_id,
+                'title': title or ''}
+        self._send(self.lib.delete_show, item, cancel, on_wait)
+        return True
 
     def values_equivalent(self, field, a, b):
         """True when two canonical values project to the same value on
@@ -365,8 +433,7 @@ class ProviderAdapter:
             step = self.mediainfo.get('score_step', 1)
             return (normalize.provider_score(a, smax, step)
                     == normalize.provider_score(b, smax, step))
-        from hakubun.sync.diff import eq
-        return eq(a, b)
+        return normalize.values_equal(field, a, b)
 
     @staticmethod
     def _coerce_id(provider_id):

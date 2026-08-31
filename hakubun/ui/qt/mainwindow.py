@@ -2598,15 +2598,12 @@ class MainWindow(QMainWindow):
                         '(see the sync window).')
             return
 
-        (mode, plan_only) = present.settings_sync_mode(self.config)
-        idx = win.mode_combo.findData(mode)
-        if idx >= 0:
-            win.mode_combo.setCurrentIndex(idx)
+        plan_only = present.settings_plan_only(self.config)
 
         # No self._busy(): the main window stays usable while the sync
         # runs on the window's worker thread.
-        self.status('Multi-syncing (%s%s)...' % (
-            mode.name.lower(), ', review' if plan_only else ''))
+        self.status('Multi-syncing%s...'
+                    % (' (review)' if plan_only else ''))
         win._run(win._fetch_and_plan,
                  lambda plan, error: self._r_multisync_planned(
                      win, plan, error),
@@ -2642,10 +2639,10 @@ class MainWindow(QMainWindow):
         win.r_planned(plan, None)
         if plan.conflicts:
             self._surface_syncwindow(win)
-            self.status('Multi-sync needs your decision on %d '
-                       'conflict(s).' % len(plan.conflicts))
+            self.status('Multi-sync: %d decision(s) needed -- see the '
+                        'sync window.' % len(plan.conflicts))
             return
-        (_mode, plan_only) = present.settings_sync_mode(self.config)
+        plan_only = present.settings_plan_only(self.config)
         if plan_only:
             # Checked "Fetch & plan only": the point of the setting is
             # seeing the plan, so surface the window even when the plan
@@ -2656,23 +2653,20 @@ class MainWindow(QMainWindow):
             if not plan.changes:
                 self.status('Multi-sync: already in sync.')
             else:
-                self.status('Multi-sync: %d change(s) planned -- review '
-                            'and apply from the sync window.'
+                self.status('Multi-sync: found %d change(s) -- review '
+                            'and sync from the sync window.'
                             % len(plan.changes))
             return
         if not plan.changes:
             self.status('Multi-sync: already in sync.')
             return
-        if any(c.first_sync for c in plan.changes):
-            # First contact with at least one tracker for some field:
-            # nothing has changed since a shared base because there IS
-            # no shared base, so the "winner" is just whichever list was
-            # read first. Those rows are planned unticked; a headless
-            # Sync must never apply them on the user's behalf.
+        if all(c.creates_entry for c in plan.changes):
+            # Only unticked new-entry creates: nothing would apply
+            # headlessly, so surface the window for the opt-in instead
+            # of silently doing nothing.
             self._surface_syncwindow(win)
-            self.status('Multi-sync: first sync for some fields -- '
-                        'review what would be overwritten before '
-                        'applying.')
+            self.status('Multi-sync: %d new-entry add(s) need your '
+                        'opt-in in the sync window.' % len(plan.changes))
             return
         # Clean changes: apply IN the window so its progress bar, log
         # and Cancel button are visible, and the main window is free.

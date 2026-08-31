@@ -1,4 +1,4 @@
-"""SQLite persistence for multisync (schema: docs/multisync.md §5)."""
+"""SQLite persistence for multisync (schema: docs/multisync.md §10)."""
 
 import json
 import sqlite3
@@ -72,10 +72,27 @@ CREATE TABLE IF NOT EXISTS identity_conflicts(
 CREATE TABLE IF NOT EXISTS ownership(
     field TEXT PRIMARY KEY,
     policy TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings(
+    key TEXT PRIMARY KEY,
+    value TEXT);
 CREATE TABLE IF NOT EXISTS resolved_absent(
     uuid TEXT NOT NULL,
     provider TEXT NOT NULL,
     checked_at REAL NOT NULL,
+    PRIMARY KEY(uuid, provider));
+CREATE TABLE IF NOT EXISTS mirror_resolution(
+    uuid TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT,
+    fingerprint TEXT NOT NULL,
+    decided_at REAL NOT NULL,
+    PRIMARY KEY(uuid, field));
+CREATE TABLE IF NOT EXISTS membership(
+    uuid TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    want TEXT NOT NULL,
+    reason TEXT,
+    decided_at REAL NOT NULL,
     PRIMARY KEY(uuid, provider));
 """
 
@@ -125,9 +142,72 @@ class SyncStore:
 
     def _migrate(self):
         self._ensure_column('entities', 'aliases', 'TEXT')
+        self._ensure_column('entities', 'image', 'TEXT')
         self._ensure_column('identity_conflicts', 'entry', 'TEXT')
         self._ensure_column('mappings', 'via', 'TEXT')
         self._ensure_column('local_state', 'source', 'TEXT')
+        self._ensure_column('resolved_absent', 'reason', 'TEXT')
+        self._migrate_membership()
+        self._migrate_mass_deletions()
+
+    def _migrate_mass_deletions(self):
+        """Undo the mass 'deleted' markings a single bad fetch could
+        write before the engine learned to distrust one.
+
+        SyncEngine._forget_unlisted recorded 'ignore'/'deleted' per
+        entry with no sense of scale, so one AniList response that came
+        back short marked 250 entries in the same instant -- and
+        'ignore' means "stop offering this", so nothing would ever
+        propose restoring them. The engine now refuses to draw that
+        conclusion from a mass disappearance; this clears the rows
+        already written by the version that did.
+
+        Identified by exactly that signature: many rows for one
+        provider sharing a single timestamp, which is one fetch, not
+        someone's afternoon. Declines are untouched (a real click), as
+        are ordinary handfuls of website deletions. Clearing a row only
+        makes the entry PROPOSABLE again -- Mirror still asks before
+        anything is created.
+        """
+        rows = self._conn.execute(
+            "SELECT provider, decided_at, COUNT(*) AS n FROM membership"
+            " WHERE want='ignore' AND reason='deleted'"
+            " GROUP BY provider, decided_at HAVING n >= 25").fetchall()
+        for row in rows:
+            self._conn.execute(
+                "DELETE FROM membership WHERE want='ignore'"
+                " AND reason='deleted' AND provider=? AND decided_at=?",
+                (row['provider'], row['decided_at']))
+
+    def _migrate_membership(self):
+        """Move the two resolved_absent reasons that were always USER
+        DECISIONS into the membership table, leaving resolved_absent as
+        what it should have been all along: the network lookup cache.
+
+        Both migrate to 'ignore' ("leave this provider as it is"), never
+        to 'absent'. 'absent' additionally means "remove the entry if
+        the provider has one", and neither historical reason carries
+        that intent: 'declined' meant only "don't create it here", and
+        'deleted' was an OBSERVATION that the user removed it on the
+        website. Promoting either into a deletion proposal would let a
+        stale row silently destroy a list entry the user has since
+        re-added on purpose -- and deletions on real accounts are the
+        one thing here that cannot be undone.
+        """
+        rows = self._conn.execute(
+            "SELECT uuid, provider, reason FROM resolved_absent"
+            " WHERE reason IN ('declined', 'deleted')").fetchall()
+        if not rows:
+            return
+        now = time.time()
+        for row in rows:
+            self._conn.execute(
+                'INSERT OR IGNORE INTO membership(uuid, provider, want,'
+                ' reason, decided_at) VALUES(?,?,?,?,?)',
+                (row['uuid'], row['provider'], 'ignore', row['reason'],
+                 now))
+        self._conn.execute("DELETE FROM resolved_absent WHERE reason IN"
+                           " ('declined', 'deleted')")
 
     def _ensure_column(self, table, column, decl):
         cols = {r['name'] for r in
@@ -141,11 +221,19 @@ class SyncStore:
             self._conn.close()
 
     def reset(self):
-        """Drop everything and re-create the schema. The database is
-        derived state (fetch re-populates it) plus user decisions;
-        after a bad run -- e.g. one polluted by broken title matching
-        creating duplicate entities -- a reset re-derives cleanly."""
+        """Clear sync state and re-create the schema.
+
+        Ownership and entry-owner settings are configuration, not
+        derived sync state, so preserve them across a reset. A reset is
+        commonly used to repair identities or stale history; silently
+        reverting the policy matrix at the same time makes the next
+        fetch behave under different rules than the user selected.
+        """
         with self._lock:
+            preserved_ownership = self._conn.execute(
+                'SELECT field, policy FROM ownership').fetchall()
+            preserved_settings = self._conn.execute(
+                'SELECT key, value FROM settings').fetchall()
             # FK enforcement must be off for the drops, and the pragma
             # is a no-op inside a transaction -- toggle it outside.
             self._conn.execute('PRAGMA foreign_keys=OFF')
@@ -158,6 +246,13 @@ class SyncStore:
                             self._exec('DROP TABLE %s' % row['name'])
                 self._conn.executescript(_SCHEMA)
                 self._migrate()
+                self._conn.executemany(
+                    'INSERT OR REPLACE INTO ownership(field, policy)'
+                    ' VALUES(?,?)',
+                    [(r['field'], r['policy']) for r in preserved_ownership])
+                self._conn.executemany(
+                    'INSERT OR REPLACE INTO settings(key, value) VALUES(?,?)',
+                    [(r['key'], r['value']) for r in preserved_settings])
                 self._entities_cache = None
             finally:
                 self._conn.execute('PRAGMA foreign_keys=ON')
@@ -270,7 +365,7 @@ class SyncStore:
 
     def update_entity_meta(self, uid, **fields):
         allowed = {'title', 'year', 'total', 'status',
-                   'media_type', 'provider_only'}
+                   'media_type', 'provider_only', 'image'}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
@@ -334,22 +429,161 @@ class SyncStore:
             'SELECT * FROM mappings WHERE provider=?',
             (provider,)).fetchall()]
 
-    def mark_absent(self, uid, provider):
-        """Record that a cross-provider id lookup (engine.py's
-        _discover_cross_ids) asked `provider` for this entity and got a
-        genuine 'no entry there' answer -- so the next fetch doesn't
-        repeat the same network call forever. Superseded automatically
-        the moment a REAL mapping appears for (uid, provider) through
-        any path (mappings_of_provider is checked first), so this can
-        never block a later legitimate add or identity link."""
+    def mark_absent(self, uid, provider, reason='lookup_miss'):
+        """Record that a cross-provider id LOOKUP came back empty: this
+        entity is (as of that answer) not on `provider`, so engine.py's
+        _discover_cross_ids doesn't repeat the same network call every
+        fetch forever.
+
+        This table is a network cache, not a decision. User decisions
+        about whether an entry belongs on a provider live in
+        `membership` (set_membership) -- keeping them apart is what
+        stops a stale, purely observational miss from ever being read
+        as "the user wants this removed from Kitsu".
+
+        The row is superseded automatically the moment a REAL mapping
+        appears for (uid, provider) through any path
+        (mappings_of_provider is checked first), so it can never block
+        a later legitimate add or identity link; a re-added entry's
+        fetch likewise gives it a remote snapshot again, which trumps
+        the absence for field planning. clear_absent() forgets it
+        deliberately."""
         self._exec(
             'INSERT OR REPLACE INTO resolved_absent(uuid, provider,'
-            ' checked_at) VALUES(?,?,?)', (uid, provider, time.time()))
+            ' checked_at, reason) VALUES(?,?,?,?)',
+            (uid, provider, time.time(), reason))
+
+    def clear_absent(self, uid, provider):
+        """Forget a recorded absence/exclusion: the next plan may
+        propose creation again."""
+        self._exec('DELETE FROM resolved_absent WHERE uuid=? AND'
+                   ' provider=?', (uid, provider))
 
     def absent_for_provider(self, provider):
         return {r['uuid'] for r in self._exec(
             'SELECT uuid FROM resolved_absent WHERE provider=?',
             (provider,)).fetchall()}
+
+    # -- mirror field resolutions --------------------------------------
+    #
+    # A Mirror conflict is a disagreement BETWEEN TRACKERS that no
+    # policy could settle, so the user settles it. That decision cannot
+    # be recorded the way Sync records one (write local state, advance
+    # every base): Mirror reads neither local state nor base state, by
+    # design -- ignoring history is the whole point of it. A resolution
+    # stored that way would be invisible to the next mirror, which
+    # would re-raise the identical conflict forever.
+    #
+    # So it is stored where Mirror does look: per (entity, field),
+    # together with a FINGERPRINT of the tracker values it was decided
+    # against. The decision stands while those values stand. If any
+    # tracker's value later changes, the question is a genuinely new
+    # one -- the old answer was about a state of the world that no
+    # longer holds -- so the fingerprint stops matching and Mirror asks
+    # again rather than silently applying a stale verdict.
+
+    def set_field_resolution(self, uid, field, value, fingerprint):
+        self._exec(
+            'INSERT OR REPLACE INTO mirror_resolution(uuid, field,'
+            ' value, fingerprint, decided_at) VALUES(?,?,?,?,?)',
+            (uid, field, _dump(value), _dump(fingerprint), time.time()))
+
+    def clear_field_resolution(self, uid, field):
+        self._exec('DELETE FROM mirror_resolution WHERE uuid=? AND'
+                   ' field=?', (uid, field))
+
+    def field_resolutions_many(self, uids):
+        """{(uuid, field): (value, fingerprint)} in a few queries."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, field, value, fingerprint FROM'
+                    ' mirror_resolution WHERE uuid IN (%s)' % marks,
+                    chunk).fetchall():
+                out[(r['uuid'], r['field'])] = (_load(r['value']),
+                                                _load(r['fingerprint']))
+        return out
+
+    # -- membership decisions ------------------------------------------
+    #
+    # Whether an entry should EXIST on a provider is its own question,
+    # with its own persisted state -- deliberately NOT folded into
+    # field ownership (ownership says where a field's value comes from;
+    # it can never say whether a list entry belongs somewhere). Three
+    # distinct wants, because "never add this to Kitsu" and "Kitsu
+    # should not have this" are different states with different
+    # consequences:
+    #
+    #   'present'  the entry belongs on this provider: propose creating
+    #              it there whenever the provider doesn't have it
+    #   'absent'   the entry does NOT belong here: propose REMOVING it
+    #              whenever the provider does have it. Only ever written
+    #              from an explicit user action -- nothing infers it
+    #   'ignore'   whatever this provider currently holds is fine:
+    #              never propose an add or a remove, and stop asking
+    #
+    # No row at all means "undecided": Mirror surfaces the discrepancy
+    # and ordinary Sync offers the (unticked) creation.
+
+    WANTS = ('present', 'absent', 'ignore')
+
+    def set_membership(self, uid, provider, want, reason=None):
+        """Persist a membership decision (see WANTS). Passing None
+        clears it back to undecided."""
+        if want is None:
+            self._exec('DELETE FROM membership WHERE uuid=? AND'
+                       ' provider=?', (uid, provider))
+            return
+        if want not in self.WANTS:
+            raise ValueError('unknown membership want: %s' % want)
+        self._exec(
+            'INSERT OR REPLACE INTO membership(uuid, provider, want,'
+            ' reason, decided_at) VALUES(?,?,?,?,?)',
+            (uid, provider, want, reason, time.time()))
+
+    def membership_of(self, uid):
+        """{provider: want} for one entity (only decided providers)."""
+        return {r['provider']: r['want'] for r in self._exec(
+            'SELECT provider, want FROM membership WHERE uuid=?',
+            (uid,)).fetchall()}
+
+    def membership_many(self, uids):
+        """{uid: {provider: (want, reason)}} in a few queries -- the
+        planner and the mirror planner both need this for every entity
+        at once.
+
+        The reason travels WITH the want because the two are not
+        interchangeable to a reader: an 'ignore' the user asked for and
+        an 'ignore' a fetch inferred from a website deletion are the
+        same state but different facts, and the UI must not describe
+        the second as something the user chose."""
+        out = {}
+        for chunk in _chunked(uids):
+            marks = ','.join('?' * len(chunk))
+            for r in self._exec(
+                    'SELECT uuid, provider, want, reason FROM membership'
+                    ' WHERE uuid IN (%s)' % marks, chunk).fetchall():
+                out.setdefault(r['uuid'], {})[r['provider']] = (
+                    r['want'], r['reason'])
+        return out
+
+    def membership_reason(self, uid, provider):
+        row = self._exec(
+            'SELECT reason FROM membership WHERE uuid=? AND provider=?',
+            (uid, provider)).fetchone()
+        return row['reason'] if row else None
+
+    def absent_reason(self, uid, provider):
+        """The stored reason for an absence row, or None when there is
+        no row (rows from before reasons existed read as the historical
+        default, 'lookup_miss')."""
+        row = self._exec(
+            'SELECT reason FROM resolved_absent WHERE uuid=? AND'
+            ' provider=?', (uid, provider)).fetchone()
+        if row is None:
+            return None
+        return row['reason'] or 'lookup_miss'
 
     def mappings_many(self, uids):
         """{uid: [mapping, ...]} for many entities in a few queries.
@@ -529,6 +763,34 @@ class SyncStore:
     def set_ownership(self, field, policy):
         self._exec('INSERT OR REPLACE INTO ownership(field, policy)'
                    ' VALUES(?,?)', (field, policy.serialize()))
+
+    # -- the master tracker -------------------------------------------
+    #
+    # MEMBERSHIP's equivalent of field ownership: the tracker whose
+    # list decides which entries should exist at all.
+    #
+    # Field ownership cannot answer that -- it says where a SCORE comes
+    # from, not whether Kitsu should hold the entry. Without a master,
+    # every membership difference is a question for the user, which is
+    # how "make these two lists match" turned into one decision per
+    # entry. With one, the answer is derivable: the master's list is
+    # the set, everything else converges to it.
+    #
+    # Optional. Unset means the previous behaviour -- adds proposed
+    # from any tracker that holds the entry, removals only from an
+    # explicit per-entry decision.
+
+    def master(self):
+        row = self._exec('SELECT value FROM settings WHERE key=?',
+                         ('master',)).fetchone()
+        return row['value'] if row and row['value'] else None
+
+    def set_master(self, provider):
+        if provider:
+            self._exec('INSERT OR REPLACE INTO settings(key, value)'
+                       ' VALUES(?,?)', ('master', provider))
+        else:
+            self._exec('DELETE FROM settings WHERE key=?', ('master',))
 
     # -- identity conflicts -------------------------------------------
 
