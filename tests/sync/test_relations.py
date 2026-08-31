@@ -42,6 +42,30 @@ def test_missing_file_yields_empty_atlas(tmp_path):
     assert len(atlas) == 0
 
 
+def test_aod_json_adds_mal_kitsu_anilist_ids(tmp_path):
+    path = tmp_path / 'aod.json'
+    path.write_text('''{"data": [{"sources": [
+        "https://myanimelist.net/anime/1/Test",
+        "https://kitsu.app/anime/2",
+        "https://anilist.co/anime/3/Test",
+        "https://anidb.net/anime/4"
+    ]}]}''')
+    atlas = RelationsAtlas().add_aod(path)
+    assert atlas.lookup('mal', '1') == {'kitsu': '2', 'anilist': '3'}
+
+
+def test_anime_relations_wins_aod_conflict(tmp_path):
+    relation_path = tmp_path / 'relations'
+    relation_path.write_text('- 1|2|3:1 -> 1|2|3:1\n')
+    aod_path = tmp_path / 'aod.json'
+    aod_path.write_text('''{"data": [{"sources": [
+        "https://myanimelist.net/anime/1/Test",
+        "https://kitsu.app/anime/99"
+    ]}]}''')
+    atlas = RelationsAtlas.from_file(relation_path).add_aod(aod_path)
+    assert atlas.lookup('mal', '1')['kitsu'] == '2'
+
+
 def test_atlas_links_entries_without_published_ids(store, tmp_path):
     """A Kitsu entry with no provider-published mapping still links
     exactly via the community atlas -- no title matching involved."""

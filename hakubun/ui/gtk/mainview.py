@@ -190,6 +190,9 @@ class MainView(Gtk.Box):
             'show_deleted', self._on_changed_show_status_idle)
         self._engine.connect_signal(
             'prompt_for_update', self._on_prompt_update_next_idle)
+        self._engine.connect_signal(
+            'titles_changed',
+            lambda: GLib.idle_add(self.populate_all_pages))
 
     def _engine_start(self):
         threading.Thread(target=self._engine_start_task).start()
@@ -342,10 +345,12 @@ class MainView(Gtk.Box):
         # provider, an owned Score in the owner's rating system).
         self._refresh_multisync_overlay()
         library = self._engine.library()
+        primary_titles = self._engine.primary_titles()
         for show in self._engine.get_list():
             self._list.append(show,
                               self._engine.altname(show['id']),
-                              library.get(show['id']))
+                              library.get(show['id']),
+                              primary_titles.get(show['id']))
 
         self._list.set_sort_column_id(1, Gtk.SortType.ASCENDING)
         for status in self._pages:
@@ -709,7 +714,8 @@ class MainView(Gtk.Box):
         GLib.idle_add(self._update_show_title, show, altname)
 
     def _update_show_title(self, show, altname):
-        self._list.update_title(show, altname)
+        self._list.update_title(
+            show, altname, self._engine.primary_title(show))
 
     def _on_changed_show_status_idle(self, show, old_status=None):
         GLib.idle_add(self._update_show_status, show, old_status)
@@ -719,7 +725,10 @@ class MainView(Gtk.Box):
         status = show['my_status']
         try:
             self._engine.get_show_info(showid=show['id'])
-            self._list.update_or_append(show)
+            self._list.update_or_append(
+                show, self._engine.altname(show['id']),
+                self._engine.library().get(show['id']),
+                self._engine.primary_title(show))
         except utils.EngineError:
             self._list.remove(show)
         # TreeModelFilter doesn't re-run its visible_func on a row-changed
@@ -795,7 +804,8 @@ class MainView(Gtk.Box):
             self._image_thread.cancel()
 
         self.show_title.set_text(
-            '<span size="14000"><b>{0}</b></span>'.format(html.escape(show['title'])))
+            '<span size="14000"><b>{0}</b></span>'.format(
+                html.escape(self._engine.primary_title(show))))
         self.show_title.set_use_markup(True)
 
         # Episode selector

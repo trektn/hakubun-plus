@@ -50,6 +50,89 @@ SUPPORTED_LANGUAGES = [
 ]
 
 _translation = gettext.NullTranslations()
+_active_language = 'en'
+
+
+# Primary-title choices are intentionally tied to the interface language.
+# The values are stable config/API identifiers; labels are resolved live so
+# the Settings window itself follows the selected UI catalog.
+_TITLE_MODES = {
+    'en': (
+        ('english', 'English'),
+        ('romaji', 'Romaji'),
+        ('native', 'Native'),
+    ),
+    'ja': (
+        ('native', '日本語'),
+    ),
+    'zh_CN': (
+        ('zh-Hans', '简体中文'),
+        ('zh-Hant', '繁體中文'),
+        ('native', 'Native'),
+    ),
+    'zh_TW': (
+        ('zh-Hant', '繁體中文'),
+        ('zh-Hans', '简体中文'),
+        ('native', 'Native'),
+    ),
+    'es': (
+        ('spanish', 'Español'),
+        ('romaji', 'Romaji'),
+        ('native', 'Native'),
+    ),
+}
+
+
+def effective_language(language='auto'):
+    """Return one supported language code for a UI config value.
+
+    ``auto`` follows the same environment/locale inputs gettext uses, but
+    collapses regional variants (``es_MX`` -> ``es``) to the catalogs and
+    title-mode matrices Hakubun+ actually supports.
+    """
+    candidates = []
+    if language and language != 'auto':
+        candidates.append(language)
+    else:
+        for name in ('LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG'):
+            value = os.environ.get(name)
+            if value:
+                candidates.extend(value.split(':'))
+        try:
+            loc = locale.getlocale(locale.LC_MESSAGES)[0]
+        except (AttributeError, TypeError, ValueError):
+            loc = None
+        if loc:
+            candidates.append(loc)
+
+    for candidate in candidates:
+        code = candidate.split('.', 1)[0].replace('-', '_')
+        if code in _TITLE_MODES:
+            return code
+        if code.startswith('zh_'):
+            territory = code.split('_', 1)[1].upper()
+            return 'zh_TW' if territory in ('TW', 'HK', 'MO', 'HANT') \
+                else 'zh_CN'
+        base = code.split('_', 1)[0].lower()
+        if base in ('en', 'ja', 'es'):
+            return base
+    return 'en'
+
+
+def active_language():
+    """Language selected by the most recent :func:`install` call."""
+    return _active_language
+
+
+def title_mode_options(language='auto'):
+    """Available ``(mode, label)`` primary-title choices for a UI language."""
+    return [(mode, _(label))
+            for mode, label in _TITLE_MODES[effective_language(language)]]
+
+
+def default_title_mode(language='auto'):
+    """Default primary-title mode for a UI language."""
+    return _TITLE_MODES[effective_language(language)][0][0]
 
 
 def _(msgid):
@@ -97,7 +180,8 @@ _DETAILS_FIELD_LABELS = (
     _('Titles'), _('Average Rating'), _('Rank'), _('NSFW'),
     _('Serialization'), _('Expected Release'), _('Original Name'),
     _('Released'), _('Languages'), _('Original Language'), _('Platforms'),
-    _('Aliases'), _('Length'), _('Links'),
+    _('Aliases'), _('Length'), _('Links'), _('Next episode will air in'),
+    _('Next episode'), _('Tracker title'),
 )
 
 # Same reasoning as _DETAILS_FIELD_LABELS above, but for the watch/read
@@ -148,6 +232,23 @@ _COLUMN_LABELS = (
     _('Start'), _('End'), _('My end'), _('Airing Status'),
 )
 
+# Date names are looked up dynamically after strftime produces the system
+# locale's English token, so keep literals here for gettext extraction.
+_DATE_LABELS = (
+    _('Monday'), _('Tuesday'), _('Wednesday'), _('Thursday'),
+    _('Friday'), _('Saturday'), _('Sunday'),
+    _('Mon'), _('Tue'), _('Wed'), _('Thu'), _('Fri'), _('Sat'), _('Sun'),
+    _('Jan'), _('Feb'), _('Mar'), _('Apr'), _('May'), _('Jun'),
+    _('Jul'), _('Aug'), _('Sep'), _('Oct'), _('Nov'), _('Dec'),
+)
+
+# title_mode_options() looks labels up dynamically from _TITLE_MODES, so these
+# literals keep the setting choices visible to xgettext.
+_TITLE_MODE_LABELS = (
+    _('Romaji'), _('Native'), _('日本語'), _('简体中文'),
+    _('繁體中文'), _('Español'),
+)
+
 
 def _languages_for(language):
     """Resolves a config 'language' value to the list gettext.translation's
@@ -170,7 +271,8 @@ def install(language='auto'):
     for the requested language, rather than raising -- a missing .mo is
     expected for a language nobody has translated yet.
     """
-    global _translation
+    global _translation, _active_language
+    _active_language = effective_language(language)
 
     # GtkBuilder resolves translatable="yes" strings through the C
     # library's dgettext() at parse time, which -- unlike Python's

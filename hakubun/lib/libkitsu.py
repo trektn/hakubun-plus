@@ -468,9 +468,34 @@ class libkitsu(lib):
         show['duration'] = info.get('duration')
 
     def request_info(self, item_list):
+        """Fetch complete legacy-REST details, including categories."""
         self.msg.debug("Missing show info requested: " + repr(item_list))
-        # TODO implement
-        raise NotImplementedError
+        infolist = []
+        for item in item_list:
+            try:
+                body = self._request(
+                    'GET', '%s/%s/%s' % (
+                        self.prefix, self.mediatype, item['id']),
+                    get={'include': 'categories'})
+                document = json.loads(body)
+            except (urllib.error.HTTPError, urllib.error.URLError) as error:
+                raise utils.APIError(
+                    'Error getting show details: %s' % error)
+
+            categories = []
+            for resource in document.get('included') or ():
+                if resource.get('type') != 'categories':
+                    continue
+                title = (resource.get('attributes') or {}).get('title')
+                if title:
+                    categories.append(title)
+            info = self._parse_info(document['data'])
+            info['genre_sources'] = {'kitsu': categories}
+            info['extra'].insert(1, ('Genres', categories))
+            infolist.append(info)
+
+        self._emit_signal('show_info_changed', infolist)
+        return infolist
 
     def add_show(self, item):
         """Adds a new show in the server"""

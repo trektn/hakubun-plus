@@ -224,11 +224,12 @@ class ShowListModel(QtCore.QAbstractTableModel):
         elif row in self.eps:
             del self.eps[row]
 
-    def setShowList(self, showlist, altnames, library):
+    def setShowList(self, showlist, altnames, library, primary_titles=None):
         self.beginResetModel()
 
         self.showlist = list(showlist)
         self.altnames = altnames
+        self.primary_titles = primary_titles or {}
         self.library = library
 
         self.id_map = {}
@@ -305,7 +306,7 @@ class ShowListModel(QtCore.QAbstractTableModel):
             if column == ShowListModel.COL_ID:
                 return show['id']
             elif column == ShowListModel.COL_TITLE:
-                title_str = show['title']
+                title_str = self.primary_titles.get(show['id'], show['title'])
                 if show['id'] in self.altnames:
                     title_str += " [%s]" % self.altnames[show['id']]
                 return title_str
@@ -358,7 +359,8 @@ class ShowListModel(QtCore.QAbstractTableModel):
             elif column == ShowListModel.COL_SEASON:
                 return utils.get_season_label(show)
             elif column == ShowListModel.COL_TYPE:
-                return str(show['type'])
+                from hakubun.metadata import localize_type
+                return localize_type(show['type'])
             elif column == ShowListModel.COL_PLATFORM_SCORE:
                 return show.get('platform_score') or '-'
             elif column == ShowListModel.COL_MAL_SCORE:

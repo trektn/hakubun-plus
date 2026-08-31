@@ -109,6 +109,7 @@ class EngineWorker(QtCore.QThread):
     prompt_for_update = QtCore.pyqtSignal(dict, int)
     prompt_for_add = QtCore.pyqtSignal(dict, int)
     undo_stack_changed = QtCore.pyqtSignal()
+    titles_changed = QtCore.pyqtSignal()
 
     def __init__(self):
         super(EngineWorker, self).__init__()
@@ -158,6 +159,9 @@ class EngineWorker(QtCore.QThread):
     def _undo_stack_changed(self):
         self.undo_stack_changed.emit()
 
+    def _titles_changed(self):
+        self.titles_changed.emit()
+
     def _start(self, account):
         self.engine = Engine(account, self._messagehandler)
 
@@ -177,6 +181,7 @@ class EngineWorker(QtCore.QThread):
         self.engine.connect_signal('tracker_state', self._tracker_state)
         self.engine.connect_signal(
             'undo_stack_changed', self._undo_stack_changed)
+        self.engine.connect_signal('titles_changed', self._titles_changed)
 
         self.engine.start()
 

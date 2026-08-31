@@ -45,7 +45,9 @@ class Data:
     # time their details are viewed -- without invalidating the whole
     # database (which would also drop the unsynced queue). See info_get().
     # 1: MAL/Kitsu gained Genres/Studios/Season parity with AniList.
-    info_schema = 1
+    # 2: Genre rows became canonical category metadata; legacy Kitsu now
+    #    fetches categories on demand instead of serving a partial cache.
+    info_schema = 2
 
     msg = None
     api = None

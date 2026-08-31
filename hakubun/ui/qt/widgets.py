@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QDoubleSpinBox, QFormLayout, QHB
                              QToolButton, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.qt.delegates import AddListDelegate, ShowsTableDelegate
 from hakubun.ui.qt.models import AddListModel, AddListProxy, AddTableModel, ShowListModel, ShowListProxy
 from hakubun.ui.qt.util import getIcon
@@ -194,8 +195,11 @@ class DetailsWidget(QWidget):
         # self.show_title.width() read whatever placeholder width Qt
         # hands out pre-layout (often near-zero), truncating titles far
         # more aggressively than the dialog's real width ever required.
+        primary_title = getattr(
+            self.worker.engine, 'primary_title',
+            lambda current: current['title'])(show)
         self.show_title.setText("<a href=\"%s\">%s</a>" % (
-            html.escape(show['url']), html.escape(show['title'])))
+            html.escape(show['url']), html.escape(primary_title)))
         self.show_title.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.show_title.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)

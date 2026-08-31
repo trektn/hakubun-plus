@@ -788,6 +788,7 @@ class libkitsu_graphql(lib):
                 '#%d' % media['userCountRank'] if media.get('userCountRank') else None),
             'duration':    media.get('episodeLength'),
             'mal_id':      self._mal_id_from_mappings(media.get('mappings')),
+            'genre_sources': {'kitsu': genres},
             'url': "https://kitsu.app/{}/{}".format(
                 self.mediatype, media.get('slug')),
             'aliases':     aliases,

@@ -6,6 +6,7 @@ import datetime
 import pytest
 
 from hakubun import utils
+from hakubun import i18n
 
 
 NOW = datetime.datetime(2026, 7, 30, 12, 0, tzinfo=datetime.timezone.utc)
@@ -73,3 +74,17 @@ def test_next_airing_names_the_quantity_and_anchors_it_to_a_date():
 
 def test_next_airing_has_nothing_to_say_about_a_past_time():
     assert utils.format_next_airing(at(days=-1), NOW) is None
+
+
+def test_japanese_airing_date_uses_native_order_and_punctuation():
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    now = datetime.datetime(2026, 8, 30, 12, tzinfo=local_tz)
+    airing = datetime.datetime(2026, 9, 1, 12, tzinfo=local_tz)
+    try:
+        i18n.install('ja')
+        assert utils.format_airing_day(airing.date()) == '9月1日（火）'
+        assert utils.format_next_airing(airing, now) \
+            == '9月1日（火）・あと2日'
+        assert utils.format_episode_number(9) == '第9話'
+    finally:
+        i18n.install('en')

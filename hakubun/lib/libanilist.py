@@ -327,6 +327,7 @@ fragment mediaListEntry on MediaList {
                     'my_id': item['id'],
                     'id': showid,
                     'title': media['title']['userPreferred'],
+                    'title_native': media['title'].get('native'),
                     'aliases': self._get_aliases(media),
                     'type': self._translate_type(media['format']),
                     'status': self._translate_status(media['status']),
@@ -454,6 +455,7 @@ fragment mediaListEntry on MediaList {
       siteUrl
       description
       genres
+      tags { name isMediaSpoiler }
       synonyms
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
@@ -516,6 +518,7 @@ fragment mediaListEntry on MediaList {
       siteUrl
       description
       genres
+      tags { name isMediaSpoiler }
       synonyms
       studios(sort: NAME, isMain: true) { nodes { name } }
       seasonYear
@@ -549,10 +552,16 @@ fragment mediaListEntry on MediaList {
         else:
             season_and_year = None
 
+        genre_labels = list(item.get('genres') or ())
+        genre_labels.extend(
+            tag.get('name') for tag in item.get('tags') or ()
+            if tag.get('name') and not tag.get('isMediaSpoiler'))
+
         info.update({
             'id': showid,
             'mal_id': item.get('idMal'),
             'title': item['title']['userPreferred'],
+            'title_native': item['title'].get('native'),
             'total': self._c(item[self.total_str]),
             'aliases': self._get_aliases(item),
             'type': type_,
@@ -584,13 +593,14 @@ fragment mediaListEntry on MediaList {
             'popularity_label': (
                 '{:,} users'.format(item['popularity'])
                 if item.get('popularity') is not None else None),
+            'genre_sources': {'anilist': genre_labels},
             'extra': [
                 ('English',         item['title'].get('english')),
                 ('Romaji',          item['title'].get('romaji')),
                 ('Japanese',        item['title'].get('native')),
                 ('Synonyms',        item.get('synonyms')),
                 ('Season',          season_and_year),
-                ('Genres',          item.get('genres')),
+                ('Genres',          genre_labels),
                 ('Studios',         [s['name'] for s in item['studios']['nodes']]),
                 ('Synopsis',        utils.clean_synopsis(item.get('description'))),
                 ('Type',            type_),

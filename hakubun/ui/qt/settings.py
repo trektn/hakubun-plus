@@ -525,8 +525,31 @@ class SettingsDialog(QDialog):
         for (code, label) in i18n.SUPPORTED_LANGUAGES:
             self.ui_language.addItem(label, code)
         self.ui_language.setToolTip(_('Takes effect after restarting Hakubun+.'))
+        self.title_language = QComboBox()
+        self.title_language.setToolTip(_(
+            'Requires anime-offline-database.json (or the minified JSON or '
+            'JSONL version) in Hakubun\'s configuration or data folder. It '
+            'maps tracker IDs to AniDB; AniDB title data is downloaded and '
+            'cached automatically. Unmatched shows keep the tracker title.'))
+        self.chinese_native_title_fallback = QCheckBox(
+            _('Use native fallback for Chinese titles'))
+        self.chinese_native_title_fallback.setToolTip(_(
+            'When a Simplified or Traditional Chinese title is unavailable, '
+            'use the native title before romaji or the tracker title.'))
+        self.tmdb_api_key = QLineEdit()
+        self.tmdb_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tmdb_api_key.setToolTip(_(
+            'Required for translated synopsis fallbacks from TMDB. The key '
+            'is stored only in your local Hakubun configuration.'))
+        self.title_language.currentIndexChanged.connect(
+            self._update_chinese_title_fallback)
+        self.ui_language.currentIndexChanged.connect(
+            self.s_ui_language_changed)
         g_language_layout = QFormLayout()
         g_language_layout.addRow(_('UI language:'), self.ui_language)
+        g_language_layout.addRow(_('Primary title:'), self.title_language)
+        g_language_layout.addRow(self.chinese_native_title_fallback)
+        g_language_layout.addRow(_('TMDB API key:'), self.tmdb_api_key)
         g_language.setLayout(g_language_layout)
 
         # Group: Icon
@@ -833,6 +856,10 @@ class SettingsDialog(QDialog):
 
         self.ui_language.setCurrentIndex(
             max(0, self.ui_language.findData(self.config.get('language', 'auto'))))
+        self._refresh_title_modes(engine.get_config('title_language'))
+        self.chinese_native_title_fallback.setChecked(
+            engine.get_config('chinese_native_title_fallback'))
+        self.tmdb_api_key.setText(engine.get_config('tmdb_api_key'))
         self.tray_icon.setChecked(self.config['show_tray'])
         self.close_to_tray.setChecked(self.config['close_to_tray'])
         self.start_in_tray.setChecked(self.config['start_in_tray'])
@@ -979,6 +1006,13 @@ class SettingsDialog(QDialog):
 
         engine.set_config('kitsu_api',
                           self.kitsu_api.itemData(self.kitsu_api.currentIndex()))
+        engine.set_config(
+            'title_language',
+            self.title_language.itemData(self.title_language.currentIndex()))
+        engine.set_config(
+            'chinese_native_title_fallback',
+            self.chinese_native_title_fallback.isChecked())
+        engine.set_config('tmdb_api_key', self.tmdb_api_key.text().strip())
 
         engine.save_config()
 
@@ -1035,6 +1069,26 @@ class SettingsDialog(QDialog):
         if box.clickedButton() is restart_btn:
             subprocess.Popen([sys.executable] + sys.argv)
             QApplication.instance().quit()
+
+    def _refresh_title_modes(self, preferred=None):
+        preferred = preferred or self.title_language.currentData()
+        language = self.ui_language.currentData() or 'auto'
+        self.title_language.blockSignals(True)
+        self.title_language.clear()
+        for mode, label in i18n.title_mode_options(language):
+            self.title_language.addItem(label, mode)
+        index = self.title_language.findData(preferred)
+        self.title_language.setCurrentIndex(max(0, index))
+        self.title_language.setEnabled(self.title_language.count() > 1)
+        self.title_language.blockSignals(False)
+        self._update_chinese_title_fallback()
+
+    def _update_chinese_title_fallback(self, _index=None):
+        self.chinese_native_title_fallback.setEnabled(
+            self.title_language.currentData() in ('zh-Hans', 'zh-Hant'))
+
+    def s_ui_language_changed(self, _index):
+        self._refresh_title_modes()
 
     def s_save(self):
         self._save()

@@ -459,6 +459,7 @@ class libmal(lib):
             'popularity_label': (
                 '#%d' % item['popularity'] if item.get('popularity') else None),
             'airing_time': airing_time,
+            'genre_sources': {'mal': genres},
             'extra': [
                 ('English',         item['alternative_titles'].get('en')),
                 ('Japanese',        item['alternative_titles'].get('ja')),

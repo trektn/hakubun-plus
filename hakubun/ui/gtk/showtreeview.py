@@ -16,6 +16,7 @@
 from gi.repository import GObject, Gdk, Gtk, Pango
 
 from hakubun import utils
+from hakubun.metadata import localize_status, localize_type
 
 # Used to drag a show from a status tab's list onto a different status
 # tab's label to change its status (see ShowTreeView / MainView).
@@ -120,7 +121,7 @@ def status_label(status):
         status = utils.Status(status)
     except ValueError:
         return ''
-    return _STATUS_LABELS.get(status, status.value)
+    return localize_status(status)
 
 
 def sort_by_season(model, iter1, iter2, data):
@@ -244,11 +245,11 @@ class ShowListStore(Gtk.ListStore):
         else:
             return None
 
-    def append(self, show, altname=None, eps=None):
+    def append(self, show, altname=None, eps=None, primary_title=None):
         cells = overlay_cells(show, self.overlay.get(show['id']),
                               self.decimals, self.factor)
 
-        title_str = show['title']
+        title_str = primary_title or show['title']
         if altname:
             title_str += " [%s]" % altname
 
@@ -287,7 +288,7 @@ class ShowListStore(Gtk.ListStore):
                my_last_update,
                my_last_update_timestamp,
                utils.get_season_label(show),
-               str(show['type']),
+               localize_type(show['type']),
                show.get('platform_score') or '-',
                show.get('mal_score') or '-',
                Pango.Style.ITALIC if cells['score_italic']
@@ -298,12 +299,13 @@ class ShowListStore(Gtk.ListStore):
                ]
         super().append(row)
 
-    def update_or_append(self, show):
+    def update_or_append(self, show, altname=None, eps=None,
+                         primary_title=None):
         for row in self:
             if int(row[0]) == show['id']:
                 self.update(show, row)
                 return
-        self.append(show)
+        self.append(show, altname, eps, primary_title)
 
     def update(self, show, row=None):
         if not row:
@@ -326,7 +328,7 @@ class ShowListStore(Gtk.ListStore):
             row[17] = utils.format_local_time(my_last_update)
             row[18] = show['my_last_update'].timestamp() if show['my_last_update'] is not None else 0
             row[19] = utils.get_season_label(show)
-            row[20] = str(show['type'])
+            row[20] = localize_type(show['type'])
             row[21] = show.get('platform_score') or '-'
             row[22] = show.get('mal_score') or '-'
             row[23] = (Pango.Style.ITALIC if cells['score_italic']
@@ -373,13 +375,14 @@ class ShowListStore(Gtk.ListStore):
             row[24] = cells['score_owner']
             row[25] = cells['synced_score_str']
 
-    def update_title(self, show, altname=None):
+    def update_title(self, show, altname=None, primary_title=None):
         for row in self:
             if int(row[0]) == show['id']:
                 if altname:
-                    title_str = "%s [%s]" % (show['title'], altname)
+                    title_str = "%s [%s]" % (
+                        primary_title or show['title'], altname)
                 else:
-                    title_str = show['title']
+                    title_str = primary_title or show['title']
 
                 row[1] = title_str
                 return

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLa
                              QSizePolicy, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.qt.workers import ImageWorker
 
 _CARD_WIDTH = 130
@@ -42,7 +43,7 @@ class AiringShowCard(QFrame):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        self.image_label = QLabel('...')
+        self.image_label = QLabel(_('...'))
         self.image_label.setFixedSize(*_IMAGE_SIZE)
         self.image_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet(
@@ -58,7 +59,7 @@ class AiringShowCard(QFrame):
         title_label.setFont(title_font)
         layout.addWidget(title_label)
 
-        when_label = QLabel('Ep %d — %s' % (
+        when_label = QLabel(_('Ep %d — %s') % (
             entry['episode'], utils.format_relative_airtime(entry['airing_at'])))
         when_label.setWordWrap(True)
         when_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -67,7 +68,7 @@ class AiringShowCard(QFrame):
 
         behind_by = (entry['episode'] - 1) - (show.get('my_progress') or 0)
         status_label = QLabel(
-            'Up to date' if behind_by <= 0 else 'Behind by %d' % behind_by)
+            _('Up to date') if behind_by <= 0 else _('Behind by %d') % behind_by)
         status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         status_label.setStyleSheet(
             'color: #4CAF50; font-weight: bold;' if behind_by <= 0
@@ -77,7 +78,7 @@ class AiringShowCard(QFrame):
         self.setLayout(layout)
 
         if not (show.get('image_thumb') or show.get('image')):
-            self.image_label.setText('No image')
+            self.image_label.setText(_('No image'))
 
     def set_pixmap_from_file(self, filename):
         self.image_label.setPixmap(QtGui.QPixmap(filename).scaled(
@@ -93,7 +94,7 @@ class _DayColumn(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
 
-        header = QLabel(date.strftime('%A\n%b %d'))
+        header = QLabel(utils.format_airing_day(date))
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header_font = QtGui.QFont()
         header_font.setBold(True)
@@ -127,12 +128,12 @@ class AiringScheduleDialog(QDialog):
     def __init__(self, parent, worker):
         QDialog.__init__(self, parent)
         self.worker = worker
-        self.setWindowTitle('Airing Schedule')
+        self.setWindowTitle(_('Airing Schedule'))
         self.resize(1080, 420)
 
         layout = QVBoxLayout()
 
-        self.status_label = QLabel('Loading airing schedule...')
+        self.status_label = QLabel(_('Loading airing schedule...'))
         layout.addWidget(self.status_label)
 
         scroll_area = QScrollArea()
@@ -169,7 +170,7 @@ class AiringScheduleDialog(QDialog):
 
     def r_schedule_loaded(self, result):
         if not result['success']:
-            self.status_label.setText('Could not load airing schedule.')
+            self.status_label.setText(_('Could not load airing schedule.'))
             return
 
         schedule = result['result']
@@ -186,14 +187,14 @@ class AiringScheduleDialog(QDialog):
         total_this_week = sum(len(entries) for entries in by_day.values())
         if not schedule:
             self.status_label.setText(
-                'No airing shows with a known schedule in your list.')
+                _('No airing shows with a known schedule in your list.'))
         elif not total_this_week:
             self.status_label.setText(
-                'Nothing airing in the next 7 days -- %d upcoming episode(s) further out.'
+                _('Nothing airing in the next 7 days -- %d upcoming episode(s) further out.')
                 % len(schedule))
         else:
             self.status_label.setText(
-                '%d episode(s) airing this week.' % total_this_week)
+                _('%d episode(s) airing this week.') % total_this_week)
 
         for i, day in enumerate(days):
             if i > 0:

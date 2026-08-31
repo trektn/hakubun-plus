@@ -1070,6 +1070,7 @@ class MainWindow(QMainWindow):
         self.worker.prompt_for_update.connect(self.ws_prompt_update)
         self.worker.prompt_for_add.connect(self.ws_prompt_add)
         self.worker.undo_stack_changed.connect(self.ws_undo_stack_changed)
+        self.worker.titles_changed.connect(self._rebuild_view)
 
         # Show main window
         if not (self.config['show_tray'] and self.config['start_in_tray']):
@@ -1247,14 +1248,12 @@ class MainWindow(QMainWindow):
         self._apply_filter_bar()
         self._apply_sync_action_label()
         self._apply_subminer_state()
-        # Refresh the multi-sync overlay so it follows the Settings
-        # toggle immediately (on or off), instead of lingering until
-        # the next full list rebuild.
+        # Rebuild once so both the multi-sync overlay and the selected
+        # AOD/AniDB primary-title mode take effect immediately.
         try:
-            self._apply_multisync_overlay(self.worker.engine.get_list())
+            self._rebuild_view()
         except utils.HakubunError:
             pass
-        # TODO: Reload listviews?
         if self._taiga_mode:
             self._rebuild_library_folders_menu()
         if self.worker.engine.get_config('sync_on_settings_apply'):
@@ -1524,6 +1523,7 @@ class MainWindow(QMainWindow):
         """
         showlist = self.worker.engine.get_list()
         altnames = self.worker.engine.altnames()
+        primary_titles = self.worker.engine.primary_titles()
         library = self.worker.engine.library()
 
         # Set allowed ranges (this will be reported by the engine later)
@@ -1534,7 +1534,8 @@ class MainWindow(QMainWindow):
         self.view.model().setFilterStatus(
             self.notebook.tabData(self.notebook.currentIndex()))
         self.view.model().sourceModel().setMediaInfo(self.mediainfo)
-        self.view.model().sourceModel().setShowList(showlist, altnames, library)
+        self.view.model().sourceModel().setShowList(
+            showlist, altnames, library, primary_titles)
         self._apply_multisync_overlay(showlist)
         self.view.resizeRowsToContents()
         self.view.setSortingEnabled(True)
@@ -1736,7 +1737,8 @@ class MainWindow(QMainWindow):
         # Update information
         metrics = QtGui.QFontMetrics(self.show_title.font())
         title = metrics.elidedText(
-            show['title'], QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
+            self.worker.engine.primary_title(show),
+            QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
         self.show_title.setText(title)
 
         self.show_progress.setValue(show['my_progress'])
@@ -2723,9 +2725,12 @@ class MainWindow(QMainWindow):
                           '<p>Optional fuzzy title matching uses '
                           '<a href="https://github.com/rapidfuzz/RapidFuzz">RapidFuzz</a>, '
                           'licensed under the MIT license.</p>'
+                          '<p align="center"><img src="%s" width="205" height="27"></p>'
+                          '<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
-                              utils.DATADIR + '/about_logo.png', self.app_name, version))
+                              utils.DATADIR + '/about_logo.png', self.app_name,
+                              version, utils.DATADIR + '/tmdb-logo.svg'))
 
     def s_about_qt(self):
         QMessageBox.aboutQt(self, 'About Qt')
