@@ -88,6 +88,13 @@ class libkitsu_graphql(lib):
         'can_score': True,
         'can_status': True,
         'can_update': True,
+        # LibraryEntry create/update inputs expose startedAt/finishedAt.
+        'can_date': True,
+        # LibraryEntryCreateInput.status is non-null.  When sync policy
+        # deliberately supplies no status, creating as "planned" is the
+        # least assumptive valid entry and keeps the required API detail
+        # visible in the Mirror preview via ProviderAdapter.
+        'add_default_status': 'plan',
         'can_play': True,
         'can_reference_mal': True,
         'statuses_start': ['current'],
@@ -112,6 +119,8 @@ class libkitsu_graphql(lib):
         'can_score': True,
         'can_status': True,
         'can_update': True,
+        'can_date': True,
+        'add_default_status': 'plan',
         'can_play': False,
         'can_reference_mal': True,
         'statuses_start': ['current'],
@@ -573,6 +582,10 @@ class libkitsu_graphql(lib):
             'mediaType': self._gql_mediatype(),
         }
         self._apply_entry_fields(input_fields, item)
+        # GraphQL rejects an omitted status as null.  ProviderAdapter
+        # normally supplies this and reports it in the plan, but keep the
+        # API boundary valid for every other add_show caller too.
+        input_fields.setdefault('status', self._status_to_gql('planned'))
 
         query = '''
         mutation ($input: LibraryEntryCreateInput!) {
@@ -626,9 +639,7 @@ class libkitsu_graphql(lib):
         self._check_mutation_errors(data['libraryEntry']['delete'], 'deleting')
 
     def _apply_entry_fields(self, input_fields, item):
-        """Copies the mutable library-entry fields from a Hakubun+ item
-        into a GraphQL input dict, matching the REST backend's behaviour
-        of only syncing progress/status/rating."""
+        """Copy mutable library-entry fields into a GraphQL input dict."""
         if 'my_progress' in item:
             input_fields['progress'] = item['my_progress']
         if 'my_rewatched_times' in item:
@@ -638,6 +649,19 @@ class libkitsu_graphql(lib):
         if 'my_score' in item:
             input_fields['rating'] = utils.kitsu_rating_twenty(
                 item['my_score'])
+        for source, target in (('my_start_date', 'startedAt'),
+                               ('my_finish_date', 'finishedAt')):
+            if source in item:
+                input_fields[target] = self._date2iso8601(item[source])
+
+    @staticmethod
+    def _date2iso8601(value):
+        """Turn canonical date values into Kitsu's datetime scalar format."""
+        if value is None:
+            return None
+        if isinstance(value, datetime.datetime):
+            value = value.date()
+        return '%sT00:00:00Z' % value.isoformat()
 
     def _check_mutation_errors(self, payload, action):
         errors = payload.get('errors')

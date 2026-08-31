@@ -9,7 +9,8 @@ from hakubun.sync.store import SyncStore
 
 MEDIAINFO = {
     'mal': {'mediatype': 'anime', 'score_max': 10, 'score_step': 1,
-            'can_score': True, 'can_status': True, 'can_update': True,
+            'can_score': True, 'can_status': True,
+            'can_update': True, 'can_delete': True,
             'can_date': True, 'can_tag': False,
             'statuses_dict': {'watching': 'Watching',
                               'completed': 'Completed',
@@ -17,7 +18,8 @@ MEDIAINFO = {
                               'dropped': 'Dropped',
                               'plan_to_watch': 'Plan to Watch'}},
     'anilist': {'mediatype': 'anime', 'score_max': 100, 'score_step': 1,
-                'can_score': True, 'can_status': True, 'can_update': True,
+                'can_score': True, 'can_status': True,
+                'can_update': True, 'can_delete': True,
                 'can_date': True, 'can_tag': True,
                 'statuses_dict': {'CURRENT': 'Watching',
                                   'COMPLETED': 'Completed',
@@ -30,7 +32,8 @@ MEDIAINFO = {
     # models a finer grid than the real lib silently blesses scores the
     # API would reject.
     'kitsu': {'mediatype': 'anime', 'score_max': 5, 'score_step': 0.5,
-              'can_score': True, 'can_status': True, 'can_update': True,
+              'can_score': True, 'can_status': True,
+              'can_update': True, 'can_delete': True,
               'can_date': True, 'can_tag': False,
               'statuses_dict': {'current': 'Currently Watching',
                                 'completed': 'Completed',
@@ -49,6 +52,7 @@ class FakeLib:
         self.mediatype = mediatype       # real libs expose this
         self.shows = {str(s['id']): dict(s) for s in (shows or [])}
         self.updates = []          # update_show items received
+        self.deletes = []          # delete_show items received
         self.fail_fetch = False
         self.fail_update = False
         # Raise a rate-limit APIError on the first N update_show calls,
@@ -143,6 +147,21 @@ class FakeLib:
         self.shows[showid]['my_id'] = new_id
         return new_id
 
+    def delete_show(self, item):
+        """Remove a library entry. Mirrors the real libs' requirements:
+        AniList and both Kitsu backends address the delete by the
+        library-entry id (item['my_id']) and would send a garbage id if
+        it were None, so require it for those; MAL deletes by media id.
+        Every real lib reads item['title'] for its log line."""
+        if self.fail_update:
+            raise utils.APIError('%s rejected the delete' % self.provider)
+        _ = item['title']
+        if self.provider in ('kitsu', 'anilist') and not item['my_id']:
+            raise utils.APIError('%s delete without a library-entry id'
+                                 % self.provider)
+        self.deletes.append(dict(item))
+        self.shows.pop(str(item['id']), None)
+
     def search(self, criteria, method=None):
         return [dict(s) for s in self.shows.values()
                 if criteria.lower() in s.get('title', '').lower()]
@@ -182,6 +201,16 @@ def _clear_uibridge_caches():
     clear()
     yield
     clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_push_pacing(monkeypatch):
+    """Zero the adapters' per-provider push pacing and rate-limit
+    waits: real seconds of sleep per push turn the suite glacial."""
+    from hakubun.sync import adapters as adapters_mod
+    monkeypatch.setattr(adapters_mod, '_PUSH_INTERVAL', {})
+    monkeypatch.setattr(adapters_mod, '_DEFAULT_PUSH_INTERVAL', 0)
+    monkeypatch.setattr(adapters_mod, '_RATE_LIMIT_DEFAULT_WAIT', 0)
 
 
 @pytest.fixture

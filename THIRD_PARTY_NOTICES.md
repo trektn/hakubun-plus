@@ -22,7 +22,9 @@ MIT license -- trivially compatible with GPL-3.0-or-later.
   Contents License 1.0 (DbCL) for individual contents.
 - The database is not bundled. If it is redistributed or a substantial
   derived database is distributed, retain its attribution/license notices
-  and comply with the ODbL requirements.
+  and comply with the ODbL share-alike and machine-readable access
+  requirements.
+- License text: https://github.com/manami-project/anime-offline-database/blob/master/LICENSE
 
 ## AniDB title dump (optional local data)
 
@@ -117,4 +119,3 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
->>>>>>> hakubun-plus/master

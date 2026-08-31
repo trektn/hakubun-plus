@@ -115,7 +115,6 @@ class SettingsWindow(Gtk.Window):
     combo_kitsu_api = Gtk.Template.Child()
     checkbox_sync_on_settings_apply = Gtk.Template.Child()
     checkbox_multisync_enabled = Gtk.Template.Child()
-    combo_multisync_mode = Gtk.Template.Child()
     checkbox_multisync_plan_only = Gtk.Template.Child()
     checkbox_multisync_edit_owned_score = Gtk.Template.Child()
 
@@ -327,15 +326,9 @@ class SettingsWindow(Gtk.Window):
         self.checkbox_multisync_enabled.set_active(
             self.config['multisync_enabled'])
         # A config still on the retired 'plan_only' mode resolves to
-        # merge + the review checkbox, which is what it always meant.
-        (mode, plan_only) = present.settings_sync_mode(self.config)
-        mode_key = next((k for k, v in present.SETTINGS_MODES.items()
-                         if v == mode), 'merge')
-        if not self.combo_multisync_mode.set_active_id(mode_key):
-            self.combo_multisync_mode.set_active_id('merge')
-        self.combo_multisync_mode.set_sensitive(
-            self.config['multisync_enabled'])
-        self.checkbox_multisync_plan_only.set_active(plan_only)
+        # the review checkbox, which is what it always meant.
+        self.checkbox_multisync_plan_only.set_active(
+            present.settings_plan_only(self.config))
         self.checkbox_multisync_plan_only.set_sensitive(
             self.config['multisync_enabled'])
         self.checkbox_multisync_edit_owned_score.set_active(
@@ -344,7 +337,6 @@ class SettingsWindow(Gtk.Window):
             self.config['multisync_enabled'])
         self.checkbox_multisync_enabled.connect(
             'toggled', lambda w: (
-                self.combo_multisync_mode.set_sensitive(w.get_active()),
                 self.checkbox_multisync_plan_only.set_sensitive(
                     w.get_active()),
                 self.checkbox_multisync_edit_owned_score.set_sensitive(
@@ -713,8 +705,9 @@ class SettingsWindow(Gtk.Window):
         self.config['language'] = self.combo_ui_language.get_active_id() or 'auto'
         self.config['multisync_enabled'] = \
             self.checkbox_multisync_enabled.get_active()
-        self.config['multisync_mode'] = \
-            self.combo_multisync_mode.get_active_id() or 'merge'
+        # Retire any legacy multisync_mode so settings_plan_only's
+        # 'plan_only' compatibility read can't shadow the checkbox.
+        self.config.pop('multisync_mode', None)
         self.config['multisync_plan_only'] = \
             self.checkbox_multisync_plan_only.get_active()
         self.config['multisync_edit_owned_score'] = \

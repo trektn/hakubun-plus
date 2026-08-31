@@ -21,6 +21,7 @@ import threading
 from gi.repository import GObject, Gtk
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.imagebox import ImageBox
 

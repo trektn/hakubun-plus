@@ -1,6 +1,9 @@
 """Identity resolution: matching, missing external IDs, ambiguity."""
 
+import pytest
+
 from hakubun.sync.normalize import normalize_show
+from hakubun.sync.models import FieldPolicy
 
 from conftest import MEDIAINFO, FakeLib, make_engine, show
 
@@ -101,6 +104,102 @@ def test_ignore_never_asks_again(store):
     eng.fetch()
     assert store.identity_open() == []
     assert store.mapping_for('kitsu', '77') is None
+
+
+def test_unmapped_mirror_entry_is_actionable_in_identity(store):
+    """A tracker with no fetched entry cannot create a normal identity
+    conflict.  It still needs a visible search/link/ignore row instead of
+    Mirror sending the user to an empty Identity tab."""
+    libs = {'anilist': FakeLib(
+                'anilist', [show('anilist', 9, 'GHOST')]),
+            'mal': FakeLib('mal', [])}
+    eng = make_engine(store, libs)
+    assert eng.fetch() == {}
+
+    gaps = eng.identity_gaps()
+    assert len(gaps) == 1
+    gap = gaps[0]
+    assert (gap['title'], gap['provider'], gap['kind']) \
+        == ('GHOST', 'mal', 'gap')
+    assert gap['known_providers'] == ['anilist']
+    assert eng.identity_issues() == gaps
+
+    eng.set_membership(gap['uuid'], 'mal', 'ignore')
+    assert eng.identity_gaps() == []
+    # Ignore is effective in Mirror too: the row is no longer described as
+    # an unresolved gap (a settled note remains so it can be reversed).
+    issue = next(i for i in eng.mirror_plan().membership
+                 if i.uuid == gap['uuid'])
+    assert issue.decisions['mal'] == 'ignore'
+    assert 'mal' not in issue.unmapped
+
+
+def test_identity_gap_search_result_links_existing_entity(store):
+    from hakubun.sync.models import NormalizedEntry
+
+    eng = make_engine(store, {
+        'anilist': FakeLib('anilist', [show('anilist', 9, 'GHOST')]),
+        'mal': FakeLib('mal', []),
+    })
+    assert eng.fetch() == {}
+    gap = eng.identity_gaps()[0]
+    found = NormalizedEntry(provider='mal', provider_id='77',
+                            title='Ghost', media_type='anime')
+
+    assert eng.resolve_identity_gap(
+        gap['uuid'], 'mal', found) == gap['uuid']
+    mapping = store.mapping_for('mal', '77')
+    assert mapping['uuid'] == gap['uuid']
+    assert mapping['confirmed'] == 1
+    assert eng.identity_gaps() == []
+    adds = [op for op in eng.mirror_plan().adds if op.provider == 'mal']
+    assert len(adds) == 1 and adds[0].uuid == gap['uuid']
+
+
+def test_identity_gap_can_be_linked_by_exact_id(store):
+    eng = make_engine(store, {
+        'anilist': FakeLib('anilist', [show('anilist', 9, 'GHOST')]),
+        'mal': FakeLib('mal', []),
+    })
+    assert eng.fetch() == {}
+    gap = eng.identity_gaps()[0]
+
+    uid = eng.resolve_identity_issue_to_id(gap, 'mal', '77')
+    assert uid == gap['uuid']
+    assert store.mapping_for('mal', '77')['uuid'] == uid
+    assert store.mapping_for('mal', '77')['via'] == \
+        'exact id entered by user'
+    assert eng.identity_gaps() == []
+
+
+def test_ambiguous_entry_can_be_matched_to_existing_exact_id(store):
+    libs = {'mal': FakeLib('mal', [show('mal', 1, 'Ghost in the Shell')]),
+            'kitsu': FakeLib('kitsu', [
+                show('kitsu', 77, 'Ghost in the Shell Innocence')])}
+    eng = make_engine(store, libs)
+    eng.fetch()
+    issue = eng.identity_issues()[0]
+    target = store.mapping_for('mal', '1')['uuid']
+
+    assert eng.resolve_identity_issue_to_id(issue, 'mal', '1') == target
+    assert store.mapping_for('kitsu', '77')['uuid'] == target
+    assert store.identity_open() == []
+
+
+def test_identity_gap_refuses_result_claimed_by_another_title(store):
+    from hakubun.sync.models import NormalizedEntry
+
+    eng = make_engine(store, {
+        'anilist': FakeLib('anilist', [show('anilist', 9, 'GHOST')]),
+        'mal': FakeLib('mal', [show('mal', 77, 'Different Show')]),
+    })
+    assert eng.fetch() == {}
+    ghost = store.mapping_for('anilist', '9')['uuid']
+    with pytest.raises(ValueError, match='already linked'):
+        eng.resolve_identity_gap(
+            ghost, 'mal',
+            NormalizedEntry(provider='mal', provider_id='77',
+                            title='Different Show', media_type='anime'))
 
 
 def test_deferred_resolves_itself_when_exact_id_appears(store):
@@ -243,10 +342,14 @@ def test_store_reset_wipes_everything(store):
     libs = {'mal': FakeLib('mal', [show('mal', 1, 'Bebop')])}
     eng = make_engine(store, libs)
     eng.fetch()
+    store.set_ownership('score', FieldPolicy.parse('provider:mal'))
+    store.set_master('mal')
     assert store.entities()
     store.reset()
     assert store.entities() == []
     assert store.identity_open() == []
+    assert store.ownership()['score'].serialize() == 'provider:mal'
+    assert store.master() == 'mal'
     # And it's immediately usable again.
     assert eng.fetch() == {}
     assert len(store.entities()) == 1
@@ -298,13 +401,54 @@ def test_atlas_never_consulted_for_manga_entries(store, tmp_path):
     anime_ids = resolver._external_ids(
         NormalizedEntry(provider='mal', provider_id='1', title='X',
                         media_type='anime'))
-    assert 'kitsu' in anime_ids and anime_ids['kitsu'][1] == 'atlas'
+    # The source names the specific database, not a generic 'atlas':
+    # a link's authority depends on which one said it.
+    assert 'kitsu' in anime_ids and anime_ids['kitsu'][1] == 'anime-relations'
 
     # But NOT for manga, even with the identical provider+id.
     manga_ids = resolver._external_ids(
         NormalizedEntry(provider='mal', provider_id='1', title='X',
                         media_type='manga'))
     assert manga_ids == {}
+
+
+def test_existing_mapping_backfills_atlas_ids_on_later_fetch(store, tmp_path):
+    """Installing/updating an optional atlas after first fetch must not
+    leave Inspector knowing links that identity resolution never records."""
+    import json
+
+    from hakubun.sync.identity import IdentityResolver
+    from hakubun.sync.models import NormalizedEntry
+    from hakubun.sync.relations import RelationsAtlas
+
+    entry = NormalizedEntry(
+        provider='kitsu', provider_id='50021',
+        title='Kusuriya no Hitorigoto 3rd Season', media_type='anime',
+        year=2026)
+
+    # First seen before AOD was available: only the Kitsu mapping exists.
+    initial = IdentityResolver(store)
+    uid = initial.resolve_entry(entry)
+    assert {m['provider'] for m in store.mappings_of(uid)} == {'kitsu'}
+
+    aod = tmp_path / 'anime-offline-database.json'
+    aod.write_text(json.dumps({'data': [{'sources': [
+        'https://kitsu.app/anime/50021',
+        'https://anilist.co/anime/195516',
+        'https://myanimelist.net/anime/61987',
+    ]}]}))
+    atlas = RelationsAtlas().add_aod(aod)
+
+    # The same already-mapped entry takes the fast path.  It must still
+    # absorb exact links from the atlas now in use.
+    assert IdentityResolver(store, atlas=atlas).resolve_entry(entry) == uid
+    mappings = {m['provider']: m for m in store.mappings_of(uid)}
+    assert {provider: row['provider_id'] for provider, row in mappings.items()} \
+        == {'kitsu': '50021', 'anilist': '195516', 'mal': '61987'}
+    assert mappings['anilist']['via'] == \
+        'anime-offline-database atlas (seen via kitsu)'
+    assert mappings['mal']['via'] == \
+        'anime-offline-database atlas (seen via kitsu)'
 
 
 def test_preemptive_mapping_type_mismatch_is_quarantined_not_trusted(store):

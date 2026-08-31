@@ -16,6 +16,11 @@ def _lib(mediatype='anime'):
     return lib
 
 
+def test_graphql_capabilities_support_date_writes():
+    assert libkitsu_graphql.mediatypes['anime']['can_date'] is True
+    assert libkitsu_graphql.mediatypes['manga']['can_date'] is True
+
+
 def test_find_by_mal_id_hit(monkeypatch):
     lib = _lib()
     seen = {}
@@ -48,3 +53,53 @@ def test_find_by_mal_id_uses_manga_site_for_manga(monkeypatch):
     monkeypatch.setattr(lib, '_gql', fake_gql)
     lib.find_by_mal_id(1)
     assert seen['site'] == 'MYANIMELIST_MANGA'
+
+
+def test_add_defaults_missing_required_status_to_planned(monkeypatch):
+    """Kitsu's create input rejects a null status even when callers have
+    intentionally omitted status from the fields they synchronize."""
+    lib = _lib()
+    seen = {}
+
+    def fake_gql(query, variables=None, auth=False):
+        seen['input'] = variables['input']
+        return {'libraryEntry': {'create': {
+            'libraryEntry': {'id': '123'}, 'errors': []}}}
+
+    monkeypatch.setattr(lib, '_gql', fake_gql)
+    assert lib.add_show({'id': 9, 'title': 'GHOST', 'my_score': 4.5}) == 123
+    assert seen['input']['status'] == 'PLANNED'
+
+
+def test_add_keeps_explicit_status(monkeypatch):
+    lib = _lib()
+    seen = {}
+
+    def fake_gql(query, variables=None, auth=False):
+        seen['input'] = variables['input']
+        return {'libraryEntry': {'create': {
+            'libraryEntry': {'id': '123'}, 'errors': []}}}
+
+    monkeypatch.setattr(lib, '_gql', fake_gql)
+    lib.add_show({'id': 9, 'title': 'GHOST', 'my_status': 'completed'})
+    assert seen['input']['status'] == 'COMPLETED'
+
+
+def test_graphql_writes_start_and_finish_dates(monkeypatch):
+    import datetime
+    lib = _lib()
+    seen = {}
+
+    def fake_gql(query, variables=None, auth=False):
+        seen['input'] = variables['input']
+        return {'libraryEntry': {'update': {
+            'libraryEntry': {'updatedAt': '2026-08-30T00:00:00Z'},
+            'errors': []}}}
+
+    monkeypatch.setattr(lib, '_gql', fake_gql)
+    lib.update_show({
+        'id': 9, 'my_id': 'entry-9', 'title': 'GHOST',
+        'my_start_date': datetime.date(2024, 1, 2),
+        'my_finish_date': datetime.date(2024, 2, 3)})
+    assert seen['input']['startedAt'] == '2024-01-02T00:00:00Z'
+    assert seen['input']['finishedAt'] == '2024-02-03T00:00:00Z'

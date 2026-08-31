@@ -1,4 +1,4 @@
-"""Cross-provider id atlas built from community databases.
+"""Cross-provider id atlas, built from community id databases.
 
 https://github.com/erengy/anime-relations (public domain; thanks to
 erengy and contributors) -- the episode-redirection DB Taiga and this
@@ -8,14 +8,14 @@ denote the same entry. Identity resolution treats them as exact links,
 exactly like provider-published ids -- these are precisely the messy
 long-running/split entries where title matching fails.
 
-(The episode ranges in the same rules are the future path for
+(The episode ranges in the anime-relations rules are the future path for
 translating *partial* progress between differing structures; today
 those surface as structure conflicts.)
 
 The same atlas can optionally ingest anime-offline-database (AOD) JSON.
-AOD is loaded from a user/config data file rather than bundled: its database
-is licensed ODbL 1.0 + DbCL 1.0 and is substantially larger than the small
-CC0 anime-relations snapshot.
+AOD is deliberately loaded from a user/data file rather than bundled: its
+database is licensed ODbL 1.0 + DbCL 1.0 and is substantially larger than the
+small CC0 anime-relations snapshot.
 """
 
 import json
@@ -24,6 +24,9 @@ import re
 
 from hakubun import utils
 
+# The column order of an anime-relations rule, not a whitelist -- the
+# atlas itself is provider-agnostic (see _add_ids), so another id
+# database could join it without touching this.
 PROVIDERS = ('mal', 'kitsu', 'anilist')
 
 _ID = r'(\d+|[?~])'
@@ -46,6 +49,19 @@ def default_path():
         if os.path.isfile(path):
             return path
     return candidates[-1]
+
+
+# Which database a link came from. Surfaced all the way to the
+# Inspector and stored in a mapping's `via`: the whole point of showing
+# an atlas opinion is letting the user judge it, which means naming
+# where it came from.
+SOURCE_ANIME_RELATIONS = 'anime-relations'
+SOURCE_AOD = 'anime-offline-database'
+
+_SOURCE_PRIORITY = {
+    SOURCE_ANIME_RELATIONS: 20,
+    SOURCE_AOD: 10,
+}
 
 
 def aod_paths():
@@ -83,6 +99,7 @@ def iter_aod_records(path):
 class RelationsAtlas:
     def __init__(self):
         self._by_key = {}   # (provider, id) -> {other provider: id}
+        self._sources = {}  # (provider, id) -> {other provider: source}
 
     def __len__(self):
         return len(self._by_key)
@@ -91,8 +108,9 @@ class RelationsAtlas:
     def from_file(cls, path=None):
         atlas = cls()
         atlas.add_anime_relations(path)
-        # Explicit paths are fixtures/user-selected anime-relations files;
-        # normal construction also picks up the optional local AOD export.
+        # A caller supplying an explicit relations fixture/file gets only
+        # that file; the normal no-argument construction loads both default
+        # community databases.
         if path is None:
             atlas.add_aod()
         return atlas
@@ -112,30 +130,43 @@ class RelationsAtlas:
         return self
 
     def _add(self, triple):
-        ids = {provider: raw for provider, raw in zip(PROVIDERS, triple)
-               if raw not in ('?', '~')}
-        self._add_ids(ids, overwrite=True)
+        self._add_ids({provider: raw
+                       for provider, raw in zip(PROVIDERS, triple)
+                       if raw not in ('?', '~')},
+                      SOURCE_ANIME_RELATIONS)
 
-    def _add_ids(self, ids, overwrite=False):
-        """Merge one statement that these provider IDs are equivalent.
-
-        anime-relations is loaded first and has priority over AOD when the
-        two community databases disagree.
-        """
+    def _add_ids(self, ids, source):
+        """Merge one community statement that these provider ids are the
+        same entry. Sources are additive: a row naming two providers
+        joins up with any other row naming one of them, so an entry can
+        reach a provider no single row named directly."""
         if len(ids) < 2:
             return
-        for provider, provider_id in ids.items():
-            links = self._by_key.setdefault((provider, str(provider_id)), {})
-            for other, other_id in ids.items():
-                if other == provider:
-                    continue
-                if overwrite:
-                    links[other] = str(other_id)
-                else:
-                    links.setdefault(other, str(other_id))
+        normalized = {provider: str(provider_id)
+                      for provider, provider_id in ids.items()}
+        for provider, provider_id in normalized.items():
+            others = {p: v for p, v in normalized.items() if p != provider}
+            key = (provider, provider_id)
+            links = self._by_key.setdefault(key, {})
+            old_sources = self._sources.setdefault(key, {})
+            for other, other_id in others.items():
+                old_source = old_sources.get(other)
+                old_priority = _SOURCE_PRIORITY.get(old_source, 0)
+                new_priority = _SOURCE_PRIORITY.get(source, 0)
+                if other not in links or new_priority > old_priority:
+                    links[other] = other_id
+                    old_sources[other] = source
+            # Written in lockstep with the id above, so the attribution
+            # always names whichever database supplied the id actually
+            # being reported.
 
     def add_aod(self, path=None):
-        """Add MAL/Kitsu/AniList links from a local AOD export."""
+        """Add cross-provider IDs from an AOD JSON or JSONL export.
+
+        AOD source URLs are the stable interchange format. We only consume
+        MAL, Kitsu, and AniList anime URLs; metadata and relatedAnime are
+        intentionally ignored. JSONL's first metadata line is skipped.
+        """
         path = path or next((p for p in aod_paths() if os.path.isfile(p)), None)
         if not path:
             return self
@@ -159,7 +190,7 @@ class RelationsAtlas:
                         url)
                     if match:
                         ids['kitsu'] = match.group(1)
-                self._add_ids(ids)
+                self._add_ids(ids, SOURCE_AOD)
         except (OSError, ValueError, TypeError):
             pass  # optional enrichment must never prevent syncing
         return self
@@ -167,3 +198,7 @@ class RelationsAtlas:
     def lookup(self, provider, provider_id):
         """Other providers' ids for this entry, {} when unknown."""
         return dict(self._by_key.get((provider, str(provider_id)), {}))
+
+    def lookup_sources(self, provider, provider_id):
+        """{provider: database name} for whatever lookup() returned."""
+        return dict(self._sources.get((provider, str(provider_id)), {}))

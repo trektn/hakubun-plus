@@ -1,23 +1,22 @@
-"""SyncEngine: fetch -> identity -> plan (diff+policies) -> apply.
+"""SyncEngine: fetch -> identity -> plan (field policies) -> apply.
 
-Git shape: fetch snapshots remotes, plan is the merge preview, apply is
-the commit (event log) plus pushes. Local state is canonical; a
-provider failing isolates to that provider (its merge base does not
+fetch snapshots every provider's list into remote_state; identity
+resolution maps entries onto internal entity UUIDs; the SyncPlanner
+turns field policies (provider-owned / individual / reconcile) into
+explicit SyncOperations; apply commits local changes plus events in one
+transaction, then pushes per provider with failure isolation (a
+provider failing isolates to that provider -- its base does not
 advance, so the same changes re-plan next run).
 """
 
-import json
-
-from hakubun.sync import conflicts as conflicts_mod
+from hakubun.sync import membership as membership_mod
 from hakubun.sync import normalize
 from hakubun.sync.adapters import AdapterError
-from hakubun.sync.diff import (BOTH, NO_BASE, PULL, emptyish, eq,
-                               three_way)
 from hakubun.sync.history import History
 from hakubun.sync.identity import IdentityResolver
-from hakubun.sync.models import (FieldChange, FieldConflict, IdentityIssue,
-                                 PolicyKind, SyncCancelled, SyncMode,
-                                 SyncPlan)
+from hakubun.sync.models import SyncCancelled, SyncOperation
+from hakubun.sync.normalize import values_equal
+from hakubun.sync.planner import SyncPlanner
 
 _UNSET = object()
 
@@ -29,12 +28,9 @@ class SyncEngine:
         self.adapters = dict(adapters or {})
         self.history = History(store)
         self.identity = IdentityResolver(store, atlas=relations)
-        # The primary provider is the account the app is signed into --
-        # the working tree, in git terms. The main window (and the
-        # tracker) edit *that account's* list, so its fetched changes
-        # ARE the user's local intent: they fold into local state
-        # without policy friction, and ownership then arbitrates
-        # between that intent and the other providers.
+        # The primary provider is the account the app is signed into.
+        # Purely informational for the UIs (icons, labels): it carries
+        # no synchronization authority -- field policies do.
         self.primary = primary
         self._msg = msg
 
@@ -101,9 +97,9 @@ class SyncEngine:
 
         DISCOVERY only: a hit writes a mapping with an EMPTY remote
         snapshot, identical in shape to identity._record_external_ids's
-        own pre-emptive linking, so Merge/Pull/Push ignore it entirely
-        (they only touch providers with SOME remote row to diff
-        against); only Rebase's create step (_plan_rebase_add) ever
+        own pre-emptive linking, so field planning ignores it entirely
+        (only providers with SOME remote row contribute values); only
+        the planner's create-entry step (_plan_missing_entries) ever
         acts on it. A miss is remembered (resolved_absent) so it isn't
         re-queried every fetch forever -- superseded automatically the
         moment a real mapping appears for that (entity, provider) pair
@@ -115,7 +111,7 @@ class SyncEngine:
         failure isolates (stops that provider's discovery only) rather
         than raising into the main fetch above."""
         mal_ids = {m['uuid']: m['provider_id']
-                  for m in self.store.mappings_of_provider('mal')}
+                   for m in self.store.mappings_of_provider('mal')}
         if not mal_ids:
             return
         for name, adapter in self.adapters.items():
@@ -126,7 +122,7 @@ class SyncEngine:
             if should_cancel is not None and should_cancel():
                 return
             mapped = {m['uuid'] for m in
-                     self.store.mappings_of_provider(name)}
+                      self.store.mappings_of_provider(name)}
             absent = self.store.absent_for_provider(name)
             for uid, mal_id in mal_ids.items():
                 if uid in mapped or uid in absent:
@@ -141,7 +137,8 @@ class SyncEngine:
                 except AdapterError:
                     break   # isolate: stop this provider, others proceed
                 if found is None:
-                    self.store.mark_absent(uid, name)
+                    self.store.mark_absent(uid, name,
+                                           reason='lookup_miss')
                     continue
                 if self.store.mapping_for(name, found) is not None:
                     continue   # already claimed -- not ours to add
@@ -154,7 +151,7 @@ class SyncEngine:
             if should_cancel is not None and should_cancel():
                 raise SyncCancelled()
             # Reserved '_'-prefixed fields are metadata, never
-            # synced (never in ownership, so they never diff):
+            # synced (never in ownership, so they never plan):
             # '_total' is the provider's own episode count (needed
             # to translate progress between differing structures);
             # '_my_id' is the provider's library-entry id, which
@@ -178,20 +175,32 @@ class SyncEngine:
     def _forget_unlisted(self, name, entries):
         """Remote-tracking rows for entries the provider no longer
         returned (deleted on the website since the last fetch) are
-        dropped, and their merge bases with it: the snapshot must
+        dropped, and their recorded bases with it: the snapshot must
         mirror what the provider actually holds, or the planner keeps
-        diffing -- and pushing -- against a phantom. With no remote row
-        the provider simply contributes nothing for that entity; if
-        the entry ever reappears it re-plans as a first sync (NO_BASE:
-        equal values settle, differing ones surface to policy/user)
-        instead of being diffed against a base from before the
-        deletion. Local state is untouched -- a remote delete is never
-        propagated as a local one.
+        comparing -- and pushing -- against a phantom. With no remote
+        row the provider simply contributes nothing for that entity; if
+        the entry ever reappears it re-plans as a first sync (no base:
+        the field's policy or strategy decides afresh) instead of being
+        judged against history from before the deletion. Local state is
+        untouched -- a remote delete is never propagated as a local one.
 
         A fetch that returns an EMPTY list while we track entries for
         this provider is left alone: indistinguishable from an API
         quietly returning nothing, and wiping every base over a hiccup
-        is far worse than keeping a stale snapshot one run longer."""
+        is far worse than keeping a stale snapshot one run longer.
+
+        The same reasoning does not stop at zero. A fetch that drops a
+        LARGE SHARE of a provider's entries at once is the same class
+        of event: people delete entries a few at a time, so 250
+        vanishing in one response is far more likely to be a partial
+        API result, a changed account, or a bad token than 250
+        individual decisions. The snapshots are still dropped (they
+        genuinely are not in the provider's answer, and pushing
+        against a phantom is worse), but no 'ignore' decision is
+        recorded -- so Mirror keeps offering to restore them instead of
+        silently agreeing they should be gone. That silent agreement is
+        what turned one bad AniList response into 250 entries the UI
+        would never offer to re-add."""
         fetched = {str(e.provider_id) for e in entries}
         if not fetched:
             return
@@ -202,7 +211,19 @@ class SyncEngine:
         reported = {f for e in entries for f in e.user}
         self.store.remote_prune_fields(
             name, reported | {'_total', '_my_id'})
-        stale = self.store.remote_provider_ids(name) - fetched
+        tracked = self.store.remote_provider_ids(name)
+        stale = tracked - fetched
+        # See the docstring: a mass disappearance is evidence about the
+        # RESPONSE, not about the user's intent. Above this share, drop
+        # the snapshots but record no decision -- the entries stay
+        # proposable, which is the recoverable failure.
+        mass_loss = (len(stale) >= 25
+                     and len(stale) > len(tracked) * 0.20)
+        if mass_loss:
+            self._debug('%s dropped %d of %d tracked entries in one '
+                        'fetch; treating as a suspect response rather '
+                        'than %d deletions'
+                        % (name, len(stale), len(tracked), len(stale)))
         for pid in stale:
             self._debug('%s no longer lists entry %s; dropping its '
                         'remote snapshot' % (name, pid))
@@ -210,6 +231,17 @@ class SyncEngine:
             mapping = self.store.mapping_for(name, pid)
             if mapping:
                 self.store.base_delete(mapping['uuid'], name)
+                # The user deleted this entry there on purpose: the
+                # planner must not turn around and offer to re-create
+                # it. Recorded as membership 'ignore' -- "leave this
+                # provider as it is" -- and deliberately NOT 'absent':
+                # this is an observation of what the user did once, not
+                # a standing instruction to delete the entry again if
+                # it ever comes back. clear_membership() (the UI's
+                # "ask me about this again") undoes it.
+                if not mass_loss:
+                    self.store.set_membership(mapping['uuid'], name,
+                                              'ignore', reason='deleted')
             row = self.store.identity_get(name, pid)
             if row and row['status'] in ('open', 'deferred'):
                 # An unresolved entry the user deleted on the website
@@ -220,7 +252,7 @@ class SyncEngine:
 
     def _seed_entity(self, txn, uid, entry):
         """First sight of an entity: import this provider's state as the
-        local state and set the merge base -- in sync at birth."""
+        local working value and record the base -- in sync at birth."""
         with self.store.transaction():
             for field, value in entry.user.items():
                 self.store.local_set(uid, field, value,
@@ -235,17 +267,18 @@ class SyncEngine:
     _progress_convert = staticmethod(normalize.progress_convert)
 
     def _settle_base(self, uid, provider, entry):
-        """No merge base recorded but local and remote already agree:
-        record the agreement. Without this, a later remote-only edit
-        reads as divergence instead of a clean pull -- and a 'local'
-        policy would overwrite a legitimate website edit."""
+        """No base recorded but local and remote already agree: record
+        the agreement. The base is what reconciliation strategies (and
+        the pending-local-edit check for owned fields) measure change
+        against -- without it, a later single-sided edit reads as an
+        unattributable disagreement instead of a clean propagation."""
         local = self.store.local_get(uid)
         base = self.store.base_get(uid, provider)
         ent_total = (self.store.get_entity(uid) or {}).get('total')
         for field, value in entry.user.items():
             if field in base or field not in local:
                 continue
-            agrees = eq(local[field][0], value)
+            agrees = values_equal(field, local[field][0], value)
             if not agrees and field == 'progress':
                 # Complete is complete, whatever the episode structure.
                 agrees = (self._complete(local[field][0], ent_total)
@@ -267,6 +300,12 @@ class SyncEngine:
             updates['total'] = entry.total
         if entry.airing_status:
             updates['status'] = entry.airing_status
+        if entry.image and not ent.get('image'):
+            # First provider to ship cover art wins, and keeps winning:
+            # these URLs are only ever a picture in a preview, so
+            # re-pointing them on every fetch would churn the entity
+            # table (and everyone's poster cache) to no visible end.
+            updates['image'] = entry.image
         if updates:
             self.store.update_entity_meta(uid, **updates)
         # Accumulate every title this provider knows -- cross-language
@@ -275,8 +314,9 @@ class SyncEngine:
 
     # -- plan ----------------------------------------------------------
 
-    def plan(self, mode=SyncMode.MERGE, should_cancel=None):
-        # Every scale/precision decision below reads an adapter's
+    def plan(self, should_cancel=None):
+        """Build the SyncPlan (see planner.SyncPlanner). Read-only."""
+        # Every scale/precision decision in planning reads an adapter's
         # mediainfo, which is a live property (deliberately -- AniList's
         # score format is only learned during a fetch). Planning reads
         # it O(entities x fields x providers) times, so pin it for the
@@ -287,569 +327,220 @@ class SyncEngine:
         for adapter in frozen:
             adapter.freeze_mediainfo()
         try:
-            return self._plan(mode, should_cancel)
+            return SyncPlanner(self.store, self.adapters,
+                               primary=self.primary).plan(should_cancel)
         finally:
             for adapter in frozen:
                 adapter.thaw_mediainfo()
 
-    def _plan(self, mode, should_cancel):
-        ownership = self.store.ownership()
-        plan = SyncPlan(mode)
-        plan.identity = [IdentityIssue(id=r['id'], provider=r['provider'],
-                                       provider_id=r['provider_id'],
-                                       title=r['title'],
-                                       candidates=r['candidates'],
-                                       status=r['status'])
-                         for r in self.store.identity_open()]
-        # Bulk-load every table the per-entity planner reads: per-uid
-        # queries in this loop are an N+1 pattern that scales as
-        # entities x providers x 3 round-trips.
-        ents = self.store.entities()
-        uids = [e['uuid'] for e in ents]
-        snapshot = {
-            'mappings': self.store.mappings_many(uids),
-            'local': self.store.local_get_many(uids),
-            'base': self.store.base_get_many(uids),
-            'sources': self.store.local_sources_many(uids),
-        }
-        ids_by_provider = {}
-        for maps in snapshot['mappings'].values():
-            for m in maps:
-                if m['provider'] in self.adapters:
-                    ids_by_provider.setdefault(m['provider'], []).append(
-                        m['provider_id'])
-        snapshot['remote'] = {
-            provider: self.store.remote_get_many(provider, ids)
-            for provider, ids in ids_by_provider.items()}
-        for ent in ents:
-            if should_cancel is not None and should_cancel():
-                raise SyncCancelled()
-            self._plan_entity(plan, ent, ownership, mode, snapshot)
-        return plan
+    # -- mirror --------------------------------------------------------
 
-    def _plan_entity(self, plan, ent, ownership, mode, snapshot):
-        uid = ent['uuid']
-        title = ent.get('title') or uid[:8]
-        mappings = [m for m in snapshot['mappings'].get(uid, [])
-                    if m['provider'] in self.adapters]
-        if ent.get('provider_only'):
-            mappings = [m for m in mappings
-                        if m['provider'] == ent['provider_only']]
-        if not mappings:
-            return
-        local = snapshot['local'].get(uid, {})
-        sides = {}
-        for m in mappings:
-            provider = m['provider']
-            sides[provider] = (
-                snapshot['remote'].get(provider, {}).get(
-                    m['provider_id'], {}),
-                snapshot['base'].get((uid, provider), {}))
+    def mirror_plan(self, should_cancel=None):
+        """Build a MirrorPlan: what the TRACKERS should contain per the
+        ownership configuration, ignoring change history (mirror.py).
+        Read-only."""
+        from hakubun.sync.mirror import MirrorPlanner
+        frozen = [a for a in self.adapters.values()
+                  if hasattr(a, 'freeze_mediainfo')]
+        for adapter in frozen:
+            adapter.freeze_mediainfo()
+        try:
+            return MirrorPlanner(
+                self.store, self.adapters,
+                primary=self.primary).plan(should_cancel)
+        finally:
+            for adapter in frozen:
+                adapter.thaw_mediainfo()
 
-        if mode is SyncMode.REBASE:
-            self._plan_rebase_add(plan, uid, title, ownership, sides, local)
+    def resolve_mirror_conflict(self, conflict, choice, value=_UNSET):
+        """Resolve a MIRROR conflict: a disagreement between trackers
+        that no policy could settle.
 
-        ent_total = ent.get('total')
-        for field, policy in ownership.items():
-            if policy.kind is PolicyKind.INDIVIDUAL:
-                continue
-            l_val, l_ts = local.get(field, (None, 0))
-            progress_field = field == 'progress'
-            states, pulls, divergent = {}, {}, {}
-            p_scales, mismatched = {}, {}
-            # Providers we have no shared history with for this field
-            # (no merge base). Overwriting one of these is a first-sync
-            # coin flip, not a decision -- see FieldChange.first_sync.
-            unbased = set()
-            for provider, (remote, base) in sides.items():
-                if field not in remote:
-                    continue  # provider can't represent this field
-                r_val, r_ts = remote[field]
-                b_val = base.get(field, NO_BASE)
-                if progress_field:
-                    # Classify in the LOCAL episode structure: raw
-                    # numbers from a differing structure (1/1 movie vs
-                    # 4-episode listing) are not comparable -- exactly
-                    # the case that proposed 'update AniList to 1'.
-                    r_scale = (remote.get('_total') or (None, 0))[0]
-                    p_scales[provider] = (r_val, r_scale)
-                    converted = self._progress_convert(r_val, r_scale,
-                                                       ent_total)
-                    if converted is None:
-                        mismatched[provider] = (r_val, r_scale)
-                        continue
-                    r_val = converted
-                    # The merge base records the provider's RAW value
-                    # (its own structure); it must be viewed through
-                    # the same conversion as the remote or three_way
-                    # compares values in different units -- a movie
-                    # base of 1 against a local 4 would read as 'both
-                    # changed' when nothing moved. A base that no
-                    # longer converts (partial, structures changed) is
-                    # honestly no base at all.
-                    if b_val is not NO_BASE:
-                        b_conv = self._progress_convert(b_val, r_scale,
-                                                        ent_total)
-                        b_val = NO_BASE if b_conv is None else b_conv
-                if b_val is NO_BASE:
-                    unbased.add(provider)
-                state = three_way(b_val, l_val, r_val)
-                states[provider] = (state, r_val, r_ts)
-                if state == PULL:
-                    pulls[provider] = (r_val, r_ts)
-                elif state == BOTH:
-                    divergent[provider] = (r_val, r_ts)
-            if mismatched:
-                # Partial progress across differing structures: honest
-                # one-line conflict, field frozen this plan.
-                values = {'local': l_val}
-                values.update({p: rv for p, (rv, _) in mismatched.items()})
-                note = 'episode structures differ: local total %s vs %s' % (
-                    ent_total or '?', ', '.join(
-                        '%s total %s' % (p, sc or '?')
-                        for p, (_, sc) in mismatched.items()))
-                plan.conflicts.append(FieldConflict(
-                    uid, field, values, base=None, policy=policy,
-                    title=title, note=note, structural=True))
-                continue
-            if not states:
-                continue
+        Deliberately NOT resolve_conflict(). That one records the
+        decision by writing local state and advancing every provider's
+        base -- and Mirror reads neither, by design, since ignoring
+        history is the whole point of it. A resolution recorded that
+        way is invisible to the next mirror, which re-raises the
+        identical conflict: the user clicks a side, the preview
+        rebuilds, and the card is still there.
 
-            # Fold the primary provider's changes in as local intent
-            # (see __init__): they replace the local value up front and
-            # are never a conflict against the reconciled DB itself.
-            #
-            # But ONLY a genuine change: if the primary's value is just
-            # what local already is at the primary's own precision
-            # (switching to MAL, whose integer 8 is local's 8.4 rounded
-            # -- not an edit), folding it would degrade local to the
-            # coarser value and then push that over every finer
-            # provider. So skip the fold when the primary's value is
-            # equivalent to local under the primary's precision; a real
-            # in-app edit (8.4 -> 9) is not equivalent and still folds.
-            orig_l = l_val
-            intent = None
-            primary_adapter = self.adapters.get(self.primary)
-            if self.primary and self.primary in states:
-                p_state, p_val, p_ts = states[self.primary]
-                if p_state in (PULL, BOTH) and not (
-                        primary_adapter is not None
-                        and primary_adapter.values_equivalent(
-                            field, p_val, l_val)):
-                    intent = (p_val, p_ts)
-                    l_val, l_ts = p_val, p_ts
-                    merged = {**pulls, **divergent}
-                    merged.pop(self.primary, None)
-                    # Reclassify the others against the new local value:
-                    # equal means converged; different means both sides
-                    # moved -> divergence for the policy to arbitrate.
-                    pulls = {}
-                    divergent = {q: qv for q, qv in merged.items()
-                                 if not eq(qv[0], p_val)}
+        So the decision is stored where Mirror does look
+        (store.set_field_resolution), fingerprinted against the tracker
+        values it was made against: it stands while those stand, and
+        lapses if any tracker moves, because then it is a new question.
 
-            if mode is SyncMode.REBASE:
-                # Retroactively re-establish each field's declared OWNER
-                # as the truth everywhere, ignoring the merge base: the
-                # owner's current value is forced into local and pushed
-                # over every other tracker, whether or not anything
-                # "changed" since the last sync. This is the deliberate
-                # "I just set MAL to own scores -- now go make that real
-                # on Kitsu and AniList" action; nothing here consults
-                # three_way's PULL/PUSH/BOTH verdict (which only sees
-                # divergence). Previewed and checkbox-selectable like any
-                # plan, and it still converges: pushes advance each
-                # provider's base as usual. Fields with no single owner
-                # (merge/ask/individual) have nothing to rebase to and
-                # are left alone.
-                #
-                # Deliberately placed AFTER the primary fold: 'local' for
-                # a `local`-owned field means the working tree, which
-                # includes the edit you just made in the app. Rebasing
-                # off the pre-fold database value instead would push the
-                # STALE number back over the account you are signed into
-                # -- silently reverting your own rating.
-                #
-                # Only a fold backed by a real merge base counts: with
-                # no shared history the primary's value is simply what
-                # that site happens to hold, not something the user did
-                # in the app, and treating it as intent would quietly
-                # make "rebase to local" mean "rebase to the signed-in
-                # account" on every first sync.
-                rebase_intent = (intent if intent is not None
-                                 and self.primary not in unbased else None)
-                self._plan_rebase(plan, uid, title, field, policy,
-                                  l_val if rebase_intent is not None
-                                  else orig_l, orig_l, rebase_intent,
-                                  states, progress_field, p_scales,
-                                  ent_total)
-                continue
-
-            # Drop a provider's voice from divergent/pulls when it's
-            # fully explained by local's current value or another
-            # provider's value once THAT provider's own precision is
-            # applied (see _collapse_precision_redundant): a coarser
-            # provider that merely reflects the rounding of a value
-            # already present isn't independent information and must
-            # never turn into a redundant conflict option.
-            if divergent:
-                divergent = self._collapse_precision_redundant(
-                    field, l_val, divergent)
-            if pulls:
-                pulls = self._collapse_precision_redundant(
-                    field, l_val, pulls)
-
-            if mode is SyncMode.MIRROR:
-                # Local pushes outward; remote changes are overwritten
-                # (the primary's, folded above, being the exception).
-                if intent is not None and not eq(l_val, orig_l):
-                    plan.changes.append(FieldChange(
-                        uid, field, orig_l, l_val, target='local',
-                        source=self.primary, title=title,
-                        remote_raw=(p_scales[self.primary][0]
-                                    if progress_field
-                                    and self.primary in p_scales
-                                    else None)))
-                for provider, (state, r_val, _) in states.items():
-                    self._plan_push(plan, uid, title, field, policy,
-                                    provider, r_val, l_val, 'local',
-                                    progress_field, p_scales, ent_total)
-                continue
-
-            resolution = self._resolve_field(
-                plan, uid, title, field, policy, l_val, l_ts,
-                pulls, divergent, mode)
-            if resolution is _UNSET:      # conflict recorded; freeze
-                # Still record the working tree's own edit: the
-                # conflict is between that intent and the others, not
-                # against the reconciled DB's stale value.
-                if intent is not None and not eq(intent[0], orig_l):
-                    plan.changes.append(FieldChange(
-                        uid, field, orig_l, intent[0], target='local',
-                        source=self.primary, title=title,
-                        remote_raw=(p_scales[self.primary][0]
-                                    if progress_field
-                                    and self.primary in p_scales
-                                    else None)))
-                continue
-            if resolution is not None:
-                effective, eff_source = resolution
-            elif intent is not None:
-                effective, eff_source = intent[0], self.primary
-            else:
-                effective, eff_source = orig_l, 'local'
-            if not eq(effective, orig_l):
-                # Adopting a provider's value into local across a first
-                # sync overwrites whatever local held (i.e. the FIRST
-                # provider ingested) with no shared history to justify
-                # it -- same coin flip as a push, flagged the same way.
-                # Filling in a blank is never an overwrite: nobody's
-                # data is lost, so those still apply normally.
-                local_first = (eff_source in unbased
-                               and not emptyish(orig_l))
-                plan.changes.append(FieldChange(
-                    uid, field, orig_l, effective, target='local',
-                    source=eff_source, title=title,
-                    selected=not local_first, first_sync=local_first,
-                    remote_raw=(p_scales[eff_source][0]
-                                if progress_field
-                                and eff_source in p_scales else None)))
-
-            if mode is SyncMode.PULL:
-                continue  # providers update local; nothing pushes
-            # The stored provenance of the CURRENT local value: who a
-            # value that is 'just local now' originally came from --
-            # this plan's own resolution supersedes it when one exists.
-            provenance = (eff_source if resolution is not None
-                          or intent is not None
-                          else snapshot['sources'].get(uid, {}).get(field))
-            for provider, (state, r_val, _) in states.items():
-                self._plan_push(plan, uid, title, field, policy,
-                                provider, r_val, effective, eff_source,
-                                progress_field, p_scales, ent_total,
-                                provenance=provenance, unbased=unbased)
-
-    def _collapse_precision_redundant(self, field, l_val, group):
-        """Drop a provider's value from a same-field group (divergent
-        or pull candidates) when it is fully explained by -- consistent
-        with, under THAT provider's own precision -- local's current
-        value or another, at-least-as-precise provider's value already
-        kept from this same group.
-
-        Concretely: MAL only stores an integer 0-10 score. If local
-        reads 9.5 and MAL reads 10, that is not MAL disagreeing with
-        anyone -- 10 is exactly what MAL would show for 9.5 (or for
-        AniList's more precise 9.9). A provider whose number is fully
-        explained this way is never asked about; it carries no
-        information beyond what a more precise source already states.
-
-        Processing order matters: providers are checked from most to
-        least precise, each only against SURVIVORS confirmed so far
-        (never the full original group). Checking symmetrically against
-        every other raw value would make two providers that happen to
-        agree EXACTLY (e.g. AniList 3.0 and MAL 3) each look "explained
-        by" the other and delete both, losing the value entirely: MAL
-        gets to be redundant against AniList, but never the reverse.
-
-        Never drops local itself, and never drops a value that isn't
-        actually redundant -- a MAL score that does NOT match anyone
-        else's rounding is a real edit and stays.
+        `choice` is a tracker name from conflict.values, or 'value'
+        with an explicit value=.
         """
-        if not group:
-            return group
-
-        def precision(provider):
-            if field != 'score':
-                return 0
-            info = getattr(self.adapters.get(provider), 'mediainfo',
-                          None) or {}
-            smax = info.get('score_max') or 10
-            step = info.get('score_step') or 1
-            return smax / step if step else float('inf')
-
-        kept = {}
-        survivors = [l_val]
-        for provider, (r_val, r_ts) in sorted(
-                group.items(), key=lambda kv: precision(kv[0]),
-                reverse=True):
-            adapter = self.adapters.get(provider)
-            if adapter is not None and any(
-                    adapter.values_equivalent(field, r_val, other)
-                    for other in survivors):
-                continue    # redundant -- add nothing to survivors
-            kept[provider] = (r_val, r_ts)
-            survivors.append(r_val)
-        return kept
-
-    def _plan_rebase_add(self, plan, uid, title, ownership, sides, local):
-        """REBASE-only: create the show on every connected, MAPPED
-        provider that doesn't have it yet -- an empty remote snapshot
-        for that provider (`sides[provider][0]`) despite a mapping
-        existing means identity resolution knows the id (e.g. a
-        provider-published cross-id another provider's fetch recorded
-        pre-emptively, see identity._record_external_ids) but that
-        provider's own fetch has never actually listed an entry there.
-        Ordinary rebase pushes (_plan_rebase/_plan_push below) can never
-        reach these: they only iterate `states`, which by construction
-        only contains providers with SOME remote row to diff against.
-
-        Bundles every owned field's CURRENT authoritative value (the
-        same value an ordinary rebase would push to an existing entry)
-        into one create per missing provider -- apply() tells create
-        from update purely by remote-snapshot presence at apply time,
-        so no separate plumbing is needed there. Fields with no single
-        owner (merge/ask/individual) contribute nothing, same as an
-        ordinary rebase push. A provider-owned field whose declared
-        owner has nothing to give (typically because the owner IS one
-        of the providers being created -- it can't be its own source)
-        falls back to local's current value instead of leaving a brand
-        new entry with that field blank; ordinary rebase reconciles it
-        properly against the real owner once that owner actually
-        exists. Planned unselected, like first_sync -- see
-        FieldChange.creates_entry."""
-        missing = [p for p, (remote, _base) in sides.items() if not remote]
-        if not missing:
-            return
-        values = {}   # field -> (value, source) -- source shown in the
-                      # UI so "where did this come from" is never a
-                      # guess: 'local' for a local-owned field, the
-                      # owning provider's name for a provider-owned one.
-        for field, policy in ownership.items():
-            if policy.kind is PolicyKind.LOCAL:
-                val = local.get(field, (None, 0))[0]
-                source = 'local'
-            elif policy.kind is PolicyKind.PROVIDER:
-                remote, _base = sides.get(policy.provider, ({}, {}))
-                val = remote.get(field, (None, 0))[0]
-                source = policy.provider
-                if val in (None, '', []):
-                    val = local.get(field, (None, 0))[0]
-                    source = 'local'
-            else:
-                continue
-            if val not in (None, '', []):
-                values[field] = (val, source)
-        if not values:
-            return
-        for provider in missing:
-            if not self.adapters[provider].mediainfo.get('can_add', True):
-                continue
-            for field, (val, source) in values.items():
-                plan.changes.append(FieldChange(
-                    uid, field, None, val, target=provider,
-                    source=source, title=title,
-                    selected=False, creates_entry=True))
-
-    def _plan_rebase(self, plan, uid, title, field, policy, l_val,
-                     orig_l, intent, states, progress_field, p_scales,
-                     ent_total):
-        """One field, REBASE mode: force its declared owner everywhere.
-
-        The authoritative value is the owner's CURRENT value -- a named
-        provider's live value for a `provider:` policy, or the local
-        value for a `local` policy. It is written into local state and
-        pushed to every provider whose value differs, with no reference
-        to the merge base (that is the whole point of rebase: re-assert
-        ownership over values that already "agree" with a stale base).
-        Fields owned by no one in particular (merge/ask/individual) are
-        skipped -- there is nothing to rebase them to.
-
-        `l_val` is the working tree: the stored local value with the
-        signed-in account's own fetched edit already folded in (caller).
-        `orig_l` is the pre-fold database value, which is what a local
-        change is recorded as replacing."""
-        if policy.kind is PolicyKind.PROVIDER:
-            if policy.provider not in states:
-                return                       # owner lists nothing here
-            effective = states[policy.provider][1]
-            source = policy.provider
-        elif policy.kind is PolicyKind.LOCAL:
-            effective = l_val
-            # When the fold supplied this value, credit the account it
-            # came from so apply() advances THAT provider's merge base
-            # (git: the commit records its real parent).
-            source = self.primary if intent is not None else 'local'
+        if getattr(conflict, 'structural', False):
+            # Progress across differing episode structures: the tracker
+            # numbers are each in their OWN structure, so there is no
+            # single value to adopt across them and no conversion that
+            # would be honest. Nothing Mirror can do -- it is reported
+            # as information, and the per-entry fix belongs in Sync,
+            # which has the local structure to resolve against.
+            raise ValueError(
+                'episode structures differ between these trackers; '
+                'Mirror cannot convert between them -- resolve this '
+                "entry's progress from the Sync tab")
+        if choice == 'value':
+            if value is _UNSET:
+                raise ValueError("choice 'value' needs value=")
+            chosen = value
         else:
-            return
-        if not eq(effective, orig_l):
-            plan.changes.append(FieldChange(
-                uid, field, orig_l, effective, target='local',
-                source=source, title=title,
-                remote_raw=(p_scales[source][0] if progress_field
-                            and source in p_scales else None)))
-        for provider, (_state, r_val, _ts) in states.items():
-            self._plan_push(plan, uid, title, field, policy, provider,
-                            r_val, effective, source, progress_field,
-                            p_scales, ent_total)
+            if choice not in conflict.values:
+                raise ValueError('unknown tracker: %s' % choice)
+            chosen = conflict.values[choice]
+        from hakubun.sync.mirror import MirrorPlanner
+        self.store.set_field_resolution(
+            conflict.uuid, conflict.field, chosen,
+            MirrorPlanner.fingerprint(conflict.values))
+        return chosen
 
-    def _plan_push(self, plan, uid, title, field, policy, provider,
-                   state_val, effective, source, progress_field,
-                   p_scales, ent_total, provenance=None, unbased=None):
-        """Append the push of `effective` to one provider if needed.
-        Progress pushes convert into the provider's own episode
-        structure (completing a 4-episode listing pushes 1 to the
-        1-episode movie entry, and vice versa).
+    def clear_mirror_resolution(self, uid, field):
+        """Forget a mirror resolution so the disagreement is asked
+        about again."""
+        self.store.clear_field_resolution(uid, field)
 
-        A field's declared PROVIDER owner is never overwritten on the
-        strength of some OTHER provider's authority: `source` is
-        'local' for a direct/canonical edit (e.g. set_local_field, or
-        a local value simply pending push) and the owner's own name
-        when the owner's remote value itself won arbitration -- both
-        legitimately reach the owner. But when `source` is a
-        DIFFERENT provider (typically the signed-in primary's fetched
-        change folded in as local intent, engine.py `_plan_entity`),
-        that provider is not this field's authority and must not push
-        over -- silently overwriting -- the actual owner.
+    def apply_mirror(self, plan, allow_adds=False, allow_removes=False,
+                     progress=None, should_cancel=None):
+        """Commit a MirrorPlan.
 
-        `provenance` makes the guard DURABLE: `source` only knows this
-        plan's arbitration, but once a provider-fed value has been
-        COMMITTED to local state it reappears one plan later as a
-        plain local-side change (source 'local') and would sail
-        through. The stored provenance (local_state.source) still says
-        which provider fed it, so the owner stays protected until an
-        actually-authoritative write (a direct edit, a user
-        resolution, or the owner itself) supersedes the value. Mirror
-        mode passes provenance=None on purpose: mirror is the explicit
-        'local overwrites everyone' mode.
+        `allow_adds` / `allow_removes` are the BULK GATES, and they are
+        enforced here rather than in either sync window: there are two
+        UIs plus a headless path, and "the dialog asked" is not a
+        safety property. Both default to False, so the only way to
+        create or delete entries in bulk is for a caller to have
+        explicitly said so -- on top of each operation's own selection,
+        which for adds and removes starts unticked.
 
-        `unbased` names the providers we have no merge base with for
-        this field. A push to one of those overwrites a side we share
-        no history with, so it is flagged first_sync and planned
-        UNSELECTED (see FieldChange.first_sync). Mirror and rebase pass
-        unbased=None on purpose -- both are explicit 'overwrite them'
-        instructions the user picked from the mode dropdown."""
-        if policy.kind is PolicyKind.PROVIDER and policy.provider == provider:
-            if source not in ('local', provider):
-                return
-            if provenance in self.adapters and provenance != provider:
-                return
-        # A value the target itself supplied is never "overwriting" it,
-        # and neither is filling in a blank -- only a real value being
-        # replaced by another real value is the coin flip we guard.
-        first = (bool(unbased) and provider in unbased
-                 and source != provider)
-        if progress_field and provider in p_scales:
-            raw_r, r_scale = p_scales[provider]
-            if eq(state_val, effective):
-                return
-            target_val = self._progress_convert(effective, ent_total,
-                                                r_scale)
-            if target_val is None:
-                plan.conflicts.append(FieldConflict(
-                    uid, field, {'local': effective, provider: raw_r},
-                    base=None, policy=policy, title=title,
-                    note='episode structures differ: local total %s vs'
-                         ' %s total %s' % (ent_total or '?', provider,
-                                           r_scale or '?'),
-                    structural=True))
-                return
-            push_first = first and not emptyish(raw_r)
-            plan.changes.append(FieldChange(
-                uid, field, raw_r, target_val, target=provider,
-                source=source, title=title,
-                selected=not push_first, first_sync=push_first))
-            return
-        if not self.adapters[provider].values_equivalent(
-                field, state_val, effective):
-            push_first = first and not emptyish(state_val)
-            plan.changes.append(FieldChange(
-                uid, field, state_val, effective, target=provider,
-                source=source, title=title,
-                selected=not push_first, first_sync=push_first))
+        Removals run FIRST, and any field operation aimed at an entry
+        being removed is dropped: pushing a score to an entry and then
+        deleting it is wasted API calls at best and a confusing partial
+        state at worst.
 
-    def _resolve_field(self, plan, uid, title, field, policy,
-                       l_val, l_ts, pulls, divergent, mode):
-        """Returns None (keep local), (value, source), or _UNSET when a
-        FieldConflict was recorded (field frozen until resolved)."""
-        def conflict():
-            values = {'local': l_val}
-            values.update({p: v for p, (v, _) in divergent.items()})
-            values.update({p: v for p, (v, _) in pulls.items()})
-            plan.conflicts.append(FieldConflict(
-                uid, field, values, base=None, policy=policy, title=title))
-            return _UNSET
+        Returns the same shape as apply(), plus 'removed' and
+        'skipped' (operations the gates withheld).
+        """
+        removes = ([r for r in plan.removes if r.selected]
+                   if allow_removes else [])
+        adds = plan.selected_adds() if allow_adds else []
+        skipped = ((len(plan.selected_removes()) if not allow_removes
+                    else 0)
+                   + (len(plan.selected_adds()) if not allow_adds else 0))
 
-        candidates = {}
-        if divergent:
-            if mode is SyncMode.PULL:
-                # Providers update local: remote side wins divergence.
-                candidates.update(divergent)
-            else:
-                for provider, (r_val, r_ts) in divergent.items():
-                    kind, value = conflicts_mod.resolve(
-                        policy, field, l_val, r_val, provider, l_ts, r_ts)
-                    if kind == 'conflict':
-                        return conflict()
-                    if kind in ('remote', 'merged'):
-                        candidates[provider] = (value, r_ts)
-                    # kind 'local': local wins -> push happens in caller
-        candidates.update(pulls)
-        if not candidates:
-            return None
-        distinct = {}
-        for provider, (value, ts) in candidates.items():
-            distinct.setdefault(self._value_key(value),
-                                (value, provider, ts))
-        if len(distinct) == 1:
-            value, provider, _ = next(iter(distinct.values()))
-            return (value, provider)
-        # Multiple providers propose different values.
-        if policy.kind is PolicyKind.PROVIDER and policy.provider in candidates:
-            value, ts = candidates[policy.provider]
-            return (value, policy.provider)
-        if policy.kind is PolicyKind.MERGE:
-            values = [v for v, _, _ in distinct.values()]
-            if all(isinstance(v, list) for v in values):
-                union = sorted({str(x) for v in values for x in v})
-                return (union, 'merge')
-            value, provider, _ = max(distinct.values(), key=lambda t: t[2])
-            return (value, provider)
-        return conflict()
+        gone, errors, cancelled = self._apply_removes(
+            removes, progress, should_cancel)
+        removed = len(gone)
 
-    @staticmethod
-    def _value_key(value):
-        if isinstance(value, list):
-            value = sorted(map(str, value))
-        return json.dumps(value, sort_keys=True)
+        updates = [o for o in plan.selected_updates()
+                   if (o.uuid, o.target) not in gone]
+        # An AddOperation is one decision about a whole entry (see
+        # mirror.AddOperation); apply() speaks in per-field operations
+        # and batches them back together by (provider, entity), so the
+        # expansion happens HERE, after the user's single yes/no, and
+        # never becomes a set of independently tickable fields.
+        adds = [op for op in adds if (op.uuid, op.provider) not in gone]
+        add_changes = [
+            SyncOperation(op.uuid, field, None, value,
+                          target=op.provider,
+                          source=(op.provenance[0] if op.provenance
+                                  else None),
+                          title=op.title, reason=op.reason,
+                          selected=True, creates_entry=True,
+                          provenance=op.provenance)
+            for op in adds
+            for field, value in op.values.items()]
+        # Local convergence follows the trackers only where the user
+        # actually let the trackers converge: a field whose tracker
+        # pushes were unticked is left entirely alone, rather than
+        # having local quietly adopt a value no tracker was told about
+        # (which the next ordinary Sync would then push straight back
+        # out). A field with no tracker push at all -- the trackers
+        # already agree and only local is stale -- still converges.
+        held_back = {(o.uuid, o.field)
+                     for o in plan.updates if not o.selected}
+        local = [o for o in plan.selected_local()
+                 if (o.uuid, o.field) not in held_back]
+
+        result = {'txn': None, 'local': 0, 'pushed': 0, 'errors': {},
+                  'cancelled': cancelled}
+        if not cancelled:
+            from hakubun.sync.models import SyncPlan
+            result = self.apply(SyncPlan(changes=local + updates
+                                         + add_changes),
+                                progress=progress,
+                                should_cancel=should_cancel)
+        result['errors'] = {**errors, **result.get('errors', {})}
+        result['cancelled'] = cancelled or result.get('cancelled', False)
+        result['removed'] = removed
+        result['skipped'] = skipped
+        return result
+
+    def _apply_removes(self, removes, progress=None, should_cancel=None):
+        """Delete entries from providers, one at a time, with the same
+        per-provider failure isolation as pushes.
+
+        On success the provider's remote snapshot and recorded base are
+        cleared so the next plan sees the truth, and the membership
+        decision is LEFT in place ('absent'): it is what authorized the
+        deletion, and keeping it stops the next fetch from immediately
+        proposing to add the entry straight back.
+
+        Returns ({(uuid, provider) actually deleted}, errors,
+        cancelled) -- the caller drops field operations aimed at those
+        entries, and must not drop them for a delete that FAILED.
+        """
+        txn = self.history.new_txn()
+        gone, errors = set(), {}
+        cancelled = False
+        for i, op in enumerate(removes):
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
+            adapter = self.adapters.get(op.provider)
+            if adapter is None or not adapter.can_remove():
+                errors[op.provider] = ('%s cannot delete list entries'
+                                       % op.provider.capitalize())
+                continue
+            mapping = next((m for m in self.store.mappings_of(op.uuid)
+                            if m['provider'] == op.provider), None)
+            if mapping is None:
+                continue
+            remote = self.store.remote_get(op.provider,
+                                           mapping['provider_id'])
+            if not remote:
+                continue    # already gone; nothing to delete
+            my_id = (remote.get('_my_id') or (None, None))[0]
+            if progress is not None:
+                progress(i, len(removes), 'Removing from %s: %s...'
+                         % (op.provider.capitalize(), op.title))
+            try:
+                sent = adapter.remove(mapping['provider_id'],
+                                      title=op.title, my_id=my_id,
+                                      cancel=should_cancel)
+            except SyncCancelled:
+                cancelled = True
+                break
+            except AdapterError as e:
+                errors[op.provider] = str(e)
+                continue
+            if not sent:
+                continue
+            with self.store.transaction():
+                self.store.remote_delete(op.provider,
+                                         mapping['provider_id'])
+                self.store.base_delete(op.uuid, op.provider)
+                # Logged as op='remove', which History.undo ignores by
+                # design: undo replays local 'set's and rewinds pushed
+                # bases, and a deleted list entry is not something this
+                # app can honestly restore. The log stays complete
+                # (the Advanced tab and the Inspector read it) without
+                # pretending the deletion is reversible.
+                self.history.record(txn, op.uuid, '_entry', True, None,
+                                    op.provider, op='remove')
+            gone.add((op.uuid, op.provider))
+        return gone, errors, cancelled
 
     # -- apply ---------------------------------------------------------
 
@@ -897,7 +588,7 @@ class SyncEngine:
                 self.history.record(txn, c.uuid, c.field, c.old, c.new,
                                     c.source)
                 if c.source in self.adapters:
-                    # Pulled from that provider: we now agree with it.
+                    # Adopted from that provider: we now agree with it.
                     # The base records the provider's RAW value -- for
                     # structure-converted progress that differs from
                     # the local-scale value we stored.
@@ -945,10 +636,11 @@ class SyncEngine:
                     continue
                 remote = remote_by_provider_id.get(provider_id, {})
                 # No remote row at all means this provider has never
-                # actually listed the entry (see _plan_rebase_add): the
-                # mapping only records an id someone else claimed for
-                # it. Create it there instead of trying to update an
-                # entry that doesn't exist.
+                # actually listed the entry (see planner's
+                # _plan_missing_entries): the mapping only records an
+                # id someone else claimed for it. Create it there
+                # instead of trying to update an entry that doesn't
+                # exist.
                 creating = not remote
                 my_id = (remote.get('_my_id') or (None, None))[0]
                 report('%s to %s: %s (%s)...' % (
@@ -987,11 +679,11 @@ class SyncEngine:
                             # field (capability gap, or a value that
                             # failed conversion): nothing reached the
                             # provider, so recording it as pushed
-                            # would poison the merge base with a value
-                            # the remote never held -- and the next
-                            # fetch would read the provider's real
-                            # value as a fresh remote edit and pull it
-                            # back OVER local. Record nothing.
+                            # would poison the base with a value the
+                            # remote never held -- and the next fetch
+                            # would read the provider's real value as
+                            # a fresh remote edit and adopt it back
+                            # OVER local. Record nothing.
                             continue
                         value = sent[c.field]
                         op = 'add' if creating else 'push'
@@ -1018,10 +710,10 @@ class SyncEngine:
     # -- local edits ---------------------------------------------------
 
     def edit_local(self, uid, field, value, source='local'):
-        """Record a local edit (git: a commit). All app-originated
-        changes should come through here so the event log stays the
-        complete history -- direct store writes have no events and
-        therefore can't be undone."""
+        """Record a local edit (a commit). All app-originated changes
+        should come through here so the event log stays the complete
+        history -- direct store writes have no events and therefore
+        can't be undone."""
         old = self.store.local_get(uid).get(field, (None, 0))[0]
         txn = self.history.new_txn()
         with self.store.transaction():
@@ -1031,20 +723,17 @@ class SyncEngine:
 
     def set_local_field(self, uid, field, value, source='local'):
         """A user edit made straight against LOCAL (e.g. rating an
-        owned-elsewhere score in the owner's system from the main list),
-        as opposed to one folded in from a provider's fetch.
+        owned-elsewhere score in the owner's system from the main list).
 
         Like edit_local it commits the value and records the event, but
-        it also advances every mapped provider's merge base to that
-        provider's CURRENT remote value. Without that, a provider with
-        no recorded base (NO_BASE) reads the edit as divergence rather
-        than a clean local change -- and under a 'provider owns this
-        field' policy the owner's own (stale) value would win the
-        arbitration and silently discard the edit (conflicts.resolve
-        returns the provider side). Seeding base = remote makes it a
-        clean local-only change: the next plan simply PUSHES the edit to
-        the owner, and thence to everyone. Git: an explicit local commit
-        whose parent is each remote's current tip."""
+        it also advances every mapped provider's base to that
+        provider's CURRENT remote value. That is what makes the edit
+        legible to the planner as a pending LOCAL change: each
+        provider's value now equals its own base ("that side did not
+        move"), while local differs -- so an owned field routes the
+        edit to its owner, and a reconcile strategy attributes the
+        change to local instead of seeing an unattributable
+        disagreement."""
         old = self.store.local_get(uid).get(field, (None, 0))[0]
         txn = self.history.new_txn()
         with self.store.transaction():
@@ -1057,13 +746,224 @@ class SyncEngine:
                                     remote.get(field, (None,))[0])
         return txn
 
-    # -- conflicts & undo ---------------------------------------------
+    # -- membership (does this entry belong on this tracker?) ----------
+    #
+    # See membership.py. Three decisions, persisted per (entity,
+    # provider), so the next sync never re-discovers a discrepancy the
+    # user has already settled.
+
+    def set_membership(self, uid, provider, want, reason=None):
+        """Record what should be true of this entity on `provider`:
+        'present' (create it there), 'absent' (remove it from there),
+        or 'ignore' (leave whatever is there alone, stop asking).
+
+        'absent' is the only decision that can produce a DELETION, and
+        only ever through this call -- i.e. only from a user saying so.
+        """
+        self.store.set_membership(uid, provider, want, reason=reason)
+
+    def clear_membership(self, uid, provider):
+        """Forget a membership decision: the discrepancy becomes an
+        open question again and Mirror/Sync may propose an action."""
+        self.store.set_membership(uid, provider, None)
+
+    def membership(self, uid=None):
+        """Membership for one entity, or {uuid: Membership} for all."""
+        built = membership_mod.build(self.store, self.adapters,
+                                     uids=None if uid is None else [uid])
+        return built if uid is None else built.get(uid)
+
+    def identity_gaps(self):
+        """Return missing provider links the user can actually resolve.
+
+        ``identity_conflicts`` only contains ambiguous entries returned by
+        a provider list.  It cannot contain an entity that is *absent* from
+        a provider, because there is no fetched entry (and therefore no
+        provider id) to record.  Mirror still needs a provider id before it
+        can create that list entry, so expose those gaps separately for the
+        Identity tab's search/link/ignore workflow.
+
+        A gap already covered by an ordinary identity conflict is omitted:
+        resolving that fetched entry will supply the same link.  Explicit
+        membership ignores are omitted too; "leave this tracker alone"
+        must stop looking unresolved.
+        """
+        conflicts = self.store.identity_open()
+        covered = {
+            (candidate.get('uuid'), issue['provider'])
+            for issue in conflicts
+            for candidate in issue.get('candidates', ())
+            if candidate.get('uuid')
+        }
+        entity_rows = self.store.entities_with_aliases()
+        entities = {e['uuid']: e for e, _aliases in entity_rows}
+        aliases = {e['uuid']: names for e, names in entity_rows}
+        gaps = []
+        for uid, member in self.membership().items():
+            if not member.present():
+                continue
+            ent = entities.get(uid) or {}
+            for provider in member.unmapped():
+                if member.decisions.get(provider) == \
+                        membership_mod.WANT_IGNORE:
+                    continue
+                if (uid, provider) in covered:
+                    continue
+                gaps.append({
+                    'kind': 'gap',
+                    'uuid': uid,
+                    'provider': provider,
+                    'provider_id': '',
+                    'title': ent.get('title') or member.title,
+                    'status': 'needs link',
+                    'candidates': [],
+                    'known_providers': member.present(),
+                    'entry': {
+                        'title': ent.get('title') or member.title,
+                        'aliases': aliases.get(uid, []),
+                        'media_type': ent.get('media_type'),
+                        'year': ent.get('year'),
+                        'total': ent.get('total'),
+                    },
+                })
+        return sorted(gaps, key=lambda g: (
+            (g['title'] or '').casefold(), g['provider']))
+
+    def identity_issues(self):
+        """Identity-tab rows: fetched ambiguities plus missing links."""
+        conflicts = []
+        for issue in self.store.identity_open():
+            issue = dict(issue)
+            issue.setdefault('kind', 'conflict')
+            conflicts.append(issue)
+        return conflicts + self.identity_gaps()
+
+    def resolve_identity_gap(self, uid, provider, entry):
+        """Link a catalog search result to an existing internal entity.
+
+        Search results are catalog entries, not evidence that the work is
+        already on the user's list.  This therefore records only a mapping;
+        the next Mirror preview can offer the whole-entry creation.
+        """
+        if entry is None or entry.provider != provider:
+            raise ValueError('choose a result from %s' % provider)
+        ent = self.store.get_entity(uid)
+        if ent is None:
+            raise ValueError('the title no longer exists')
+        if entry.media_type and ent.get('media_type') \
+                and entry.media_type != ent['media_type']:
+            raise ValueError('%s result is %s, but this title is %s' % (
+                provider.capitalize(), entry.media_type, ent['media_type']))
+        claimed = self.store.mapping_for(provider, entry.provider_id)
+        if claimed and claimed['uuid'] != uid:
+            other = self.store.get_entity(claimed['uuid']) or {}
+            raise ValueError('%s %s is already linked to %s' % (
+                provider.capitalize(), entry.provider_id,
+                other.get('title') or 'another title'))
+        self.store.add_mapping(uid, provider, entry.provider_id,
+                               confirmed=True,
+                               via='catalog result linked by user')
+        self.store.entity_add_aliases(uid, [entry.title] + entry.aliases)
+        self.store.clear_absent(uid, provider)
+        # A previous ignore can only be reached through a stale UI row, but
+        # clearing it here keeps linking an explicit declaration that the
+        # entry should participate again.
+        self.clear_membership(uid, provider)
+        return uid
+
+    def resolve_identity_issue_to_id(self, issue, provider, provider_id):
+        """Resolve an Identity-tab row using an exact ID entered by hand.
+
+        This is the no-search counterpart to ``resolve_identity_gap`` and
+        the conflict search-result path.  The user is explicitly asserting
+        that the provider ID represents this work, so no title heuristic or
+        network catalog lookup is involved.  Existing mappings are reused;
+        an unlisted catalog ID gets an id-only mapping with no remote row,
+        allowing Mirror to preview creation there.
+        """
+        provider_id = str(provider_id or '').strip()
+        if provider not in self.adapters:
+            raise ValueError('unknown tracker: %s' % provider)
+        if not provider_id:
+            raise ValueError('enter a tracker ID')
+
+        info = issue.get('entry') or {}
+        media_type = info.get('media_type') or 'anime'
+        if issue.get('kind') == 'gap':
+            if provider != issue.get('provider'):
+                raise ValueError('this title needs a %s ID'
+                                 % issue.get('provider'))
+            uid = issue.get('uuid')
+            ent = self.store.get_entity(uid)
+            if ent is None:
+                raise ValueError('the title no longer exists')
+            claimed = self.store.mapping_for(provider, provider_id)
+            if claimed and claimed['uuid'] != uid:
+                other = self.store.get_entity(claimed['uuid']) or {}
+                raise ValueError('%s %s is already linked to %s' % (
+                    provider.capitalize(), provider_id,
+                    other.get('title') or 'another title'))
+            self.store.add_mapping(uid, provider, provider_id,
+                                   confirmed=True,
+                                   via='exact id entered by user')
+            self.store.clear_absent(uid, provider)
+            self.clear_membership(uid, provider)
+            return uid
+
+        if provider == issue.get('provider'):
+            raise ValueError('choose a different tracker from the '
+                             'unresolved entry')
+        with self.store.transaction():
+            mapping = self.store.mapping_for(provider, provider_id)
+            if mapping:
+                uid = mapping['uuid']
+                ent = self.store.get_entity(uid) or {}
+                if ent.get('media_type') and ent['media_type'] != media_type:
+                    raise ValueError('%s %s is %s, but this entry is %s' % (
+                        provider.capitalize(), provider_id,
+                        ent['media_type'], media_type))
+            else:
+                uid = self.store.create_entity(
+                    issue.get('title') or '?', media_type=media_type,
+                    year=info.get('year'), total=info.get('total'))
+                self.store.entity_add_aliases(
+                    uid, [issue.get('title'), *(info.get('aliases') or [])])
+                self.store.add_mapping(
+                    uid, provider, provider_id, confirmed=True,
+                    via='exact id entered by user')
+            self.identity.resolve_conflict(
+                issue['id'], 'confirm', target_uuid=uid)
+        return uid
+
+    def decline_create(self, uid, provider):
+        """Durably record "do not create this entity on `provider`":
+        the planner stops proposing the creation on every subsequent
+        fetch/replan. Distinct from unticking the proposal (transient,
+        this-plan-only) and from provider-only (which isolates the
+        entity from cross-provider sync entirely).
+
+        Recorded as membership 'ignore', NOT 'absent': declining a
+        creation says "don't put it there", which is not the same as
+        "take it away if it turns up there". Reversible via
+        allow_create()."""
+        self.store.set_membership(uid, provider, 'ignore',
+                                  reason='declined')
+
+    def allow_create(self, uid, provider):
+        """Forget a decline_create (and any cached lookup miss) so the
+        next plan may propose the creation again."""
+        self.store.set_membership(uid, provider, None)
+        self.store.clear_absent(uid, provider)
+
+    # -- conflicts & undo ----------------------------------------------
 
     def resolve_conflict(self, conflict, choice, value=_UNSET):
         """Resolve a FieldConflict: choice is a source key from
         conflict.values ('local', a provider) or 'value' with an
-        explicit value. Writes local state; divergent providers re-plan
-        as pushes of the resolved value.
+        explicit value. Writes local state; every listed provider's
+        base advances to its current value, so the next plan sees a
+        clean local-side resolution to propagate -- it never re-raises
+        the same conflict.
 
         A STRUCTURAL conflict (progress across differing episode
         structures) only accepts 'local' or 'value': the provider-side
@@ -1093,17 +993,26 @@ class SyncEngine:
                                  source='resolve')
             self.history.record(txn, conflict.uuid, conflict.field,
                                 old, chosen, 'resolve')
-            for provider in conflict.values:
-                if provider == 'local' or provider not in self.adapters:
+            # EVERY mapped provider's current value becomes its base:
+            # the user has acknowledged the state of the world as of
+            # this decision. Providers whose value differs from the
+            # chosen one then plan as a clean local-side change (the
+            # resolution, provenance 'resolve') to push -- and none of
+            # them can re-raise the same conflict. Deliberately not
+            # just the providers named in conflict.values: the
+            # precision-redundancy collapse can drop a provider from a
+            # conflict's options, and skipping its base here would
+            # leave that provider re-conflicting forever.
+            for m in self.store.mappings_of(conflict.uuid):
+                provider = m['provider']
+                if provider not in self.adapters:
                     continue
-                # The provider's current value becomes the merge base:
-                # the user has acknowledged it. If it differs from the
-                # chosen value, the next plan sees a clean local-side
-                # change and pushes the resolution -- it never re-raises
-                # the same conflict.
-                self.store.base_set(conflict.uuid, provider,
-                                    conflict.field,
-                                    conflict.values[provider])
+                remote = self.store.remote_get(provider,
+                                               m['provider_id'])
+                if conflict.field in remote:
+                    self.store.base_set(conflict.uuid, provider,
+                                        conflict.field,
+                                        remote[conflict.field][0])
         return txn
 
     def undo(self, txn):

@@ -1,4 +1,4 @@
-"""anime-relations id atlas: parsing and identity enrichment."""
+"""Community id atlas parsing and identity enrichment."""
 
 from hakubun.sync.engine import SyncEngine
 from hakubun.sync.relations import RelationsAtlas
@@ -52,6 +52,9 @@ def test_aod_json_adds_mal_kitsu_anilist_ids(tmp_path):
     ]}]}''')
     atlas = RelationsAtlas().add_aod(path)
     assert atlas.lookup('mal', '1') == {'kitsu': '2', 'anilist': '3'}
+    assert atlas.lookup_sources('mal', '1') == {
+        'kitsu': 'anime-offline-database',
+        'anilist': 'anime-offline-database'}
 
 
 def test_anime_relations_wins_aod_conflict(tmp_path):
@@ -64,6 +67,7 @@ def test_anime_relations_wins_aod_conflict(tmp_path):
     ]}]}''')
     atlas = RelationsAtlas.from_file(relation_path).add_aod(aod_path)
     assert atlas.lookup('mal', '1')['kitsu'] == '2'
+    assert atlas.lookup_sources('mal', '1')['kitsu'] == 'anime-relations'
 
 
 def test_atlas_links_entries_without_published_ids(store, tmp_path):
