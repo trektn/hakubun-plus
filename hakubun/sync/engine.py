@@ -773,6 +773,168 @@ class SyncEngine:
                                      uids=None if uid is None else [uid])
         return built if uid is None else built.get(uid)
 
+    def identity_gaps(self):
+        """Return missing provider links the user can actually resolve.
+
+        ``identity_conflicts`` only contains ambiguous entries returned by
+        a provider list.  It cannot contain an entity that is *absent* from
+        a provider, because there is no fetched entry (and therefore no
+        provider id) to record.  Mirror still needs a provider id before it
+        can create that list entry, so expose those gaps separately for the
+        Identity tab's search/link/ignore workflow.
+
+        A gap already covered by an ordinary identity conflict is omitted:
+        resolving that fetched entry will supply the same link.  Explicit
+        membership ignores are omitted too; "leave this tracker alone"
+        must stop looking unresolved.
+        """
+        conflicts = self.store.identity_open()
+        covered = {
+            (candidate.get('uuid'), issue['provider'])
+            for issue in conflicts
+            for candidate in issue.get('candidates', ())
+            if candidate.get('uuid')
+        }
+        entity_rows = self.store.entities_with_aliases()
+        entities = {e['uuid']: e for e, _aliases in entity_rows}
+        aliases = {e['uuid']: names for e, names in entity_rows}
+        gaps = []
+        for uid, member in self.membership().items():
+            if not member.present():
+                continue
+            ent = entities.get(uid) or {}
+            for provider in member.unmapped():
+                if member.decisions.get(provider) == \
+                        membership_mod.WANT_IGNORE:
+                    continue
+                if (uid, provider) in covered:
+                    continue
+                gaps.append({
+                    'kind': 'gap',
+                    'uuid': uid,
+                    'provider': provider,
+                    'provider_id': '',
+                    'title': ent.get('title') or member.title,
+                    'status': 'needs link',
+                    'candidates': [],
+                    'known_providers': member.present(),
+                    'entry': {
+                        'title': ent.get('title') or member.title,
+                        'aliases': aliases.get(uid, []),
+                        'media_type': ent.get('media_type'),
+                        'year': ent.get('year'),
+                        'total': ent.get('total'),
+                    },
+                })
+        return sorted(gaps, key=lambda g: (
+            (g['title'] or '').casefold(), g['provider']))
+
+    def identity_issues(self):
+        """Identity-tab rows: fetched ambiguities plus missing links."""
+        conflicts = []
+        for issue in self.store.identity_open():
+            issue = dict(issue)
+            issue.setdefault('kind', 'conflict')
+            conflicts.append(issue)
+        return conflicts + self.identity_gaps()
+
+    def resolve_identity_gap(self, uid, provider, entry):
+        """Link a catalog search result to an existing internal entity.
+
+        Search results are catalog entries, not evidence that the work is
+        already on the user's list.  This therefore records only a mapping;
+        the next Mirror preview can offer the whole-entry creation.
+        """
+        if entry is None or entry.provider != provider:
+            raise ValueError('choose a result from %s' % provider)
+        ent = self.store.get_entity(uid)
+        if ent is None:
+            raise ValueError('the title no longer exists')
+        if entry.media_type and ent.get('media_type') \
+                and entry.media_type != ent['media_type']:
+            raise ValueError('%s result is %s, but this title is %s' % (
+                provider.capitalize(), entry.media_type, ent['media_type']))
+        claimed = self.store.mapping_for(provider, entry.provider_id)
+        if claimed and claimed['uuid'] != uid:
+            other = self.store.get_entity(claimed['uuid']) or {}
+            raise ValueError('%s %s is already linked to %s' % (
+                provider.capitalize(), entry.provider_id,
+                other.get('title') or 'another title'))
+        self.store.add_mapping(uid, provider, entry.provider_id,
+                               confirmed=True,
+                               via='catalog result linked by user')
+        self.store.entity_add_aliases(uid, [entry.title] + entry.aliases)
+        self.store.clear_absent(uid, provider)
+        # A previous ignore can only be reached through a stale UI row, but
+        # clearing it here keeps linking an explicit declaration that the
+        # entry should participate again.
+        self.clear_membership(uid, provider)
+        return uid
+
+    def resolve_identity_issue_to_id(self, issue, provider, provider_id):
+        """Resolve an Identity-tab row using an exact ID entered by hand.
+
+        This is the no-search counterpart to ``resolve_identity_gap`` and
+        the conflict search-result path.  The user is explicitly asserting
+        that the provider ID represents this work, so no title heuristic or
+        network catalog lookup is involved.  Existing mappings are reused;
+        an unlisted catalog ID gets an id-only mapping with no remote row,
+        allowing Mirror to preview creation there.
+        """
+        provider_id = str(provider_id or '').strip()
+        if provider not in self.adapters:
+            raise ValueError('unknown tracker: %s' % provider)
+        if not provider_id:
+            raise ValueError('enter a tracker ID')
+
+        info = issue.get('entry') or {}
+        media_type = info.get('media_type') or 'anime'
+        if issue.get('kind') == 'gap':
+            if provider != issue.get('provider'):
+                raise ValueError('this title needs a %s ID'
+                                 % issue.get('provider'))
+            uid = issue.get('uuid')
+            ent = self.store.get_entity(uid)
+            if ent is None:
+                raise ValueError('the title no longer exists')
+            claimed = self.store.mapping_for(provider, provider_id)
+            if claimed and claimed['uuid'] != uid:
+                other = self.store.get_entity(claimed['uuid']) or {}
+                raise ValueError('%s %s is already linked to %s' % (
+                    provider.capitalize(), provider_id,
+                    other.get('title') or 'another title'))
+            self.store.add_mapping(uid, provider, provider_id,
+                                   confirmed=True,
+                                   via='exact id entered by user')
+            self.store.clear_absent(uid, provider)
+            self.clear_membership(uid, provider)
+            return uid
+
+        if provider == issue.get('provider'):
+            raise ValueError('choose a different tracker from the '
+                             'unresolved entry')
+        with self.store.transaction():
+            mapping = self.store.mapping_for(provider, provider_id)
+            if mapping:
+                uid = mapping['uuid']
+                ent = self.store.get_entity(uid) or {}
+                if ent.get('media_type') and ent['media_type'] != media_type:
+                    raise ValueError('%s %s is %s, but this entry is %s' % (
+                        provider.capitalize(), provider_id,
+                        ent['media_type'], media_type))
+            else:
+                uid = self.store.create_entity(
+                    issue.get('title') or '?', media_type=media_type,
+                    year=info.get('year'), total=info.get('total'))
+                self.store.entity_add_aliases(
+                    uid, [issue.get('title'), *(info.get('aliases') or [])])
+                self.store.add_mapping(
+                    uid, provider, provider_id, confirmed=True,
+                    via='exact id entered by user')
+            self.identity.resolve_conflict(
+                issue['id'], 'confirm', target_uuid=uid)
+        return uid
+
     def decline_create(self, uid, provider):
         """Durably record "do not create this entity on `provider`":
         the planner stops proposing the creation on every subsequent

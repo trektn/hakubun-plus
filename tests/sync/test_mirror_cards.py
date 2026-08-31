@@ -26,6 +26,7 @@ import pytest
 from conftest import FakeLib, make_engine, show
 from hakubun.sync import present
 from hakubun.sync.models import FieldPolicy
+from hakubun.sync.mirror import MirrorPlan, RemoveOperation
 
 
 def own(store, **fields):
@@ -43,6 +44,24 @@ def card_named(engine, plan, title, category='all'):
 
 def texts(card):
     return [text for _op, text in card.rows]
+
+
+def test_confirmation_counts_only_selected_work():
+    """Deletion rows start unticked.  The confirmation must not promise
+    that an unticked deletion will run and then report a mysterious no-op."""
+    removal = RemoveOperation('u', 'mal', title='GHOST')
+    plan = MirrorPlan(removes=[removal])
+    assert 'Remove:' not in present.mirror_confirmation(plan)
+    removal.selected = True
+    assert 'Mal: 1 entries' in present.mirror_confirmation(plan)
+
+
+def test_result_reports_local_only_convergence():
+    text = present.mirror_result_status({
+        'pushed': 0, 'removed': 0, 'local': 2, 'errors': {},
+        'skipped': 0, 'cancelled': False})
+    assert "2 value(s) in Hakubun's copy" in text
+    assert 'made no changes' not in text
 
 
 def note_for(card, provider):
@@ -197,6 +216,33 @@ def test_an_entry_is_created_whole_or_not_at_all(store):
     assert created['my_score'] == pytest.approx(4.5)
     assert created['my_status'] is not None, \
         'a created entry must carry every field it was planned with'
+
+
+def test_kitsu_creation_gets_required_planned_status_when_policy_omits_it(
+        store):
+    """Kitsu GraphQL rejects LibraryEntryCreateInput.status=null.  A
+    don't-sync status policy should therefore create a conservative planned
+    entry, visibly, rather than let the entire Kitsu batch fail."""
+    anilist = FakeLib('anilist', [
+        show('anilist', 9, 'GHOST', score=90, status='completed', mal_id=77)])
+    mal = FakeLib('mal', [show('mal', 77, 'GHOST', score=9,
+                               status='completed')])
+    kitsu = FakeLib('kitsu', [], mal_id_index={77: 'k1'},
+                    extra_info={'add_default_status': 'plan'})
+    engine = make_engine(store, {'anilist': anilist, 'mal': mal,
+                                 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, score='provider:anilist', status='individual')
+
+    plan = engine.mirror_plan()
+    add = next(o for o in plan.adds if o.provider == 'kitsu')
+    assert add.values['status'] == 'plan'
+    assert 'Status Plan' in next(
+        text for text in texts(card_named(engine, plan, 'GHOST'))
+        if text.startswith('Add to Kitsu'))
+
+    engine.apply_mirror(plan, allow_adds=True)
+    assert kitsu.shows['k1']['my_status'] == 'planned'
 
 
 # -- 3. completed works have a defined progress everywhere ------------

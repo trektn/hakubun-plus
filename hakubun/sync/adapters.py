@@ -280,6 +280,42 @@ class ProviderAdapter:
         item['title'] = title or ''
         return item, sent
 
+    def creation_values(self, changes):
+        """Canonical values a newly-created provider entry must carry.
+
+        Field policy may intentionally omit a field, but some provider
+        create schemas still require it.  Such requirements belong to the
+        adapter capability data, not to identity or reconciliation.  The
+        planner calls this too, so a required default is disclosed in the
+        preview instead of being a hidden API-side mutation.
+        """
+        values = dict(changes)
+        default_status = self.mediainfo.get('add_default_status')
+        if default_status and not values.get('status'):
+            values['status'] = default_status
+        return values
+
+    def can_write(self, field):
+        """Whether this provider can actually accept ``field``.
+
+        Planning and payload construction must share this answer.  Relying
+        only on ``_build_item`` to drop unsupported fields leaves a previewed
+        operation that Apply silently turns into an empty payload -- exactly
+        the recurring no-op a stale Kitsu date snapshot exposed.
+        """
+        info = self.mediainfo
+        return {
+            'score': info.get('can_score', True),
+            'status': info.get('can_status', True),
+            'progress': info.get('can_update', True),
+            'rewatches': info.get('can_update', True),
+            'start_date': info.get('can_date', True),
+            'finish_date': info.get('can_date', True),
+            'tags': info.get('can_tag', False),
+            'notes': False,
+            'favorite': False,
+        }.get(field, True)
+
     def _send(self, lib_call, item, cancel, on_wait):
         """Retry wrapper shared by push()/add(): paces per provider and
         retries on a rate-limit (429) response, waiting the server's
@@ -348,7 +384,8 @@ class ProviderAdapter:
         there's no separate library-entry id to learn)."""
         if not self.mediainfo.get('can_add', True):
             return {}, None
-        item, sent = self._build_item(provider_id, changes, title)
+        item, sent = self._build_item(
+            provider_id, self.creation_values(changes), title)
         if not sent:
             return {}, None
         new_id = self._send(self.lib.add_show, item, cancel, on_wait)

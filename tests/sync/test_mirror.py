@@ -228,10 +228,62 @@ def test_settled_discrepancy_is_not_reproposed(store):
     engine.set_membership(uid, 'kitsu', 'ignore')
     plan = engine.mirror_plan()
     assert [o for o in plan.adds if o.provider == 'kitsu'] == []
-    # Still SHOWN, with the decision, rather than silently dropped.
+    # Leave-as-is is a real ignore: it is not an operation or unresolved
+    # warning.  The decision stays reachable only as a settled note.
     issue = next(i for i in plan.membership if i.title == 'GHOST')
-    assert issue.missing == ['kitsu']
     assert issue.decisions['kitsu'] == 'ignore'
+    assert 'kitsu' not in issue.missing + issue.unmapped
+
+
+def test_ignored_present_tracker_does_not_justify_other_adds(store):
+    """Leave-this-tracker-alone removes it from the entity's mirror; it
+    must not silently remain as provenance for changes elsewhere."""
+    kitsu = FakeLib('kitsu', [
+        show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)])
+    mal = FakeLib('mal', [])
+    engine = make_engine(store, {'kitsu': kitsu, 'mal': mal})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('kitsu', 'k1')['uuid']
+    engine.set_membership(uid, 'kitsu', 'ignore')
+    plan = engine.mirror_plan()
+    assert not [op for op in plan.adds if op.uuid == uid]
+
+
+def test_ignored_tracker_is_not_a_mirror_field_participant(store):
+    engine, _al, _mal, _kitsu = three_trackers(
+        store,
+        kitsu_shows=[show('kitsu', 'k1', 'GHOST', score=2.0, mal_id=77)],
+        anilist={'score': 90}, mal={'score': 5})
+    assert engine.fetch() == {}
+    uid = store.mapping_for('anilist', '9')['uuid']
+    engine.set_membership(uid, 'kitsu', 'ignore')
+    assert all(op.target != 'kitsu' for op in engine.mirror_plan().updates)
+
+
+def test_stale_unsupported_date_is_not_planned_as_a_silent_noop(store):
+    """A database can still contain date snapshots fetched before an
+    adapter corrected its capabilities.  Planning must gate the destination,
+    not trust stale snapshot shape and let Apply drop the payload silently."""
+    import datetime
+
+    anilist = FakeLib('anilist', [show(
+        'anilist', 9, 'GHOST', mal_id=77,
+        my_start_date=datetime.date(2020, 1, 1))])
+    kitsu = FakeLib('kitsu', [show(
+        'kitsu', 'k1', 'GHOST', mal_id=77,
+        my_start_date=datetime.date(2021, 1, 1))])
+    engine = make_engine(store, {'anilist': anilist, 'kitsu': kitsu})
+    assert engine.fetch() == {}
+    own(store, start_date='provider:anilist')
+
+    # Capability changes after the old date row is already persisted.
+    kitsu.extra_info['can_date'] = False
+    mirror = engine.mirror_plan()
+    assert not [op for op in mirror.updates
+                if op.target == 'kitsu' and op.field == 'start_date']
+    sync = engine.plan()
+    assert not [op for op in sync.changes
+                if op.target == 'kitsu' and op.field == 'start_date']
 
 
 # -- 4. membership: unwanted entries ----------------------------------

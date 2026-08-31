@@ -1,4 +1,7 @@
-"""Legacy Kitsu: MAL ids via mappings include + adapter-side merge."""
+"""Legacy Kitsu: dates and MAL ids via mappings include + adapter merge."""
+
+import datetime
+import json
 
 from hakubun import messenger
 from hakubun.lib.libkitsu import libkitsu
@@ -61,6 +64,16 @@ def test_process_library_page_extracts_mal_id():
     assert showlist[77]['title'] == 'Sousou no Frieren'
     assert showlist[77]['mal_id'] == 52991
     assert 'Sousou no Frieren' in showlist[77]['aliases']
+
+
+def test_legacy_kitsu_writes_start_and_finish_dates():
+    payload = json.loads(_lib()._build_data({
+        'id': 77, 'my_id': '900',
+        'my_start_date': datetime.date(2024, 1, 2),
+        'my_finish_date': datetime.date(2024, 2, 3)}))
+    attrs = payload['data']['attributes']
+    assert attrs['startedAt'] == '2024-01-02T00:00:00Z'
+    assert attrs['finishedAt'] == '2024-02-03T00:00:00Z'
 
 
 class FakeLegacyKitsuLib(FakeLib):

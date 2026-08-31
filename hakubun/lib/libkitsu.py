@@ -85,6 +85,7 @@ class libkitsu(lib):
         'can_score': True,
         'can_status': True,
         'can_update': True,
+        'can_date': True,
         'can_play': True,
         'statuses_start': ['current'],
         'statuses_finish': ['completed'],
@@ -106,6 +107,7 @@ class libkitsu(lib):
         'can_score': True,
         'can_status': True,
         'can_update': True,
+        'can_date': True,
         'can_play': False,
         'statuses_start': ['current'],
         'statuses_finish': ['completed'],
@@ -128,6 +130,7 @@ class libkitsu(lib):
         'can_score': True,
         'can_status': True,
         'can_update': True,
+        'can_date': True,
         'can_play': True,
         'statuses_start': ['current'],
         'statuses_finish': ['completed'],
@@ -592,8 +595,21 @@ class libkitsu(lib):
         if 'my_score' in item:
             values['data']['attributes']['ratingTwenty'] = \
                 utils.kitsu_rating_twenty(item['my_score'])
+        for source, target in (('my_start_date', 'startedAt'),
+                               ('my_finish_date', 'finishedAt')):
+            if source in item:
+                values['data']['attributes'][target] = \
+                    self._date2iso8601(item[source])
 
         return json.dumps(values)
+
+    @staticmethod
+    def _date2iso8601(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime.datetime):
+            value = value.date()
+        return '%sT00:00:00Z' % value.isoformat()
 
     def _str2date(self, string):
         if string is None:

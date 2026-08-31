@@ -368,6 +368,8 @@ class SyncPlanner:
         Progress pushes convert into the provider's own episode
         structure (completing a 4-episode listing pushes 1 to the
         1-episode movie entry, and vice versa)."""
+        if not self.adapters[provider].can_write(field):
+            return
         if field == 'progress' and provider in raws:
             raw_r, r_scale = raws[provider]
             if values_equal(field, current, effective):
@@ -433,15 +435,14 @@ class SyncPlanner:
         if not missing:
             return
         values = self.entry_values(ownership, sides, local)
-        if not values:
-            return
         provenance = tuple(existing)
         reason = 'exists on %s; %%s has no entry' % ' and '.join(
             p.capitalize() for p in existing)
         for provider in missing:
             if not self.adapters[provider].mediainfo.get('can_add', True):
                 continue
-            for field, val in values.items():
+            creation_values = self.adapters[provider].creation_values(values)
+            for field, val in creation_values.items():
                 plan.changes.append(SyncOperation(
                     uid, field, None, val, target=provider,
                     source=existing[0], title=title,

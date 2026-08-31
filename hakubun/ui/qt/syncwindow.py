@@ -39,7 +39,7 @@ import threading
 import traceback
 
 from PyQt6 import QtCore, QtGui
-from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog,
+from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog,
                              QGridLayout,
                              QGroupBox, QHBoxLayout, QInputDialog, QLabel,
                              QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
@@ -748,10 +748,10 @@ class SyncWindow(QDialog):
     def s_reset(self):
         answer = QMessageBox.question(
             self, 'Reset sync database',
-            'Wipe the sync database? Identities, mappings, sync '
-            'history, resolved decisions and per-field sync rules are '
-            'deleted and re-derived on the next fetch. Your provider '
-            'lists are NOT touched.')
+            'Wipe sync state? Identities, mappings, sync history, resolved '
+            'decisions and cached entries will be deleted and re-derived '
+            'on the next fetch. Your policy matrix and entry-owner setting '
+            'will be preserved. Your provider lists are NOT touched.')
         if answer != QMessageBox.StandardButton.Yes:
             return
         if self.is_busy():
@@ -917,16 +917,23 @@ class SyncWindow(QDialog):
         provider = provider_label.lower()
         menu = QMenu(self)
         has_entry = provider in issue.present
-        if not has_entry:
+        if provider in issue.unmapped:
+            act = menu.addAction(
+                'Cannot add: link %s under Identity first' % provider_label)
+            act.setEnabled(False)
+        elif not has_entry and provider in issue.addable:
             act = menu.addAction(present.mirror_add_label(issue, provider))
             act.triggered.connect(
                 lambda _c=False: self._set_membership(issue, provider,
                                                       'present'))
-        else:
+        elif has_entry:
             act = menu.addAction(present.mirror_remove_label(provider))
             act.triggered.connect(
                 lambda _c=False: self._confirm_membership_removal(
                     issue, provider))
+        else:
+            act = menu.addAction('Ask me about %s again' % provider_label)
+            act.setEnabled(False)
         act = menu.addAction(present.mirror_ignore_label(provider))
         act.triggered.connect(
             lambda _c=False: self._set_membership(issue, provider,
@@ -1058,7 +1065,11 @@ class SyncWindow(QDialog):
         self._mirror_plan = plan
         self._render_mirror_cards()
         self._set_mirror_decisions(plan.conflicts)
-        self.mirror_apply_button.setEnabled(not plan.clean)
+        # Conflicts and capability/identity notes are not executable
+        # work. Do not offer an Apply button that can only make no
+        # changes; the summary explains why the plan is blocked.
+        self.mirror_apply_button.setEnabled(bool(
+            plan.adds or plan.removes or plan.updates or plan.local))
         self.mirror_summary.setText('<b>%s</b>'
                                     % present.mirror_plan_summary(plan))
         self._status(present.mirror_plan_summary(plan))
@@ -1070,6 +1081,14 @@ class SyncWindow(QDialog):
         if self._mirror_plan is None:
             return
         plan = self._mirror_plan
+        counts = plan.selected_counts()
+        if not (sum(counts['add'].values())
+                + sum(counts['remove'].values())
+                + sum(counts['update'].values())
+                + counts['local']):
+            self._status('Select at least one Mirror change first. '
+                         'Removal rows start unchecked for safety.')
+            return
         # Both categories are approved by the one confirmation below.
         # The separate "allow adding" / "allow removing" checkboxes
         # asked the same question the preview and this dialog already
@@ -1164,13 +1183,16 @@ class SyncWindow(QDialog):
         grid.setVerticalSpacing(10)
         self._policy_combos = {}
         ownership = self.store.ownership()
-        for row, field in enumerate(USER_FIELDS):
+        for row, field in enumerate(present.POLICY_FIELDS):
             grid.addWidget(QLabel(_FIELD_LABELS.get(field, field)),
                            row, 0)
             combo = QComboBox()
             current = ownership[field].serialize()
+            writable = [p for p in providers
+                        if present.provider_can_write(
+                            self.engine.adapters[p], field)]
             for key, choice_label in present.policy_choices(
-                    field, providers, current):
+                    field, writable, current):
                 combo.addItem(choice_label, key)
             combo.setCurrentIndex(combo.findData(current))
             combo.currentIndexChanged.connect(
@@ -1183,7 +1205,7 @@ class SyncWindow(QDialog):
         # from; it cannot say whether Kitsu should hold the entry at
         # all, which is what made every membership difference a
         # per-entry question.
-        row = len(USER_FIELDS)
+        row = len(present.POLICY_FIELDS)
         grid.addWidget(QLabel(present.ENTRY_OWNER_LABEL), row, 0)
         self.entry_owner_combo = QComboBox()
         master = self.store.master()
@@ -1298,7 +1320,7 @@ class SyncWindow(QDialog):
             grid.setColumnMinimumWidth(col, 96)
         self._ownership_groups = {}
         ownership = self.store.ownership()
-        for row, field in enumerate(USER_FIELDS, start=1):
+        for row, field in enumerate(present.POLICY_FIELDS, start=1):
             field_label = QLabel(_FIELD_LABELS.get(field, field))
             field_label.setMinimumHeight(30)
             grid.addWidget(field_label, row, 0,
@@ -1312,6 +1334,14 @@ class SyncWindow(QDialog):
                 radio.setProperty('field', field)
                 if policy_text == current:
                     radio.setChecked(True)
+                if policy_text.startswith('provider:'):
+                    provider = policy_text.split(':', 1)[1]
+                    if not present.provider_can_write(
+                            self.engine.adapters[provider], field):
+                        radio.setEnabled(False)
+                        radio.setToolTip('%s cannot write %s'
+                                         % (provider.capitalize(),
+                                            _FIELD_LABELS.get(field, field)))
                 radio.toggled.connect(self._ownership_changed)
                 group.addButton(radio)
                 grid.addWidget(radio, row, col,
@@ -1337,7 +1367,7 @@ class SyncWindow(QDialog):
         layout.addWidget(self.identity_intro)
         self.identity_tree = QTreeWidget()
         self.identity_tree.setHeaderLabels(
-            ['Provider', 'Type', 'Title', 'Also known as', 'Status'])
+            ['Tracker', 'Type', 'Title', 'Also known as', 'What it needs'])
         self.identity_tree.setRootIsDecorated(False)
         self.identity_tree.currentItemChanged.connect(
             self._identity_selected)
@@ -1347,7 +1377,7 @@ class SyncWindow(QDialog):
             self._identity_context_menu)
         layout.addWidget(self.identity_tree, 2)
 
-        self.identity_box = QGroupBox('Resolution')
+        self.identity_box = QGroupBox('How should this be handled?')
         box_layout = QVBoxLayout(self.identity_box)
         self.identity_info = QLabel()
         self.identity_info.setWordWrap(True)
@@ -1383,22 +1413,31 @@ class SyncWindow(QDialog):
         self.search_open_button.clicked.connect(self.s_open_search_result)
         results_row.addWidget(self.search_results, 1)
         results_row.addWidget(self.search_open_button)
+        self.rb_exact_id = QRadioButton(
+            'Match to an exact tracker ID (trusted as entered)')
+        exact_id_row = QHBoxLayout()
+        self.exact_id_provider = QComboBox()
+        self.exact_id_value = QLineEdit()
+        self.exact_id_value.setPlaceholderText('Tracker ID, e.g. 52991')
+        exact_id_row.addWidget(self.exact_id_provider)
+        exact_id_row.addWidget(self.exact_id_value, 1)
         self.rb_provider_only = QRadioButton(
             'Keep provider-only: do not sync this entry elsewhere')
         self.rb_defer = QRadioButton(
-            'Create provider mappings later: keep watching for new '
-            'matches')
+            'Decide later: keep looking for a certain match')
         self.rb_ignore = QRadioButton('Ignore this title: never ask again')
         for w in (self.rb_confirm, self.candidate_combo,
                  self.candidate_open_button, self.rb_search):
             box_layout.addWidget(w)
         box_layout.addLayout(search_bar)
         box_layout.addLayout(results_row)
+        box_layout.addWidget(self.rb_exact_id)
+        box_layout.addLayout(exact_id_row)
         for w in (self.rb_provider_only, self.rb_defer, self.rb_ignore):
             box_layout.addWidget(w)
         resolve_bar = QHBoxLayout()
         resolve_bar.addStretch()
-        self.identity_resolve_button = QPushButton('Resolve')
+        self.identity_resolve_button = QPushButton('Save choice')
         self.identity_resolve_button.clicked.connect(self.s_identity_resolve)
         resolve_bar.addWidget(self.identity_resolve_button)
         box_layout.addLayout(resolve_bar)
@@ -1412,16 +1451,23 @@ class SyncWindow(QDialog):
 
     def _refresh_identity(self):
         self.identity_tree.clear()
-        for issue in self.store.identity_open():
+        issues = (self.engine.identity_issues()
+                  if hasattr(self.engine, 'identity_issues')
+                  else self.store.identity_open())
+        for issue in issues:
             info = issue.get('entry') or {}
             aliases = info.get('aliases') or []
             display = self._display_title(issue['title'], aliases)
             others = [a for a in aliases if a and a != issue['title']]
             media_type = info.get('media_type')
+            status = {'open': 'Choose a match',
+                      'deferred': 'Waiting for a match',
+                      'needs link': 'Link or leave alone'}.get(
+                          issue['status'], issue['status'])
             item = QTreeWidgetItem([
                 issue['provider'],
                 media_type.capitalize() if media_type else '?',
-                display, ' / '.join(others[:2]), issue['status']])
+                display, ' / '.join(others[:2]), status])
             # A row whose only candidate is a type mismatch is a data
             # problem, not an ordinary ambiguity -- make it visually
             # impossible to miss in the list itself, not just the text.
@@ -1429,8 +1475,12 @@ class SyncWindow(QDialog):
                   for c in issue['candidates']):
                 item.setForeground(0, self._CONFLICT_COLOR)
                 item.setForeground(1, self._CONFLICT_COLOR)
+            identity_tip = (
+                '%s id %s' % (issue['provider'], issue['provider_id'])
+                if issue['provider_id'] else
+                'Needs a link on %s' % issue['provider'].capitalize())
             tip = '\n'.join(filter(None, [
-                '%s id %s' % (issue['provider'], issue['provider_id']),
+                identity_tip,
                 'Year: %s' % info['year'] if info.get('year') else None,
                 'All titles: %s' % ', '.join(
                     [issue['title'] or ''] + others) if others else None]))
@@ -1442,13 +1492,12 @@ class SyncWindow(QDialog):
             self.identity_tree.resizeColumnToContents(col)
         count = self.identity_tree.topLevelItemCount()
         self.identity_intro.setText(
-            ('<b>%d title(s) need matching:</b> Hakubun could not '
-             'decide on its own which entry on your other sites each '
-             'of these is. ' % count if count else
-             '<b>No titles need matching right now.</b> ')
-            + 'Certain matches (exact ID links, single exact-title '
-            'matches) are linked automatically and never appear here. '
-            'Right-click a row to inspect it or open it on its site.')
+            ('<b>%d identity item(s) need attention.</b> Select one to '
+             'match it, search the missing tracker, enter an exact ID, or '
+             'leave that tracker alone for the title. ' % count if count else
+             '<b>Everything is matched.</b> ')
+            + 'Certain matches are linked automatically and never appear '
+            'here. Right-clicking a row offers quick actions.')
         # Found by index, never hardcoded: this said `2`, which was
         # Identity's slot until the Mirror tab was inserted at 1 and
         # pushed everything down. After that it stamped "Identity (N)"
@@ -1464,17 +1513,31 @@ class SyncWindow(QDialog):
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
         info = issue.get('entry') or {}
         candidates = issue['candidates']
+        is_gap = issue.get('kind') == 'gap'
         year = ' (%s)' % info['year'] if info.get('year') else ''
-        why = ('%d possible existing match(es) were found by title, '
-               'none certain enough to link automatically.'
-               % len(candidates) if candidates else
-               'No existing entry matched and no cross-provider ID '
-               'was published.')
-        self.identity_info.setText(
-            '<b>%s</b>%s: %s entry %s.<br>%s' % (
-                self._display_title(issue['title'],
-                                    info.get('aliases')),
-                year, issue['provider'], issue['provider_id'], why))
+        if is_gap:
+            known = ', '.join(p.capitalize()
+                              for p in issue.get('known_providers', ()))
+            self.identity_info.setText(
+                '<b>%s</b>%s is known on %s, but has no %s link.<br>'
+                'Search %s for the same work, enter its exact tracker ID, '
+                'or leave that tracker alone for this title.' % (
+                    self._display_title(issue['title'],
+                                        info.get('aliases')),
+                    year, known or 'another tracker',
+                    issue['provider'].capitalize(),
+                    issue['provider'].capitalize()))
+        else:
+            why = ('%d possible existing match(es) were found by title, '
+                   'none certain enough to link automatically.'
+                   % len(candidates) if candidates else
+                   'No existing entry matched and no cross-provider ID '
+                   'was published.')
+            self.identity_info.setText(
+                '<b>%s</b>%s: %s entry %s.<br>%s' % (
+                    self._display_title(issue['title'],
+                                        info.get('aliases')),
+                    year, issue['provider'], issue['provider_id'], why))
         self.candidate_combo.clear()
         for cand in candidates:
             providers = ', '.join('on %s (%s)' % kv
@@ -1488,20 +1551,48 @@ class SyncWindow(QDialog):
                 cand.get('via', ''))
             self.candidate_combo.addItem(label, cand)   # full dict: the
             # Open-page button needs providers/media_type, not just uuid.
-        self.rb_confirm.setEnabled(bool(candidates))
+        self.rb_confirm.setEnabled(bool(candidates) and not is_gap)
+        self.candidate_combo.setEnabled(bool(candidates) and not is_gap)
         if candidates:
             self.rb_confirm.setChecked(True)
-        else:
+        elif not is_gap:
             self.rb_defer.setChecked(True)
-        self.rb_provider_only.setText(
-            'Keep %s-only: do not sync this entry elsewhere'
-            % issue['provider'])
+        self.rb_provider_only.setEnabled(not is_gap)
+        self.rb_defer.setEnabled(not is_gap)
+        self.rb_ignore.setText(
+            ('Leave %s alone for this title'
+             % issue['provider'].capitalize()) if is_gap else
+            'Ignore this title: never ask again')
         self.search_provider.clear()
-        for name in self.engine.adapters:
-            if name != issue['provider']:
-                self.search_provider.addItem(name)
+        if is_gap:
+            self.search_provider.addItem(issue['provider'])
+            self.search_provider.setEnabled(False)
+            self.rb_search.setText('Search %s for the matching entry'
+                                   % issue['provider'].capitalize())
+            self.rb_search.setChecked(True)
+        else:
+            self.search_provider.setEnabled(True)
+            self.rb_search.setText(
+                'Search manually: find the entry on another provider')
+            self.rb_provider_only.setText(
+                'Keep %s-only: do not sync this entry elsewhere'
+                % issue['provider'])
+            for name in self.engine.adapters:
+                if name != issue['provider']:
+                    self.search_provider.addItem(name)
         self.search_text.setText(issue['title'] or '')
         self.search_results.clear()
+        self.exact_id_provider.clear()
+        if is_gap:
+            self.exact_id_provider.addItem(issue['provider'].capitalize(),
+                                           issue['provider'])
+            self.exact_id_provider.setEnabled(False)
+        else:
+            self.exact_id_provider.setEnabled(True)
+            for name in self.engine.adapters:
+                if name != issue['provider']:
+                    self.exact_id_provider.addItem(name.capitalize(), name)
+        self.exact_id_value.clear()
         self._update_candidate_open_button()
         self._update_search_open_button()
 
@@ -1566,10 +1657,22 @@ class SyncWindow(QDialog):
             return
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        inspect_action = menu.addAction('Inspect')
-        inspect_action.triggered.connect(
-            lambda: self._inspect_from_identity(issue['provider'],
-                                                issue['provider_id']))
+        inspect_target = self._identity_inspect_target(issue)
+        if inspect_target is not None:
+            inspect_action = menu.addAction('Inspect identity')
+            inspect_action.triggered.connect(
+                lambda _checked=False, target=inspect_target:
+                self._inspect_from_identity(*target))
+        if issue.get('kind') == 'gap':
+            if inspect_target is not None:
+                menu.addSeparator()
+            ignore_action = menu.addAction(
+                'Leave %s alone for this title'
+                % issue['provider'].capitalize())
+            ignore_action.triggered.connect(
+                lambda: self._ignore_identity_gap(issue))
+            menu.exec(self.identity_tree.viewport().mapToGlobal(pos))
+            return
         media_type = (issue.get('entry') or {}).get('media_type')
         url = adapters.web_url(issue['provider'], media_type,
                                issue['provider_id'])
@@ -1581,6 +1684,24 @@ class SyncWindow(QDialog):
                 lambda checked=False, u=url:
                 QtGui.QDesktopServices.openUrl(QtCore.QUrl(u)))
         menu.exec(self.identity_tree.viewport().mapToGlobal(pos))
+
+    def _identity_inspect_target(self, issue):
+        """Return a provider/id the Inspector can use for this row.
+
+        A missing-link row has no id on the missing provider by definition,
+        so inspect the same entity through one of its existing mappings.
+        """
+        if issue.get('provider_id'):
+            return issue['provider'], str(issue['provider_id'])
+        if not issue.get('uuid'):
+            return None
+        mappings = self.store.mappings_of(issue['uuid'])
+        if not mappings:
+            return None
+        preferred = self.engine.primary
+        mapping = next((m for m in mappings if m['provider'] == preferred),
+                       sorted(mappings, key=lambda m: m['provider'])[0])
+        return mapping['provider'], mapping['provider_id']
 
     def _inspect_from_identity(self, provider, provider_id):
         for i in range(self.tabs.count()):
@@ -1598,6 +1719,7 @@ class SyncWindow(QDialog):
         if item is None:
             return
         issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        is_gap = issue.get('kind') == 'gap'
         identity = self.engine.identity
         entry = NormalizedEntry(provider=issue['provider'],
                                 provider_id=issue['provider_id'],
@@ -1613,6 +1735,15 @@ class SyncWindow(QDialog):
                 found = self.search_results.currentData()
                 if found is None:
                     self._status('Pick a search result first.')
+                    return
+                if is_gap:
+                    self.engine.resolve_identity_gap(
+                        issue['uuid'], issue['provider'], found)
+                    self._refresh_identity()
+                    self._status('Linked %s on %s. Preview Mirror to '
+                                 'review the new entry.' % (
+                                     issue['title'],
+                                     issue['provider'].capitalize()))
                     return
                 mapping = self.store.mapping_for(found.provider,
                                                  found.provider_id)
@@ -1630,15 +1761,30 @@ class SyncWindow(QDialog):
             elif self.rb_provider_only.isChecked():
                 identity.resolve_conflict(issue['id'], 'provider_only',
                                           entry=entry)
+            elif self.rb_exact_id.isChecked():
+                provider = self.exact_id_provider.currentData()
+                provider_id = self.exact_id_value.text().strip()
+                self.engine.resolve_identity_issue_to_id(
+                    issue, provider, provider_id)
             elif self.rb_defer.isChecked():
                 identity.resolve_conflict(issue['id'], 'defer')
             elif self.rb_ignore.isChecked():
-                identity.resolve_conflict(issue['id'], 'ignore')
+                if is_gap:
+                    self.engine.set_membership(
+                        issue['uuid'], issue['provider'], 'ignore')
+                else:
+                    identity.resolve_conflict(issue['id'], 'ignore')
         except ValueError as e:
             self._status('Could not resolve: %s' % e)
             return
         self._refresh_identity()
-        self._status('Identity updated; fetch again to sync the entry.')
+        self._status('Identity updated. Preview Mirror to review the result.')
+
+    def _ignore_identity_gap(self, issue):
+        self.engine.set_membership(issue['uuid'], issue['provider'], 'ignore')
+        self._refresh_identity()
+        self._status('%s will be left alone on %s.' % (
+            issue['title'], issue['provider'].capitalize()))
 
     # -- Advanced (matrix, inspector, reset) ---------------------------
 
@@ -1694,8 +1840,9 @@ class SyncWindow(QDialog):
         reset_row = QHBoxLayout()
         self.reset_button = QPushButton('Reset sync database...')
         self.reset_button.setToolTip(
-            'Wipe the sync database (identities, mappings, history, '
-            'sync rules) and start clean. Your provider lists are '
+            'Wipe sync state (identities, mappings, history, and cached '
+            'entries) and start clean. Your policy matrix and entry-owner '
+            'setting are preserved. Your provider lists are '
             'never touched; the next Fetch changes re-derives '
             'everything.')
         self.reset_button.clicked.connect(self.s_reset)

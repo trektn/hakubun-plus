@@ -258,7 +258,7 @@ class MirrorPlan:
         dead button and a summary claiming everything was fine, which
         is precisely the drift `local` exists to repair."""
         return not (self.adds or self.removes or self.updates
-                    or self.local or self.conflicts)
+                    or self.local or self.conflicts or self.errors)
 
     def counts(self):
         """{'add': {provider: n_entries}, 'remove': {...},
@@ -275,6 +275,20 @@ class MirrorPlan:
             updates[op.target] = updates.get(op.target, 0) + 1
         return {'add': adds, 'remove': removes, 'update': updates,
                 'local': len(self.local)}
+
+    def selected_counts(self):
+        """The subset an Apply click will really execute."""
+        adds = {}
+        for op in self.selected_adds():
+            adds[op.provider] = adds.get(op.provider, 0) + 1
+        removes = {}
+        for op in self.selected_removes():
+            removes[op.provider] = removes.get(op.provider, 0) + 1
+        updates = {}
+        for op in self.selected_updates():
+            updates[op.target] = updates.get(op.target, 0) + 1
+        return {'add': adds, 'remove': removes, 'update': updates,
+                'local': len(self.selected_local())}
 
     def selected_adds(self):
         return [o for o in self.adds if o.selected]
@@ -368,7 +382,13 @@ class MirrorPlanner:
                  snapshot['remote'].get(m['provider'], {}).get(
                      m['provider_id'], {})
                  for m in mappings}
-        holders = {p: r for p, r in sides.items() if r}
+        # An explicit membership ignore means "leave this tracker as it
+        # is": it must not be a source, destination, or membership
+        # discrepancy in this mirror run.
+        ignored = {p for p, want in member.decisions.items()
+                   if want == membership_mod.WANT_IGNORE}
+        holders = {p: r for p, r in sides.items()
+                   if r and p not in ignored}
         ent_total = ent.get('total')
 
         # The DESIRED tracker state is computed once, from the trackers
@@ -617,6 +637,8 @@ class MirrorPlanner:
         """Append one tracker-to-tracker field push, if it changes
         anything. Progress converts into the destination's own episode
         structure, exactly as in ordinary Sync."""
+        if not self.adapters[provider].can_write(field):
+            return
         if field == 'progress' and provider in raws:
             raw_r, r_scale = raws[provider]
             if values_equal(field, current, effective):
@@ -662,7 +684,13 @@ class MirrorPlanner:
         question ("should Kitsu have this?") instead of the misleading
         one ("add to Kitsu from Hakubun?").
         """
-        present = member.present()
+        # "Ignore" means this tracker is outside this entity's mirror.
+        # Do not keep drawing the same missing/unmapped warning after the
+        # user chose it, and do not let an ignored existing entry justify
+        # creating the title on a third tracker.
+        ignored = {p for p, want in member.decisions.items()
+                   if want == membership_mod.WANT_IGNORE}
+        present = [p for p in member.present() if p not in ignored]
         addable = [p for p in member.addable(self.master)
                    if self.adapters[p].mediainfo.get('can_add', True)]
         # A provider that cannot delete is dropped only where the
@@ -674,7 +702,7 @@ class MirrorPlanner:
         removable = [p for p in member.removable(self.master)
                      if self.adapters[p].can_remove()
                      or member.decisions.get(p) == membership_mod.WANT_ABSENT]
-        unmapped = member.unmapped()
+        unmapped = [p for p in member.unmapped() if p not in ignored]
 
         # A created entry starts with exactly the values Mirror is
         # asserting for the trackers that already have it -- the same
@@ -686,22 +714,29 @@ class MirrorPlanner:
                   if not emptyish(outcome[0])}
 
         missing = sorted(p for p, s in member.state.items()
-                         if s == membership_mod.MISSING)
-        if present and (missing or removable or unmapped):
+                         if s == membership_mod.MISSING and p not in ignored)
+        # Keep an explicit decision reachable so its card can offer "ask me
+        # again", but do not repeat the missing/unmapped warning it settled.
+        if present and (missing or removable or unmapped
+                        or member.decisions):
             plan.membership.append(MembershipIssue(
                 uuid=uid, title=title, present=present, missing=missing,
                 addable=addable, removable=removable, unmapped=unmapped,
                 decisions=dict(member.decisions),
                 reasons=dict(member.reasons), values=dict(values)))
 
-        if present and values:
+        if present:
             provenance = ((self.master,) if self.master in present
                           else tuple(present))
             reason = 'exists on %s; %%s has no entry' % ' and '.join(
                 p.capitalize() for p in provenance)
             for provider in addable:
+                creation_values = self.adapters[provider].creation_values(
+                    values)
+                if not creation_values:
+                    continue
                 plan.adds.append(AddOperation(
-                    uid, provider, title=title, values=dict(values),
+                    uid, provider, title=title, values=creation_values,
                     reason=reason % provider.capitalize(),
                     provenance=provenance))
 

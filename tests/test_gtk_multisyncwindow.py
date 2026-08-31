@@ -15,6 +15,7 @@ if Gdk.Display.get_default() is None:
 
 from hakubun.sync.models import (FieldPolicy, SyncOperation,  # noqa: E402
                                  SyncPlan)
+from hakubun.sync.engine import SyncEngine  # noqa: E402
 from hakubun.sync.store import SyncStore  # noqa: E402
 from hakubun.ui.gtk.multisyncwindow import MultiSyncWindow  # noqa: E402
 
@@ -95,6 +96,13 @@ def test_config_combo_and_matrix_stay_in_agreement(win):
     assert combo.get_active_id() == 'reconcile:progress'
 
 
+def test_nonfunctional_tags_and_favorites_are_not_policy_controls(win):
+    assert 'tags' not in win._policy_combos
+    assert 'favorite' not in win._policy_combos
+    assert not any(field in ('tags', 'favorite')
+                   for field, _policy in win._matrix_radios)
+
+
 def test_exotic_matrix_policy_still_shown_in_simple_view(win):
     # Something the simple list doesn't offer for progress.
     win.store.set_ownership('progress',
@@ -102,3 +110,61 @@ def test_exotic_matrix_policy_still_shown_in_simple_view(win):
     win._refresh_policy_widgets()
     assert win._policy_combos['progress'].get_active_id() \
         == 'reconcile:union'
+
+
+def test_missing_tracker_link_is_visible_and_ignorable():
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    window = MultiSyncWindow(engine=engine)
+    try:
+        assert len(window._identity_store) == 1
+        it = window._identity_store.get_iter_first()
+        issue = window._identity_store.get_value(it, 5)
+        assert issue['provider'] == 'mal'
+        window._identity_view.get_selection().select_iter(it)
+        assert window._search_provider.get_active_text() == 'mal'
+        assert not window._search_provider.get_sensitive()
+        assert window._rb_search.get_active()
+
+        issue = window._identity_store.get_value(it, 5)
+        # A gap has no MAL id to inspect, so right-click uses the existing
+        # AniList mapping and runs the Inspector instead of only filling it.
+        assert window._identity_inspect_target(issue) == ('anilist', '9')
+        window._inspect_from_identity(
+            *window._identity_inspect_target(issue))
+        assert window._notebook.get_current_page() == 4
+        assert window._inspect_provider.get_active_text() == 'anilist'
+        assert window._inspect_id.get_text() == '9'
+        assert 'Anilist id 9' in window._inspect_output.get_text()
+
+        engine.set_membership(uid, 'mal', 'ignore')
+        window._refresh_identity()
+        assert len(window._identity_store) == 0
+    finally:
+        window.destroy()
+        store.close()
+
+
+def test_missing_tracker_link_accepts_an_exact_id():
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    window = MultiSyncWindow(engine=engine)
+    try:
+        it = window._identity_store.get_iter_first()
+        window._identity_view.get_selection().select_iter(it)
+        assert window._exact_id_provider.get_active_id() == 'mal'
+        assert not window._exact_id_provider.get_sensitive()
+        window._rb_exact_id.set_active(True)
+        window._exact_id_value.set_text('77')
+        window.s_identity_resolve()
+        assert store.mapping_for('mal', '77')['uuid'] == uid
+        assert len(window._identity_store) == 0
+    finally:
+        window.destroy()
+        store.close()

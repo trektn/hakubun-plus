@@ -615,8 +615,9 @@ class MultiSyncWindow(Gtk.Window):
             text='Reset sync database?')
         dialog.format_secondary_text(
             'Identities, mappings, sync history, resolved decisions and '
-            'per-field sync rules are deleted and re-derived on the next '
-            'fetch. Your provider lists are NOT touched.')
+            'cached entries are deleted and re-derived on the next fetch. '
+            'Your policy matrix and entry-owner setting are preserved. '
+            'Your provider lists are NOT touched.')
         answer = dialog.run()
         dialog.destroy()
         if answer != Gtk.ResponseType.YES:
@@ -773,11 +774,20 @@ class MultiSyncWindow(Gtk.Window):
                 label=present.mirror_remove_label(provider))
             item.connect('activate', lambda *_a:
                          self._confirm_membership_removal(issue, provider))
-        else:
+        elif provider in issue.unmapped:
+            item = Gtk.MenuItem(
+                label='Cannot add: link %s under Identity first'
+                      % provider_label)
+            item.set_sensitive(False)
+        elif provider in issue.addable:
             item = Gtk.MenuItem(
                 label=present.mirror_add_label(issue, provider))
             item.connect('activate', lambda *_a:
                          self._set_membership(issue, provider, 'present'))
+        else:
+            item = Gtk.MenuItem(label='Ask me about %s again'
+                                % provider_label)
+            item.set_sensitive(False)
         menu.append(item)
         item = Gtk.MenuItem(label=present.mirror_ignore_label(provider))
         item.connect('activate', lambda *_a:
@@ -913,7 +923,10 @@ class MultiSyncWindow(Gtk.Window):
         self._mirror_plan = plan
         self._render_mirror_cards()
         self._set_mirror_decisions(plan.conflicts)
-        self.mirror_apply_button.set_sensitive(not plan.clean)
+        # Notes and unresolved decisions are not executable work; avoid
+        # presenting an Apply button that would do nothing.
+        self.mirror_apply_button.set_sensitive(bool(
+            plan.adds or plan.removes or plan.updates or plan.local))
         self.mirror_summary.set_markup(
             '<b>%s</b>' % GLib.markup_escape_text(
                 present.mirror_plan_summary(plan)))
@@ -939,6 +952,14 @@ class MultiSyncWindow(Gtk.Window):
         if self._mirror_plan is None:
             return
         plan = self._mirror_plan
+        counts = plan.selected_counts()
+        if not (sum(counts['add'].values())
+                + sum(counts['remove'].values())
+                + sum(counts['update'].values())
+                + counts['local']):
+            self._status('Select at least one Mirror change first. '
+                         'Removal rows start unchecked for safety.')
+            return
         # Both categories are approved by the one confirmation
         # below -- see the Qt twin. The engine still defaults them
         # off; the UI passes what the user confirmed.
@@ -1028,13 +1049,16 @@ class MultiSyncWindow(Gtk.Window):
         grid.set_border_width(6)
         self._policy_combos = {}
         ownership = self.store.ownership()
-        for row, field in enumerate(USER_FIELDS):
+        for row, field in enumerate(present.POLICY_FIELDS):
             grid.attach(Gtk.Label(label=_FIELD_LABELS.get(field, field),
                                   xalign=0), 0, row, 1, 1)
             combo = Gtk.ComboBoxText()
             current = ownership[field].serialize()
+            writable = [p for p in providers
+                        if present.provider_can_write(
+                            self.engine.adapters[p], field)]
             for key, choice_label in present.policy_choices(
-                    field, providers, current):
+                    field, writable, current):
                 combo.append(key, choice_label)
             combo.set_active_id(current)
             combo.connect('changed', self._on_policy_combo, field)
@@ -1043,7 +1067,7 @@ class MultiSyncWindow(Gtk.Window):
 
         # ENTRIES: the same question about whole entries rather than a
         # field -- see the Qt twin.
-        row = len(USER_FIELDS)
+        row = len(present.POLICY_FIELDS)
         grid.attach(Gtk.Label(label=present.ENTRY_OWNER_LABEL, xalign=0),
                     0, row, 1, 1)
         self.entry_owner_combo = Gtk.ComboBoxText()
@@ -1146,7 +1170,7 @@ class MultiSyncWindow(Gtk.Window):
             grid.attach(header, col, 0, 1, 1)
         self._matrix_radios = {}
         ownership = self.store.ownership()
-        for row, field in enumerate(USER_FIELDS, start=1):
+        for row, field in enumerate(present.POLICY_FIELDS, start=1):
             grid.attach(Gtk.Label(label=_FIELD_LABELS.get(field, field),
                                   xalign=0), 0, row, 1, 1)
             current = ownership[field].serialize()
@@ -1158,6 +1182,15 @@ class MultiSyncWindow(Gtk.Window):
                 radio.set_halign(Gtk.Align.CENTER)
                 if policy_text == current:
                     radio.set_active(True)
+                if policy_text.startswith('provider:'):
+                    provider = policy_text.split(':', 1)[1]
+                    if not present.provider_can_write(
+                            self.engine.adapters[provider], field):
+                        radio.set_sensitive(False)
+                        radio.set_tooltip_text('%s cannot write %s'
+                                               % (provider.capitalize(),
+                                                  _FIELD_LABELS.get(
+                                                      field, field)))
                 radio.connect('toggled', self._on_ownership_toggled,
                               field, policy_text)
                 grid.attach(radio, col, row, 1, 1)
@@ -1182,18 +1215,20 @@ class MultiSyncWindow(Gtk.Window):
         self._identity_store = Gtk.ListStore(str, str, str, str, str,
                                              GObject.TYPE_PYOBJECT)
         self._identity_view = Gtk.TreeView(model=self._identity_store)
-        for i, title in enumerate(('Provider', 'Type', 'Title',
-                                   'Also known as', 'Status')):
+        for i, title in enumerate(('Tracker', 'Type', 'Title',
+                                   'Also known as', 'What it needs')):
             self._identity_view.append_column(
                 Gtk.TreeViewColumn(title, Gtk.CellRendererText(), text=i))
         self._identity_view.get_selection().connect(
             'changed', self._on_identity_selected)
+        self._identity_view.connect('button-press-event',
+                                    self._on_identity_button)
         id_scroll = Gtk.ScrolledWindow()
         id_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         id_scroll.add(self._identity_view)
         page.pack_start(id_scroll, True, True, 0)
 
-        self._identity_box = Gtk.Frame(label='Resolution')
+        self._identity_box = Gtk.Frame(label='How should this be handled?')
         rbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         rbox.set_border_width(6)
         self._identity_info = Gtk.Label(xalign=0, wrap=True)
@@ -1214,20 +1249,33 @@ class MultiSyncWindow(Gtk.Window):
         search_row.pack_start(self._search_button, False, False, 0)
         self._search_results = Gtk.ComboBoxText()
         self._search_result_entries = []
+        self._rb_exact_id = Gtk.RadioButton.new_with_label_from_widget(
+            self._rb_confirm,
+            'Match to an exact tracker ID (trusted as entered)')
+        exact_id_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                               spacing=4)
+        self._exact_id_provider = Gtk.ComboBoxText()
+        self._exact_id_value = Gtk.Entry()
+        self._exact_id_value.set_placeholder_text(
+            'Tracker ID, e.g. 52991')
+        exact_id_row.pack_start(self._exact_id_provider, False, False, 0)
+        exact_id_row.pack_start(self._exact_id_value, True, True, 0)
         self._rb_provider_only = Gtk.RadioButton.new_with_label_from_widget(
             self._rb_confirm, 'Keep provider-only: do not sync elsewhere')
         self._rb_defer = Gtk.RadioButton.new_with_label_from_widget(
-            self._rb_confirm, 'Create mappings later: keep watching')
+            self._rb_confirm, 'Decide later: keep looking for a certain match')
         self._rb_ignore = Gtk.RadioButton.new_with_label_from_widget(
             self._rb_confirm, 'Ignore this title: never ask again')
         for w in (self._rb_confirm, self._candidate_combo, self._rb_search):
             rbox.pack_start(w, False, False, 0)
         rbox.pack_start(search_row, False, False, 0)
         rbox.pack_start(self._search_results, False, False, 0)
+        rbox.pack_start(self._rb_exact_id, False, False, 0)
+        rbox.pack_start(exact_id_row, False, False, 0)
         for w in (self._rb_provider_only, self._rb_defer, self._rb_ignore):
             rbox.pack_start(w, False, False, 0)
         resolve_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self._identity_resolve_button = Gtk.Button(label='Resolve')
+        self._identity_resolve_button = Gtk.Button(label='Save choice')
         self._identity_resolve_button.connect(
             'clicked', lambda *_a: self.s_identity_resolve())
         resolve_row.pack_end(self._identity_resolve_button, False, False, 0)
@@ -1245,29 +1293,82 @@ class MultiSyncWindow(Gtk.Window):
         if not hasattr(self, '_identity_store'):
             return
         self._identity_store.clear()
-        for issue in self.store.identity_open():
+        issues = (self.engine.identity_issues()
+                  if hasattr(self.engine, 'identity_issues')
+                  else self.store.identity_open())
+        for issue in issues:
             info = issue.get('entry') or {}
             aliases = info.get('aliases') or []
             others = [a for a in aliases if a and a != issue['title']]
             media_type = info.get('media_type')
+            status = {'open': 'Choose a match',
+                      'deferred': 'Waiting for a match',
+                      'needs link': 'Link or leave alone'}.get(
+                          issue['status'], issue['status'])
             self._identity_store.append([
                 issue['provider'],
                 media_type.capitalize() if media_type else '?',
                 self._display_title(issue['title'], aliases),
-                ' / '.join(others[:2]), issue['status'], issue])
+                ' / '.join(others[:2]), status, issue])
         count = len(self._identity_store)
         self._identity_intro.set_markup(
-            ('<b>%d title(s) need matching:</b> Hakubun could not '
-             'decide on its own which entry on your other sites each '
-             'of these is. ' % count if count else
-             '<b>No titles need matching right now.</b> ')
-            + 'Certain matches (exact ID links, single exact-title '
-            'matches) are linked automatically and never appear here.')
+            ('<b>%d identity item(s) need attention.</b> Select one to '
+             'match it, search the missing tracker, enter an exact ID, or '
+             'leave that tracker alone for the title. ' % count if count else
+             '<b>Everything is matched.</b> ')
+            + 'Certain matches are linked automatically and never appear '
+            'here.')
         self._identity_label.set_text('Identity (%d)' % count)
 
     def _selected_identity(self):
         model, it = self._identity_view.get_selection().get_selected()
         return model.get_value(it, 5) if it is not None else None
+
+    def _on_identity_button(self, view, event):
+        """Offer the same Inspector shortcut as the Qt Identity tree."""
+        if event.button != 3:
+            return False
+        pathinfo = view.get_path_at_pos(int(event.x), int(event.y))
+        if pathinfo is None:
+            return False
+        path = pathinfo[0]
+        view.get_selection().select_path(path)
+        model = view.get_model()
+        issue = model.get_value(model.get_iter(path), 5)
+        target = self._identity_inspect_target(issue)
+        if target is None:
+            return False
+        menu = Gtk.Menu()
+        inspect = Gtk.MenuItem(label='Inspect identity')
+        inspect.connect('activate',
+                        lambda *_a, t=target: self._inspect_from_identity(*t))
+        menu.append(inspect)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _identity_inspect_target(self, issue):
+        """Find an inspectable provider/id, including for missing links."""
+        if issue.get('provider_id'):
+            return issue['provider'], str(issue['provider_id'])
+        if not issue.get('uuid'):
+            return None
+        mappings = self.store.mappings_of(issue['uuid'])
+        if not mappings:
+            return None
+        preferred = self.engine.primary
+        mapping = next((m for m in mappings if m['provider'] == preferred),
+                       sorted(mappings, key=lambda m: m['provider'])[0])
+        return mapping['provider'], mapping['provider_id']
+
+    def _inspect_from_identity(self, provider, provider_id):
+        """Switch to Advanced and run the Inspector for an Identity row."""
+        self._notebook.set_current_page(4)
+        providers = list(self.engine.adapters)
+        if provider in providers:
+            self._inspect_provider.set_active(providers.index(provider))
+        self._inspect_id.set_text(str(provider_id))
+        self.s_inspect()
 
     def _on_identity_selected(self, _selection):
         issue = self._selected_identity()
@@ -1276,16 +1377,30 @@ class MultiSyncWindow(Gtk.Window):
             return
         info = issue.get('entry') or {}
         candidates = issue['candidates']
+        is_gap = issue.get('kind') == 'gap'
         year = ' (%s)' % info['year'] if info.get('year') else ''
-        why = ('%d possible match(es) found by title, none certain enough to '
-               'link automatically.' % len(candidates) if candidates else
-               'No existing entry matched and no cross-provider ID was '
-               'published.')
-        self._identity_info.set_markup(
-            '<b>%s</b>%s: %s entry %s. %s' % (
-                GLib.markup_escape_text(self._display_title(
-                    issue['title'], info.get('aliases'))),
-                year, issue['provider'], issue['provider_id'], why))
+        title = GLib.markup_escape_text(self._display_title(
+            issue['title'], info.get('aliases')))
+        if is_gap:
+            known = ', '.join(p.capitalize()
+                              for p in issue.get('known_providers', ()))
+            self._identity_info.set_markup(
+                '<b>%s</b>%s is known on %s, but has no %s link. '
+                'Search %s for the same work, enter its exact tracker ID, '
+                'or leave that tracker alone for this title.' % (
+                    title, year, known or 'another tracker',
+                    issue['provider'].capitalize(),
+                    issue['provider'].capitalize()))
+        else:
+            why = ('%d possible match(es) found by title, none certain '
+                   'enough to link automatically.' % len(candidates)
+                   if candidates else
+                   'No existing entry matched and no cross-provider ID '
+                   'was published.')
+            self._identity_info.set_markup(
+                '<b>%s</b>%s: %s entry %s. %s' % (
+                    title, year, issue['provider'],
+                    issue['provider_id'], why))
         self._candidate_combo.remove_all()
         self._candidate_entries = candidates
         for cand in candidates:
@@ -1295,24 +1410,56 @@ class MultiSyncWindow(Gtk.Window):
                 self._display_title(cand.get('title'), cand.get('aliases')),
                 ' (%s)' % cand['year'] if cand.get('year') else '',
                 provs or 'no providers yet', cand.get('via', '')))
-        self._rb_confirm.set_sensitive(bool(candidates))
+        self._rb_confirm.set_sensitive(bool(candidates) and not is_gap)
+        self._candidate_combo.set_sensitive(bool(candidates)
+                                              and not is_gap)
         if candidates:
             self._candidate_combo.set_active(0)
             self._rb_confirm.set_active(True)
-        else:
+        elif not is_gap:
             self._rb_defer.set_active(True)
-        self._rb_provider_only.set_label(
-            'Keep %s-only: do not sync this entry elsewhere'
-            % issue['provider'])
+        self._rb_provider_only.set_sensitive(not is_gap)
+        self._rb_defer.set_sensitive(not is_gap)
+        self._rb_ignore.set_label(
+            ('Leave %s alone for this title'
+             % issue['provider'].capitalize()) if is_gap else
+            'Ignore this title: never ask again')
         self._search_provider.remove_all()
-        for name in self.engine.adapters:
-            if name != issue['provider']:
-                self._search_provider.append_text(name)
+        if is_gap:
+            self._search_provider.append_text(issue['provider'])
+            self._search_provider.set_sensitive(False)
+            self._rb_search.set_label('Search %s for the matching entry'
+                                      % issue['provider'].capitalize())
+            self._rb_search.set_active(True)
+        else:
+            self._search_provider.set_sensitive(True)
+            self._rb_search.set_label(
+                'Search manually: find it on another provider')
+            self._rb_provider_only.set_label(
+                'Keep %s-only: do not sync this entry elsewhere'
+                % issue['provider'])
+            for name in self.engine.adapters:
+                if name != issue['provider']:
+                    self._search_provider.append_text(name)
         if self._search_provider.get_model().iter_n_children(None):
             self._search_provider.set_active(0)
         self._search_text.set_text(issue['title'] or '')
         self._search_results.remove_all()
         self._search_result_entries = []
+        self._exact_id_provider.remove_all()
+        if is_gap:
+            self._exact_id_provider.append(issue['provider'],
+                                           issue['provider'])
+            self._exact_id_provider.set_active_id(issue['provider'])
+            self._exact_id_provider.set_sensitive(False)
+        else:
+            self._exact_id_provider.set_sensitive(True)
+            for name in self.engine.adapters:
+                if name != issue['provider']:
+                    self._exact_id_provider.append(name, name)
+            if self._exact_id_provider.get_model().iter_n_children(None):
+                self._exact_id_provider.set_active(0)
+        self._exact_id_value.set_text('')
 
     def s_identity_search(self):
         provider = self._search_provider.get_active_text()
@@ -1340,6 +1487,7 @@ class MultiSyncWindow(Gtk.Window):
         issue = self._selected_identity()
         if issue is None:
             return
+        is_gap = issue.get('kind') == 'gap'
         identity = self.engine.identity
         entry = NormalizedEntry(provider=issue['provider'],
                                 provider_id=issue['provider_id'],
@@ -1357,6 +1505,15 @@ class MultiSyncWindow(Gtk.Window):
                     self._status('Pick a search result first.')
                     return
                 found = self._search_result_entries[idx]
+                if is_gap:
+                    self.engine.resolve_identity_gap(
+                        issue['uuid'], issue['provider'], found)
+                    self._refresh_identity()
+                    self._status('Linked %s on %s. Preview Mirror to '
+                                 'review the new entry.' % (
+                                     issue['title'],
+                                     issue['provider'].capitalize()))
+                    return
                 mapping = self.store.mapping_for(found.provider, found.provider_id)
                 if mapping:
                     uid = mapping['uuid']
@@ -1369,15 +1526,23 @@ class MultiSyncWindow(Gtk.Window):
                 identity.resolve_conflict(issue['id'], 'confirm', target_uuid=uid)
             elif self._rb_provider_only.get_active():
                 identity.resolve_conflict(issue['id'], 'provider_only', entry=entry)
+            elif self._rb_exact_id.get_active():
+                self.engine.resolve_identity_issue_to_id(
+                    issue, self._exact_id_provider.get_active_id(),
+                    self._exact_id_value.get_text().strip())
             elif self._rb_defer.get_active():
                 identity.resolve_conflict(issue['id'], 'defer')
             elif self._rb_ignore.get_active():
-                identity.resolve_conflict(issue['id'], 'ignore')
+                if is_gap:
+                    self.engine.set_membership(
+                        issue['uuid'], issue['provider'], 'ignore')
+                else:
+                    identity.resolve_conflict(issue['id'], 'ignore')
         except ValueError as e:
             self._status('Could not resolve: %s' % e)
             return
         self._refresh_identity()
-        self._status('Identity updated; fetch again to sync the entry.')
+        self._status('Identity updated. Preview Mirror to review the result.')
 
     # -- Advanced (matrix, inspector, reset) ---------------------------
 

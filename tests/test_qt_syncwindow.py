@@ -19,6 +19,7 @@ pytest.importorskip('PyQt6')
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication
 
+from hakubun.sync.engine import SyncEngine
 from hakubun.sync.models import SyncOperation, SyncPlan
 from hakubun.sync.store import SyncStore
 from hakubun.ui.qt.syncwindow import SyncWindow
@@ -194,6 +195,17 @@ def test_config_combo_and_matrix_stay_in_agreement(qapp):
     assert combo.currentData() == 'reconcile:progress'
 
 
+def test_nonfunctional_tags_and_favorites_are_not_policy_controls(qapp):
+    win = _make_window(qapp)
+    try:
+        assert 'tags' not in win._policy_combos
+        assert 'favorite' not in win._policy_combos
+        assert 'tags' not in win._ownership_groups
+        assert 'favorite' not in win._ownership_groups
+    finally:
+        win.close()
+
+
 def test_tab_names_stay_correct_after_the_identity_count_lands(qapp):
     """The identity count is stamped onto a tab found BY INDEX, and the
     index was hardcoded. Inserting the Mirror tab at position 1 pushed
@@ -210,6 +222,67 @@ def test_tab_names_stay_correct_after_the_identity_count_lands(qapp):
         assert names.count('Identity') == 1
     finally:
         win.close()
+
+
+def test_missing_tracker_link_is_visible_and_ignorable(qapp):
+    """Mirror used to send these entries to an empty Identity tab because
+    no fetched target entry exists to create an identity_conflicts row."""
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    win = SyncWindow(None, None, engine=engine, active_api=None,
+                     media_type='anime')
+    try:
+        assert win.identity_tree.topLevelItemCount() == 1
+        item = win.identity_tree.topLevelItem(0)
+        assert item.text(0) == 'mal'
+        assert item.text(4) == 'Link or leave alone'
+        win.identity_tree.setCurrentItem(item)
+        assert win.search_provider.currentText() == 'mal'
+        assert not win.search_provider.isEnabled()
+        assert win.rb_search.isChecked()
+
+        issue = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        # A gap has no MAL id to inspect, so the context-menu action uses
+        # this entity's known AniList id and performs the lookup immediately.
+        assert win._identity_inspect_target(issue) == ('anilist', '9')
+        win._inspect_from_identity(*win._identity_inspect_target(issue))
+        assert win.tabs.currentIndex() == 4
+        assert win.inspect_provider.currentData() == 'anilist'
+        assert win.inspect_id.text() == '9'
+        assert 'Anilist id 9' in win.inspect_output.toPlainText()
+
+        win._ignore_identity_gap(issue)
+        assert win.identity_tree.topLevelItemCount() == 0
+        assert store.membership_of(uid)['mal'] == 'ignore'
+    finally:
+        win.close()
+        store.close()
+
+
+def test_missing_tracker_link_accepts_an_exact_id(qapp):
+    store = SyncStore(':memory:')
+    uid = store.create_entity('GHOST', media_type='anime')
+    store.add_mapping(uid, 'anilist', '9')
+    store.remote_set_all('anilist', '9', {'score': 5.0})
+    engine = SyncEngine(store, {'anilist': object(), 'mal': object()})
+    win = SyncWindow(None, None, engine=engine, active_api=None,
+                     media_type='anime')
+    try:
+        item = win.identity_tree.topLevelItem(0)
+        win.identity_tree.setCurrentItem(item)
+        assert win.exact_id_provider.currentData() == 'mal'
+        assert not win.exact_id_provider.isEnabled()
+        win.rb_exact_id.setChecked(True)
+        win.exact_id_value.setText('77')
+        win.s_identity_resolve()
+        assert store.mapping_for('mal', '77')['uuid'] == uid
+        assert win.identity_tree.topLevelItemCount() == 0
+    finally:
+        win.close()
+        store.close()
 
 
 def test_entries_are_configured_like_any_other_field(qapp):

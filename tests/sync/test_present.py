@@ -133,6 +133,13 @@ def test_policy_choices_appends_exotic_current_policy():
     assert [k for k, _ in choices].count('provider:mal') == 1
 
 
+def test_policy_choices_marks_unwritable_current_provider():
+    choices = dict(present.policy_choices(
+        'finish_date', ['anilist', 'mal'], 'provider:kitsu'))
+    assert choices['provider:kitsu'].endswith(
+        '(unsupported by this tracker)')
+
+
 def test_policy_choices_cover_the_full_policy_space_when_parsed():
     # Every choice the UI offers round-trips through FieldPolicy.
     for field in ('score', 'progress', 'tags', 'status', 'finish_date'):

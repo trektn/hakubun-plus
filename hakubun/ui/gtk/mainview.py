@@ -297,6 +297,8 @@ class MainView(Gtk.Box):
 
         self._pages = {}
         self._page_handler_ids = {}
+        # The pages just removed are gone; anything tracking one is stale.
+        self._current_page = None
 
         # Insert pages
         for status in statuses_nums:
@@ -329,6 +331,14 @@ class MainView(Gtk.Box):
 
         self.notebook.handler_unblock(self.notebook_switch_handler)
         self.notebook.show_all()
+
+        # The switch to page 0 happens while the handler is blocked, so
+        # seed the current page by hand -- otherwise nothing tracks it
+        # until the user clicks a tab, and anything asking for the
+        # current page before then (Search) gets None.
+        self._current_page = self.notebook.get_nth_page(
+            self.notebook.get_current_page())
+        self._update_widgets_for_selected_show()
 
     def populate_all_pages(self):
         for status in self._pages:
@@ -834,7 +844,12 @@ class MainView(Gtk.Box):
         self.emit('show-action', event_type, data)
 
     def get_current_status(self):
-        return self._current_page.status if self._current_page.status is not None else self._engine.mediainfo['statuses'][-1]
+        # No page yet, or the "All" tab (status None): fall back to the
+        # last status, which is what a new entry gets added under.
+        if not self._current_page or self._current_page.status is None:
+            return self._engine.mediainfo['statuses'][-1]
+
+        return self._current_page.status
 
     def get_selected_show(self):
         if not self._current_page:

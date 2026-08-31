@@ -315,12 +315,6 @@ def regex_rename_files(pattern, source_dir, dest_dir):
             os.rename(in_file, out_file)
 
 
-def list_library(path):
-    for root, dirs, names in os.walk(path, followlinks=True):
-        for filename in names:
-            yield (os.path.join(root, filename), filename)
-
-
 def make_dir(path):
     if not os.path.isdir(path):
         os.makedirs(path)
@@ -338,12 +332,6 @@ def file_older_than(filename, mtime):
     return os.path.getmtime(filename) < time.time() - mtime
 
 
-def try_files(filenames):
-    for filename in filenames:
-        if file_exists(filename):
-            return filename
-
-
 def sync_file(fname, sync_url):
     if not sync_url:
         return False
@@ -358,10 +346,6 @@ def sync_file(fname, sync_url):
         return False
 
     return True
-
-
-def copy_file(src, dest):
-    shutil.copy(src, dest)
 
 
 def to_config_path(*paths):

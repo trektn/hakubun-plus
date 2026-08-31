@@ -221,11 +221,19 @@ class SyncStore:
             self._conn.close()
 
     def reset(self):
-        """Drop everything and re-create the schema. The database is
-        derived state (fetch re-populates it) plus user decisions;
-        after a bad run -- e.g. one polluted by broken title matching
-        creating duplicate entities -- a reset re-derives cleanly."""
+        """Clear sync state and re-create the schema.
+
+        Ownership and entry-owner settings are configuration, not
+        derived sync state, so preserve them across a reset. A reset is
+        commonly used to repair identities or stale history; silently
+        reverting the policy matrix at the same time makes the next
+        fetch behave under different rules than the user selected.
+        """
         with self._lock:
+            preserved_ownership = self._conn.execute(
+                'SELECT field, policy FROM ownership').fetchall()
+            preserved_settings = self._conn.execute(
+                'SELECT key, value FROM settings').fetchall()
             # FK enforcement must be off for the drops, and the pragma
             # is a no-op inside a transaction -- toggle it outside.
             self._conn.execute('PRAGMA foreign_keys=OFF')
@@ -238,6 +246,13 @@ class SyncStore:
                             self._exec('DROP TABLE %s' % row['name'])
                 self._conn.executescript(_SCHEMA)
                 self._migrate()
+                self._conn.executemany(
+                    'INSERT OR REPLACE INTO ownership(field, policy)'
+                    ' VALUES(?,?)',
+                    [(r['field'], r['policy']) for r in preserved_ownership])
+                self._conn.executemany(
+                    'INSERT OR REPLACE INTO settings(key, value) VALUES(?,?)',
+                    [(r['key'], r['value']) for r in preserved_settings])
                 self._entities_cache = None
             finally:
                 self._conn.execute('PRAGMA foreign_keys=ON')

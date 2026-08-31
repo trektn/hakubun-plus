@@ -78,7 +78,7 @@ authoritative value / reconciliation
 sync plan (explicit SyncOperations, each carrying its reason)
 ```
 
-## 3. Identity (unchanged subsystem)
+## 3. Identity
 
 Internal identity is a UUID. Provider IDs are **mappings**, never the
 canonical identity:
@@ -103,6 +103,13 @@ Resolution pipeline (`sync/identity.py`, per fetched provider entry):
    triples) and its links are trusted the same way. The atlas is an
    identity aid only — it never participates in field
    synchronization.
+
+   An optional local **anime-offline-database (AOD)** export is also
+   harvested for MAL/Kitsu/AniList source URLs. Put
+   `anime-offline-database.json` or `.jsonl` in the configuration or data
+   directory. `anime-relations` wins if the two community databases disagree.
+   AOD is not bundled because its database is licensed ODbL 1.0 with DbCL
+   1.0; see `THIRD_PARTY_NOTICES.md` for redistribution obligations.
 3. **Single exact title match** — exactly one candidate whose
    normalized title or alias is equal (same media type, compatible
    year) → auto-link (`confirmed = 0`).
@@ -120,6 +127,19 @@ records an id-only mapping with an **empty remote snapshot** — field
 planning ignores it (only providers with some remote row contribute
 values); only the planner's create-entry offer acts on it. A miss is
 remembered (`resolved_absent`).
+
+There is a second Identity-row shape for the inverse case: a known entity
+has no id at all on one of the connected trackers. No fetched provider
+entry exists in that case, so it cannot create an `identity_conflicts` row.
+`SyncEngine.identity_gaps()` projects these missing links into the Identity
+tab instead. The user can search the specific tracker and link a catalog
+result, enter an exact tracker id they already know, or choose **Leave this
+tracker alone for this title**. Exact-id matching is an explicit trusted
+assertion and therefore does not depend on a catalog search returning the
+work. Linking records only the provider id; Mirror then previews the
+whole-entry creation. Ignoring persists as a membership decision and removes
+the gap from the unresolved list. Ambiguous fetched entries offer the same
+exact-id action, targeted at one of the other trackers.
 
 Titles are matched after NFKC + casefold normalization that preserves
 every script, and entities accumulate aliases from every provider so a
@@ -415,6 +435,14 @@ into a single `adapter.add` call. Planned **unselected**
 (`SyncOperation.creates_entry`): adding a library entry to a real
 account is opted into per show, never applied by a headless Sync.
 
+A provider can still require a field the policy intentionally omits. Such
+requirements are adapter capabilities and are added visibly to the preview's
+creation values. Kitsu GraphQL requires a non-null status, for example, so an
+entry with no synchronized status starts conservatively as **Plan** instead
+of failing the Kitsu batch with `status=null`.
+Kitsu's library-entry API also supports user start/finish dates, which are
+read and written by the GraphQL and REST adapters.
+
 **provider-only** (`entities.provider_only`) is a separate mechanism:
 the user pinned the entity to one provider, isolating it from
 cross-provider sync entirely (planning and membership see only that
@@ -627,8 +655,14 @@ other and the app is not one of the parties. Five tabs:
    policies never surface here; `present.policy_choices` maps each
    field to its sensible options and appends the current policy when
    the advanced matrix set something the simple list doesn't offer.
-4. **Identity** — "N title(s) need matching", with the resolution
-   workflow of §3.
+   Tags and Favorites are deliberately absent from this view and the
+   Advanced matrix: no supported adapter can apply them reliably. Provider
+   choices are also capability-gated; a saved legacy choice that the tracker
+   cannot write remains visible as **unsupported** until it is replaced.
+4. **Identity** — "N title(s) need matching", including both ambiguous
+   fetched entries and the missing tracker links Mirror needs before it can
+   add a title. Missing links offer a tracker-specific catalog search, exact
+   tracker-id entry, and a plain-language "leave this tracker alone" choice.
 5. **Advanced** — the full policy matrix of §5 (kept in agreement
    with Configuration — both views write the same store rows), the
    identity **Inspector** (one entry by provider id: mappings, via,
@@ -821,6 +855,13 @@ Per entity, over the providers that actually hold the entry:
   user may have reached for Mirror to escape.
 - **INDIVIDUAL** — skipped, same as Sync. Mirror reads the same
   ownership configuration; there is no second ownership system.
+
+Before either Sync or Mirror emits a provider operation, it asks the adapter
+whether that destination can write the field. This gate is deliberately in
+the planners as well as payload construction: an older database may still
+contain snapshots for a capability that was corrected later. In particular,
+Kitsu date differences are emitted as explicit `startedAt`/`finishedAt`
+library-entry fields.
 
 The desired value per field is computed **once** and used for both of
 its purposes: pushing existing entries into line, and seeding an entry

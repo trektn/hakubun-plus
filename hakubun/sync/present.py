@@ -18,7 +18,7 @@ from hakubun import messenger
 from hakubun.sync import normalize, strategies
 from hakubun.sync.adapters import adapter_from_account
 from hakubun.sync.engine import SyncEngine
-from hakubun.sync.models import FieldPolicy, PolicyKind
+from hakubun.sync.models import FieldPolicy, PolicyKind, USER_FIELDS
 
 FIELD_LABELS = {
     'score': 'Score', 'progress': 'Watched Episodes',
@@ -114,6 +114,20 @@ _FIELD_STRATEGIES = {
     'favorite': ['union', 'manual'],
 }
 
+# Tags and Favorites remain understood by the storage/normalization layers so
+# existing databases and provider data stay compatible, but they are not
+# useful sync controls: no supported write adapter can apply them reliably.
+# Keep them out of both user-facing policy editors instead of offering rules
+# whose Apply result can never be meaningful.
+POLICY_FIELDS = tuple(
+    field for field in USER_FIELDS if field not in ('tags', 'favorite'))
+
+
+def provider_can_write(adapter, field):
+    """Return a write capability without coupling UI to adapter type."""
+    checker = getattr(adapter, 'can_write', None)
+    return checker(field) if checker is not None else True
+
 
 def strategy_choice_label(field, name):
     """Consequence-first label for one strategy choice on one field
@@ -152,7 +166,12 @@ def policy_choices(field, providers, current=None):
                 for s in strategies]
     choices.append(('individual', "Don't sync (each site keeps its own)"))
     if current and current not in (key for key, _ in choices):
-        choices.append((current, policy_label(FieldPolicy.parse(current))))
+        current_policy = FieldPolicy.parse(current)
+        current_label = policy_label(current_policy)
+        if (current_policy.kind is PolicyKind.PROVIDER
+                and current_policy.provider not in providers):
+            current_label += ' (unsupported by this tracker)'
+        choices.append((current, current_label))
     return choices
 
 
@@ -736,7 +755,8 @@ def mirror_cards(plan, adapters, category='all'):
                     None, 'note', label(provider), why=note,
                     text='%s — %s' % (label(provider), note)))
         for provider in issue.unmapped:
-            why = 'not matched yet; resolve it under Identity'
+            why = ('not linked to this tracker; link a matching entry '
+                   'under Identity before adding it')
             card.rows.append(MirrorChange(
                 None, 'note', label(provider), why=why,
                 text='%s — %s' % (label(provider), why)))
@@ -795,9 +815,14 @@ def mirror_plan_summary(plan):
             # that drifted. Still worth applying -- left alone, the
             # next ordinary Sync would read Hakubun as the side that
             # moved and push the stale value back out to everyone.
-            return ('Your trackers already agree — %d Hakubun value(s) '
+            text = ('Your trackers already agree — %d Hakubun value(s) '
                     'to bring into line with them.' % len(plan.local))
-        return 'Your trackers already agree.'
+        else:
+            text = 'Your trackers already agree.'
+        if plan.errors:
+            text += ' Unable to sync: %s.' % '; '.join(
+                '%s (%s)' % kv for kv in plan.errors.items())
+        return text
     parts = []
     if entries:
         parts.append('%d entr%s to add' % (entries,
@@ -809,6 +834,9 @@ def mirror_plan_summary(plan):
         parts.append('%d field(s) to update' % fields)
     if plan.conflicts:
         parts.append('%d decision(s) needed' % len(plan.conflicts))
+    if plan.errors:
+        parts.append('unable to sync: %s' % '; '.join(
+            '%s (%s)' % kv for kv in plan.errors.items()))
     return ' · '.join(parts)
 
 
@@ -817,7 +845,10 @@ def mirror_confirmation(plan):
     applied. Mirror can create and delete entries across real accounts
     in bulk, so the user sees the per-tracker numbers first -- and adds
     and removals are approved separately."""
-    counts = plan.counts()
+    # Quote what will actually run, not every preview row.  Deletions start
+    # unticked; listing them here anyway made a successful no-op look like a
+    # broken Apply button.
+    counts = plan.selected_counts()
     lines = ['Mirror will make changes across your trackers:', '']
     for heading, key, verb in (('Add', 'add', 'entries'),
                                ('Remove', 'remove', 'entries'),
@@ -857,6 +888,8 @@ def mirror_result_status(result):
         parts.append('%d entr%s removed'
                      % (result['removed'],
                         'y' if result['removed'] == 1 else 'ies'))
+    if result.get('local'):
+        parts.append("%d value(s) in Hakubun's copy" % result['local'])
     text = ('Mirror applied: ' + ', '.join(parts) + '.' if parts
             else 'Mirror made no changes.')
     if result.get('skipped'):

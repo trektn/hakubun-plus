@@ -88,6 +88,15 @@ class IdentityResolver:
         if mapping:
             ent = store.get_entity(mapping['uuid']) or {}
             if ent.get('media_type') == entry.media_type:
+                # Do not let the already-mapped fast path freeze identity at
+                # the point in time when the entity was first seen.  An
+                # optional atlas may have been installed or updated since
+                # then; Inspector already reports its current opinion, so a
+                # normal fetch must backfill those exact links too.
+                # Provider-only is an explicit user boundary and remains the
+                # one exception, just as it is in _create_entity().
+                if not ent.get('provider_only'):
+                    self._record_external_ids(mapping['uuid'], entry)
                 return mapping['uuid']
             quarantined = True
             store.remove_mapping(entry.provider, entry.provider_id)

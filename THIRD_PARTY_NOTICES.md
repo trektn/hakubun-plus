@@ -12,6 +12,18 @@ code.
 It also optionally depends on RapidFuzz (see below), under the permissive
 MIT license -- trivially compatible with GPL-3.0-or-later.
 
+## anime-offline-database (optional local data)
+
+- Project: https://github.com/ipkpjersi/anime-offline-database
+- Used by MultiSync when `anime-offline-database.json` or `.jsonl` is placed
+  in the Hakubun configuration or data directory.
+- License: Open Database License 1.0 (ODbL) for the database, with Database
+  Contents License 1.0 (DbCL) for individual contents.
+- The AOD database is not bundled. If it is redistributed or a substantial
+  derived database is distributed, retain the attribution/license notices and
+  comply with ODbL's share-alike and machine-readable access requirements.
+- License text: https://github.com/ipkpjersi/anime-offline-database/blob/master/LICENSE
+
 ## anitomy-ng (required)
 
 - Project: https://github.com/tylergibbs2/anitomy-ng
