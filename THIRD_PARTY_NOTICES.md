@@ -14,15 +14,43 @@ MIT license -- trivially compatible with GPL-3.0-or-later.
 
 ## anime-offline-database (optional local data)
 
-- Project: https://github.com/ipkpjersi/anime-offline-database
-- Used by MultiSync when `anime-offline-database.json` or `.jsonl` is placed
-  in the Hakubun configuration or data directory.
+- Project: https://github.com/manami-project/anime-offline-database
+- Used for MultiSync identity enrichment and language-aware primary titles
+  when an AOD JSON/JSONL export is placed in Hakubun+'s configuration or data
+  directory.
 - License: Open Database License 1.0 (ODbL) for the database, with Database
   Contents License 1.0 (DbCL) for individual contents.
-- The AOD database is not bundled. If it is redistributed or a substantial
-  derived database is distributed, retain the attribution/license notices and
-  comply with ODbL's share-alike and machine-readable access requirements.
-- License text: https://github.com/ipkpjersi/anime-offline-database/blob/master/LICENSE
+- The database is not bundled. If it is redistributed or a substantial
+  derived database is distributed, retain its attribution/license notices
+  and comply with the ODbL share-alike and machine-readable access
+  requirements.
+- License text: https://github.com/manami-project/anime-offline-database/blob/master/LICENSE
+
+## AniDB title dump (optional local data)
+
+- Project: https://anidb.net/
+- Hakubun+ downloads and locally caches AniDB's `anime-titles.xml.gz`, or can
+  read a user-supplied `anime-titles.xml(.gz)`, to select language-tagged
+  primary titles after AOD resolves a tracker entry to its AniDB anime ID.
+- The title dump is not bundled or redistributed by Hakubun+.
+
+## Localized synopsis services
+
+- [Animumemo MADB API](https://animedb.moe/doc/api/madb) supplies Japanese
+  synopsis fallbacks derived from Japan's Media Arts Database.
+- [Bangumi](https://bgm.tv/) supplies Simplified Chinese synopsis fallbacks.
+- [TMDB](https://www.themoviedb.org/) supplies Japanese, Simplified Chinese,
+  Traditional Chinese, and Spanish synopsis fallbacks when the user supplies
+  their own API key. TMDB data is not bundled.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+## OpenCC (required)
+
+- Project: https://github.com/BYVoid/OpenCC
+- License: Apache License 2.0
+- Used to convert a Simplified Chinese Bangumi synopsis to Traditional
+  Chinese when TMDB has no `zh-TW` synopsis.
 
 ## anitomy-ng (required)
 
@@ -91,4 +119,3 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
->>>>>>> hakubun-plus/master

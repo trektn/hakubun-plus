@@ -224,11 +224,12 @@ class ShowListModel(QtCore.QAbstractTableModel):
         elif row in self.eps:
             del self.eps[row]
 
-    def setShowList(self, showlist, altnames, library):
+    def setShowList(self, showlist, altnames, library, primary_titles=None):
         self.beginResetModel()
 
         self.showlist = list(showlist)
         self.altnames = altnames
+        self.primary_titles = primary_titles or {}
         self.library = library
 
         self.id_map = {}
@@ -281,10 +282,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
-            return self.columns[section]
+            return _(self.columns[section]) if self.columns[section] else self.columns[section]
         elif role == QtCore.Qt.ItemDataRole.ToolTipRole and orientation == QtCore.Qt.Orientation.Horizontal:
             if section == ShowListModel.COL_LAST_UPDATED:
-                return 'Date and time of the last synced update'
+                return _('Date and time of the last synced update')
 
     def setData(self, index, value, role):
         row, column = index.row(), index.column()
@@ -305,7 +306,7 @@ class ShowListModel(QtCore.QAbstractTableModel):
             if column == ShowListModel.COL_ID:
                 return show['id']
             elif column == ShowListModel.COL_TITLE:
-                title_str = show['title']
+                title_str = self.primary_titles.get(show['id'], show['title'])
                 if show['id'] in self.altnames:
                     title_str += " [%s]" % self.altnames[show['id']]
                 return title_str
@@ -358,7 +359,8 @@ class ShowListModel(QtCore.QAbstractTableModel):
             elif column == ShowListModel.COL_SEASON:
                 return utils.get_season_label(show)
             elif column == ShowListModel.COL_TYPE:
-                return str(show['type'])
+                from hakubun.metadata import localize_type
+                return localize_type(show['type'])
             elif column == ShowListModel.COL_PLATFORM_SCORE:
                 return show.get('platform_score') or '-'
             elif column == ShowListModel.COL_MAL_SCORE:
@@ -461,6 +463,10 @@ class ShowListModel(QtCore.QAbstractTableModel):
 
 
 class AddTableModel(QtCore.QAbstractTableModel):
+    # Not translated here -- this is a class attribute, evaluated once at
+    # import time (almost always before i18n.install() has run; imports
+    # happen before MainWindow.__init__ does). headerData() below
+    # translates for display instead.
     columns = ["Name", "Type", "Season", "Total", "In Your List"]
 
     def __init__(self, parent=None, mylist=None, statuses_dict=None):
@@ -496,7 +502,7 @@ class AddTableModel(QtCore.QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
-            return self.columns[section]
+            return _(self.columns[section])
 
     def _mylist_entry(self, item):
         return self.mylist.get(item.get('id'))

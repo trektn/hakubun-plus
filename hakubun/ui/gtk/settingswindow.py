@@ -18,7 +18,7 @@ import os
 
 from gi.repository import GObject, Gdk, Gtk, Pango
 
-from hakubun import utils
+from hakubun import i18n, utils
 from hakubun.sync import present
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.statusicon import HakubunStatusIcon
@@ -128,6 +128,10 @@ class SettingsWindow(Gtk.Window):
     checkbox_show_subminer_toggle = Gtk.Template.Child()
     checkbox_add_mal_scores = Gtk.Template.Child()
     btn_load_mal_scores = Gtk.Template.Child()
+    combo_ui_language = Gtk.Template.Child()
+    combo_title_language = Gtk.Template.Child()
+    checkbox_chinese_native_title_fallback = Gtk.Template.Child()
+    entry_tmdb_api_key = Gtk.Template.Child()
 
     colorbutton_rows_playing = Gtk.Template.Child()
     colorbutton_rows_queued = Gtk.Template.Child()
@@ -351,6 +355,18 @@ class SettingsWindow(Gtk.Window):
         self.checkbox_filter_global.set_active(self.config['filter_global'])
         self.checkbox_show_subminer_toggle.set_active(
             self.config['show_subminer_toggle'])
+        if not self.combo_ui_language.set_active_id(self.config['language']):
+            self.combo_ui_language.set_active_id('auto')
+        self._refresh_title_modes(
+            self.engine.get_config('title_language'))
+        self.checkbox_chinese_native_title_fallback.set_active(
+            self.engine.get_config('chinese_native_title_fallback'))
+        self.entry_tmdb_api_key.set_text(
+            self.engine.get_config('tmdb_api_key'))
+        self.combo_ui_language.connect(
+            'changed', self._on_ui_language_changed)
+        self.combo_title_language.connect(
+            'changed', self._update_chinese_title_fallback)
 
         for color_key, color_button in self._color_buttons.items():
             color = getColor(self.config['colors'][color_key])
@@ -382,6 +398,26 @@ class SettingsWindow(Gtk.Window):
 
     def _button_toggled(self, widget, spin):
         spin.set_sensitive(widget.get_active())
+
+    def _refresh_title_modes(self, preferred=None):
+        preferred = preferred or self.combo_title_language.get_active_id()
+        self.combo_title_language.remove_all()
+        language = self.combo_ui_language.get_active_id() or 'auto'
+        options = i18n.title_mode_options(language)
+        for mode, label in options:
+            self.combo_title_language.append(mode, label)
+        if not self.combo_title_language.set_active_id(preferred):
+            self.combo_title_language.set_active(0)
+        self.combo_title_language.set_sensitive(len(options) > 1)
+        self._update_chinese_title_fallback()
+
+    def _update_chinese_title_fallback(self, _combo=None):
+        self.checkbox_chinese_native_title_fallback.set_sensitive(
+            self.combo_title_language.get_active_id()
+            in ('zh-Hans', 'zh-Hant'))
+
+    def _on_ui_language_changed(self, _combo):
+        self._refresh_title_modes()
 
     def _on_mpris_update_mode_changed(self, combo):
         self.spin_tracker_update_percentage.set_sensitive(
@@ -636,6 +672,16 @@ class SettingsWindow(Gtk.Window):
             'sync_on_settings_apply', self.checkbox_sync_on_settings_apply.get_active())
         self.engine.set_config(
             'kitsu_api', self.combo_kitsu_api.get_active_id())
+        self.engine.set_config(
+            'title_language',
+            self.combo_title_language.get_active_id() or
+            i18n.default_title_mode(
+                self.combo_ui_language.get_active_id() or 'auto'))
+        self.engine.set_config(
+            'chinese_native_title_fallback',
+            self.checkbox_chinese_native_title_fallback.get_active())
+        self.engine.set_config(
+            'tmdb_api_key', self.entry_tmdb_api_key.get_text().strip())
         self.engine.save_config()
 
         """GTK Interface configuration"""
@@ -656,6 +702,7 @@ class SettingsWindow(Gtk.Window):
         self.config['filter_global'] = self.checkbox_filter_global.get_active()
         self.config['show_subminer_toggle'] = \
             self.checkbox_show_subminer_toggle.get_active()
+        self.config['language'] = self.combo_ui_language.get_active_id() or 'auto'
         self.config['multisync_enabled'] = \
             self.checkbox_multisync_enabled.get_active()
         # Retire any legacy multisync_mode so settings_plan_only's

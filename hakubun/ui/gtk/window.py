@@ -746,6 +746,12 @@ class HakubunWindow(Gtk.ApplicationWindow):
         about.add_credit_section(
             "Fuzzy title matching (optional)",
             ["RapidFuzz (MIT) https://github.com/rapidfuzz/RapidFuzz"])
+        about.add_credit_section(
+            "Localized synopsis data",
+            ["TMDB — https://www.themoviedb.org",
+             "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+             "Bangumi — https://bgm.tv",
+             "Animumemo MADB API — https://animedb.moe"])
         # The window/tray icon is the plain hanko mark (see
         # Gtk.Window.set_default_icon_from_file) -- About gets the fuller
         # "Hakubun+" wordmark instead, since it has the room to show it.

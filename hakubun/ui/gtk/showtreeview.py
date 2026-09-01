@@ -16,6 +16,7 @@
 from gi.repository import GObject, Gdk, Gtk, Pango
 
 from hakubun import utils
+from hakubun.metadata import localize_status, localize_type
 
 # Used to drag a show from a status tab's list onto a different status
 # tab's label to change its status (see ShowTreeView / MainView).
@@ -120,7 +121,7 @@ def status_label(status):
         status = utils.Status(status)
     except ValueError:
         return ''
-    return _STATUS_LABELS.get(status, status.value)
+    return localize_status(status)
 
 
 def sort_by_season(model, iter1, iter2, data):
@@ -244,11 +245,11 @@ class ShowListStore(Gtk.ListStore):
         else:
             return None
 
-    def append(self, show, altname=None, eps=None):
+    def append(self, show, altname=None, eps=None, primary_title=None):
         cells = overlay_cells(show, self.overlay.get(show['id']),
                               self.decimals, self.factor)
 
-        title_str = show['title']
+        title_str = primary_title or show['title']
         if altname:
             title_str += " [%s]" % altname
 
@@ -287,7 +288,7 @@ class ShowListStore(Gtk.ListStore):
                my_last_update,
                my_last_update_timestamp,
                utils.get_season_label(show),
-               str(show['type']),
+               localize_type(show['type']),
                show.get('platform_score') or '-',
                show.get('mal_score') or '-',
                Pango.Style.ITALIC if cells['score_italic']
@@ -298,12 +299,13 @@ class ShowListStore(Gtk.ListStore):
                ]
         super().append(row)
 
-    def update_or_append(self, show):
+    def update_or_append(self, show, altname=None, eps=None,
+                         primary_title=None):
         for row in self:
             if int(row[0]) == show['id']:
                 self.update(show, row)
                 return
-        self.append(show)
+        self.append(show, altname, eps, primary_title)
 
     def update(self, show, row=None):
         if not row:
@@ -326,7 +328,7 @@ class ShowListStore(Gtk.ListStore):
             row[17] = utils.format_local_time(my_last_update)
             row[18] = show['my_last_update'].timestamp() if show['my_last_update'] is not None else 0
             row[19] = utils.get_season_label(show)
-            row[20] = str(show['type'])
+            row[20] = localize_type(show['type'])
             row[21] = show.get('platform_score') or '-'
             row[22] = show.get('mal_score') or '-'
             row[23] = (Pango.Style.ITALIC if cells['score_italic']
@@ -373,13 +375,14 @@ class ShowListStore(Gtk.ListStore):
             row[24] = cells['score_owner']
             row[25] = cells['synced_score_str']
 
-    def update_title(self, show, altname=None):
+    def update_title(self, show, altname=None, primary_title=None):
         for row in self:
             if int(row[0]) == show['id']:
                 if altname:
-                    title_str = "%s [%s]" % (show['title'], altname)
+                    title_str = "%s [%s]" % (
+                        primary_title or show['title'], altname)
                 else:
-                    title_str = show['title']
+                    title_str = primary_title or show['title']
 
                 row[1] = title_str
                 return
@@ -494,13 +497,13 @@ class ShowTreeView(Gtk.TreeView):
             self.cols[name] = Gtk.TreeViewColumn(name)
 
             # This is a hack to allow for right-clickable header
-            label = Gtk.Label(name)
+            label = Gtk.Label(_(name))
             label.show()
             self.cols[name].set_widget(label)
 
             if name == "Last updated":
                 self.cols[name].set_sort_column_id(18)
-                label.set_tooltip_text("Date and time of the last synced update")
+                label.set_tooltip_text(_("Date and time of the last synced update"))
             else:
                 self.cols[name].set_sort_column_id(sort)
 
@@ -617,7 +620,7 @@ class ShowTreeView(Gtk.TreeView):
             for name, sort in self.available_columns:
                 is_active = name in self.visible_columns
 
-                item = Gtk.CheckMenuItem(name)
+                item = Gtk.CheckMenuItem(_(name))
                 item.set_active(is_active)
                 item.connect('activate', self._header_menu_item,
                              name, not is_active)
@@ -639,26 +642,30 @@ class ShowTreeView(Gtk.TreeView):
         if not has_path:
             return False
 
-        _, col, _, _ = view.get_path_at_pos(tx, ty)
+        # Not "_, col, _, _" -- gettext.install() makes "_" the global
+        # translation function, and Python's function-wide local scoping
+        # means shadowing it anywhere in this method would break the
+        # _() calls below.
+        _pos_ok, col, _cx, _cy = view.get_path_at_pos(tx, ty)
 
         def gv(key):
             return model.get_value(tree_iter, ShowListStore.column(key))
 
         if col is self.cols['Percent']:
             lines = []
-            lines.append("Watched: %d" % gv('stat'))
+            lines.append(_("Watched: %d") % gv('stat'))
 
             aired = gv('subvalue')
             status = gv('status')
             if aired and not status == utils.Status.NOTYET:
-                lines.append("Aired%s: %d" % (
-                    ' (estimated)' if status == utils.Status.AIRING else '', aired))
+                lines.append(_("Aired%s: %d") % (
+                    _(' (estimated)') if status == utils.Status.AIRING else '', aired))
 
             avail_eps = gv('avail-eps')
             if len(avail_eps) > 0:
-                lines.append("Available: %d" % max(avail_eps))
+                lines.append(_("Available: %d") % max(avail_eps))
 
-            lines.append("Total: %s" % (gv('total-eps') or '?'))
+            lines.append(_("Total: %s") % (gv('total-eps') or '?'))
 
             tip.set_markup('\n'.join(lines))
             renderer = next(iter(col.get_cells()))
@@ -673,7 +680,7 @@ class ShowTreeView(Gtk.TreeView):
             owner = gv('score-owner')
             if not owner:
                 return False
-            tip.set_text('Score owned by %s, shown in its rating system'
+            tip.set_text(_('Score owned by %s, shown in its rating system')
                          % owner.capitalize())
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
@@ -681,9 +688,9 @@ class ShowTreeView(Gtk.TreeView):
         elif col is self.cols['Synced Score']:
             owner = gv('score-owner')
             tip.set_text(
-                'Synced from %s, in its rating system' % owner.capitalize()
+                _('Synced from %s, in its rating system') % owner.capitalize()
                 if owner else
-                'Platform-specific entry — not synced to another tracker')
+                _('Platform-specific entry — not synced to another tracker'))
             renderer = next(iter(col.get_cells()))
             self.set_tooltip_cell(tip, path, col, renderer)
             return True

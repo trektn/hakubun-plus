@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboB
                              QStyleOptionButton, QSystemTrayIcon, QTabBar, QToolButton, QVBoxLayout,
                              QWidget)
 
+from hakubun import i18n
 from hakubun import messenger
 from hakubun import utils
 from hakubun.accounts import AccountManager
@@ -120,6 +121,12 @@ class MainWindow(QMainWindow):
         # window itself was constructed for the other mode.
         self._taiga_mode = self.config['taiga_mode']
 
+        # Same restart-gated read as taiga_mode above: the language a
+        # freshly-installed catalog puts on screen shouldn't change out
+        # from under already-built widgets just because Settings wrote a
+        # new value to self.config on Apply.
+        i18n.install(self.config.get('language', 'auto'))
+
         # Build UI
         self.app_name = 'Taiga-qt' if self._taiga_mode else 'Hakubun+-qt'
         if self._taiga_mode:
@@ -184,12 +191,12 @@ class MainWindow(QMainWindow):
 
         # Build menus
         self.action_play_next = QAction(
-            getIcon('media-playback-start'), 'Play &Next', self)
-        self.action_play_next.setStatusTip('Play the next unwatched episode.')
+            getIcon('media-playback-start'), _('Play &Next'), self)
+        self.action_play_next.setStatusTip(_('Play the next unwatched episode.'))
         self.action_play_next.setShortcut('Ctrl+N')
         self.action_play_next.triggered.connect(lambda: self.s_play(True))
-        self.action_play_dialog = QAction('Play Episode...', self)
-        self.action_play_dialog.setStatusTip('Select an episode to play.')
+        self.action_play_dialog = QAction(_('Play Episode...'), self)
+        self.action_play_dialog.setStatusTip(_('Select an episode to play.'))
         self.action_play_dialog.triggered.connect(self.s_play_number)
         # Text shows the current state ('SubMiner: On'/'Off') rather than
         # a static label -- see _apply_subminer_state, which keeps it in
@@ -197,111 +204,111 @@ class MainWindow(QMainWindow):
         # between the toolbar (normal mode) and the Tools menu (Taiga
         # mode, see menu_tools below) instead of a separate control per
         # look.
-        self.action_use_subminer = QAction('SubMiner: Off', self)
+        self.action_use_subminer = QAction(_('SubMiner: Off'), self)
         self.action_use_subminer.setCheckable(True)
         if utils.subminer_available():
             self.action_use_subminer.setStatusTip(
-                'Open episodes with SubMiner instead of the configured '
-                'player.')
+                _('Open episodes with SubMiner instead of the configured '
+                  'player.'))
             self.action_use_subminer.setToolTip(
-                'Open episodes with SubMiner instead of the configured '
-                'player.')
+                _('Open episodes with SubMiner instead of the configured '
+                  'player.'))
         else:
             self.action_use_subminer.setEnabled(False)
             self.action_use_subminer.setToolTip(
-                'SubMiner was not found on PATH. Install it to enable this.')
+                _('SubMiner was not found on PATH. Install it to enable this.'))
         self.action_use_subminer.toggled.connect(self.s_toggle_subminer)
         # Visibility (Settings > User Interface) doesn't depend on the
         # engine being loaded, unlike the checked state/text -- apply it
         # here rather than waiting for r_engine_loaded.
         self.action_use_subminer.setVisible(
             self.config['show_subminer_toggle'])
-        self.action_details = QAction('Show &details...', self)
+        self.action_details = QAction(_('Show &details...'), self)
         self.action_details.setStatusTip(
-            'Show detailed information about the selected show.')
+            _('Show detailed information about the selected show.'))
         self.action_details.triggered.connect(self.s_show_details)
-        self.action_altname = QAction('Change &alternate name...', self)
+        self.action_altname = QAction(_('Change &alternate name...'), self)
         self.action_altname.setStatusTip(
-            'Set an alternate title for the tracker.')
+            _('Set an alternate title for the tracker.'))
         self.action_altname.triggered.connect(self.s_altname)
-        action_play_random = QAction('Play &random show', self)
+        action_play_random = QAction(_('Play &random show'), self)
         action_play_random.setStatusTip(
-            'Pick a random show with a new episode and play it.')
+            _('Pick a random show with a new episode and play it.'))
         action_play_random.setShortcut('Ctrl+R')
         action_play_random.triggered.connect(self.s_play_random)
         self.action_add = QAction(
-            getIcon('edit-find'), 'Search', self)
+            getIcon('edit-find'), _('Search'), self)
         self.action_add.setShortcut('Ctrl+A')
         self.action_add.triggered.connect(self.s_add)
         self.action_airing_schedule = QAction(
-            getIcon('view-calendar'), 'Airing Schedule', self)
+            getIcon('view-calendar'), _('Airing Schedule'), self)
         self.action_airing_schedule.setStatusTip(
-            'See when the airing shows in your list air next.')
+            _('See when the airing shows in your list air next.'))
         self.action_airing_schedule.triggered.connect(self.s_airing_schedule)
-        self.action_multisync = QAction('&Multi-provider Sync...', self)
+        self.action_multisync = QAction(_('&Multi-provider Sync...'), self)
         self.action_multisync.setStatusTip(
-            'Reconcile your lists across every configured provider.')
+            _('Reconcile your lists across every configured provider.'))
         self.action_multisync.triggered.connect(self.s_multisync)
-        self.action_delete = QAction(getIcon('edit-delete'), '&Delete', self)
-        self.action_delete.setStatusTip('Remove this show from your list.')
+        self.action_delete = QAction(getIcon('edit-delete'), _('&Delete'), self)
+        self.action_delete.setStatusTip(_('Remove this show from your list.'))
         self.action_delete.setShortcut(QtCore.Qt.Key.Key_Delete)
         self.action_delete.triggered.connect(self.s_delete)
-        action_quit = QAction(getIcon('application-exit'), '&Quit', self)
+        action_quit = QAction(getIcon('application-exit'), _('&Quit'), self)
         action_quit.setShortcut('Ctrl+Q')
-        action_quit.setStatusTip('Exit Hakubun+.')
+        action_quit.setStatusTip(_('Exit Hakubun+.'))
         action_quit.triggered.connect(self._exit)
 
-        self.action_undo = QAction(getIcon('edit-undo'), '&Undo', self)
-        self.action_undo.setStatusTip('Undo the last episode/score/status/tags change.')
+        self.action_undo = QAction(getIcon('edit-undo'), _('&Undo'), self)
+        self.action_undo.setStatusTip(_('Undo the last episode/score/status/tags change.'))
         self.action_undo.setShortcut('Ctrl+Z')
         self.action_undo.setEnabled(False)
         self.action_undo.triggered.connect(self.s_undo)
-        self.action_redo = QAction(getIcon('edit-redo'), '&Redo', self)
-        self.action_redo.setStatusTip('Redo the last undone change.')
+        self.action_redo = QAction(getIcon('edit-redo'), _('&Redo'), self)
+        self.action_redo.setStatusTip(_('Redo the last undone change.'))
         self.action_redo.setShortcuts(['Ctrl+Shift+Z', 'Ctrl+Y'])
         self.action_redo.setEnabled(False)
         self.action_redo.triggered.connect(self.s_redo)
 
-        self.action_sync = QAction(getIcon('view-refresh'), '&Sync', self)
+        self.action_sync = QAction(getIcon('view-refresh'), _('&Sync'), self)
         self.action_sync.setShortcut('Ctrl+S')
         self.action_sync.triggered.connect(self.s_sync_button)
         self._apply_sync_action_label()
-        self.action_send = QAction('S&end changes', self)
+        self.action_send = QAction(_('S&end changes'), self)
         self.action_send.setShortcut('Ctrl+E')
         self.action_send.setStatusTip(
-            'Upload any changes made to the list immediately.')
+            _('Upload any changes made to the list immediately.'))
         self.action_send.triggered.connect(self.s_send)
-        self.action_retrieve = QAction('Re&download list', self)
+        self.action_retrieve = QAction(_('Re&download list'), self)
         self.action_retrieve.setShortcut('Ctrl+D')
         self.action_retrieve.setStatusTip(
-            'Discard any changes made to the list and re-download it.')
+            _('Discard any changes made to the list and re-download it.'))
         self.action_retrieve.triggered.connect(self.s_retrieve)
         action_scan_library = self.action_scan_library = QAction(
-            'Rescan &Library (quick)', self)
+            _('Rescan &Library (quick)'), self)
         action_scan_library.setShortcut('Ctrl+L')
         action_scan_library.triggered.connect(self.s_scan_library)
         action_rescan_library = self.action_rescan_library = QAction(
-            'Rescan &Library (full)', self)
+            _('Rescan &Library (full)'), self)
         action_rescan_library.triggered.connect(self.s_rescan_library)
-        action_open_folder = QAction('Open containing folder', self)
+        action_open_folder = QAction(_('Open containing folder'), self)
         action_open_folder.triggered.connect(self.s_open_folder)
-        self.action_set_folder = QAction('Set folder...', self)
+        self.action_set_folder = QAction(_('Set folder...'), self)
         self.action_set_folder.setStatusTip(
-            'Manually point this show at a local folder, bypassing '
-            'filename guessing -- for folders the parser can\'t match.')
+            _('Manually point this show at a local folder, bypassing '
+              'filename guessing -- for folders the parser can\'t match.'))
         self.action_set_folder.triggered.connect(self.s_set_folder)
-        self.action_clear_folder = QAction('Clear folder', self)
+        self.action_clear_folder = QAction(_('Clear folder'), self)
         self.action_clear_folder.triggered.connect(self.s_clear_folder)
 
-        self.action_reload = QAction('Switch &Account', self)
-        self.action_reload.setStatusTip('Switch to a different account.')
+        self.action_reload = QAction(_('Switch &Account'), self)
+        self.action_reload.setStatusTip(_('Switch to a different account.'))
         self.action_reload.triggered.connect(self.s_switch_account)
-        action_settings = QAction(getIcon('preferences-system'), '&Settings...', self)
+        action_settings = QAction(getIcon('preferences-system'), _('&Settings...'), self)
         action_settings.triggered.connect(self.s_settings)
 
-        action_about = QAction(getIcon('help-about'), 'About...', self)
+        action_about = QAction(getIcon('help-about'), _('About...'), self)
         action_about.triggered.connect(self.s_about)
-        action_about_qt = QAction('About Qt...', self)
+        action_about_qt = QAction(_('About Qt...'), self)
         action_about_qt.triggered.connect(self.s_about_qt)
 
         menubar = self.menuBar()
@@ -314,20 +321,20 @@ class MainWindow(QMainWindow):
             # mediatype switch) stay reachable via File > Library folders
             # or their existing shortcuts rather than disappearing
             # outright.
-            self.menu_library_folders = QMenu('Library folders', self)
-            self.menu_mediatype = QMenu('Mediatype', self)
+            self.menu_library_folders = QMenu(_('Library folders'), self)
+            self.menu_mediatype = QMenu(_('Mediatype'), self)
             self.mediatype_actiongroup = QActionGroup(self)
             self.mediatype_actiongroup.setExclusive(True)
             self.mediatype_actiongroup.triggered.connect(self.s_mediatype)
 
-            menu_file = menubar.addMenu('&File')
+            menu_file = menubar.addMenu(_('&File'))
             menu_file.addMenu(self.menu_library_folders)
             menu_file.addMenu(self.menu_mediatype)
             menu_file.addAction(action_play_random)
             menu_file.addSeparator()
             menu_file.addAction(action_quit)
 
-            self.menu_services = menubar.addMenu('&Services')
+            self.menu_services = menubar.addMenu(_('&Services'))
             self.menu_services.addAction(self.action_sync)
             # Switch Account lives here rather than File -- it's account
             # management, same as everything else in this menu.
@@ -337,7 +344,7 @@ class MainWindow(QMainWindow):
             # built in _rebuild_services_menu() once the active
             # account's API and username are known.
 
-            menu_tools = menubar.addMenu('&Tools')
+            menu_tools = menubar.addMenu(_('&Tools'))
             menu_tools.addAction(self.action_altname)
             menu_tools.addAction(self.action_add)
             menu_tools.addAction(self.action_airing_schedule)
@@ -345,7 +352,7 @@ class MainWindow(QMainWindow):
             menu_tools.addSeparator()
             menu_tools.addAction(self.action_use_subminer)
 
-            menu_help = menubar.addMenu('&Help')
+            menu_help = menubar.addMenu(_('&Help'))
             menu_help.addAction(action_about)
             menu_help.addAction(action_about_qt)
 
@@ -354,19 +361,19 @@ class MainWindow(QMainWindow):
                           action_scan_library, action_rescan_library):
                 self.addAction(action)
 
-            self.taiga_toolbar = toolbar = self.addToolBar('Main')
+            self.taiga_toolbar = toolbar = self.addToolBar(_('Main'))
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             toolbar.addAction(self.action_sync)
             self.library_folders_btn = QToolButton()
-            self.library_folders_btn.setText('Library folders')
+            self.library_folders_btn.setText(_('Library folders'))
             self.library_folders_btn.setMenu(self.menu_library_folders)
             self.library_folders_btn.setPopupMode(
                 QToolButton.ToolButtonPopupMode.InstantPopup)
             toolbar.addWidget(self.library_folders_btn)
             toolbar.addAction(action_settings)
         else:
-            self.menu_show = menubar.addMenu('&Show')
+            self.menu_show = menubar.addMenu(_('&Show'))
             self.menu_show.addAction(self.action_play_next)
             self.menu_show.addAction(self.action_play_dialog)
             self.menu_show.addAction(self.action_details)
@@ -382,7 +389,7 @@ class MainWindow(QMainWindow):
 
             # Search, Sync, and Settings are common enough to need more
             # than a buried menu item.
-            toolbar = self.addToolBar('Main')
+            toolbar = self.addToolBar(_('Main'))
             toolbar.setMovable(False)
             toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             toolbar.addAction(self.action_add)
@@ -395,10 +402,10 @@ class MainWindow(QMainWindow):
             toolbar.addAction(action_settings)
             toolbar.addAction(self.action_use_subminer)
 
-        self.menu_play = QMenu('Play')
+        self.menu_play = QMenu(_('Play'))
         # Populated per-account in _rebuild_statuses(), once the API's
         # statuses are known.
-        self.menu_move_to = QMenu('Move to', self)
+        self.menu_move_to = QMenu(_('Move to'), self)
 
         # Context menu for right click on list item
         self.menu_show_context = QMenu()
@@ -410,7 +417,7 @@ class MainWindow(QMainWindow):
             # show's title -- ported the non-torrent entries (skips
             # "Custom RSS feed"/"Nyaa.si", out of scope). Pure URL-
             # opening, no engine dependency.
-            self.menu_search_online = QMenu('Search', self)
+            self.menu_search_online = QMenu(_('Search'), self)
             for site_name, url_template in self._SEARCH_ONLINE_SITES:
                 action = self.menu_search_online.addAction(site_name)
                 action.triggered.connect(
@@ -424,7 +431,7 @@ class MainWindow(QMainWindow):
             # re-populated on reload) in _rebuild_statuses() once
             # mediainfo['score_max'/'score_step'] are known, rather
             # than hardcoded here.
-            self.menu_quick_score = QMenu('Set score', self)
+            self.menu_quick_score = QMenu(_('Set score'), self)
             self.menu_show_context.addMenu(self.menu_quick_score)
 
             # Real Taiga's Edit submenu also has "Set date started"/"Set
@@ -435,10 +442,10 @@ class MainWindow(QMainWindow):
             # limitation already noted on the Details tab's date
             # checkboxes). Content is per-show, so it's rebuilt just
             # before the menu is shown rather than once here.
-            self.menu_quick_date_started = QMenu('Set date started', self)
+            self.menu_quick_date_started = QMenu(_('Set date started'), self)
             self.action_quick_date_started = self.menu_show_context.addMenu(
                 self.menu_quick_date_started)
-            self.menu_quick_date_completed = QMenu('Set date completed', self)
+            self.menu_quick_date_completed = QMenu(_('Set date completed'), self)
             self.action_quick_date_completed = self.menu_show_context.addMenu(
                 self.menu_quick_date_completed)
             self.menu_show_context.aboutToShow.connect(self._rebuild_quick_date_menus)
@@ -468,7 +475,7 @@ class MainWindow(QMainWindow):
             painter.end()
 
         if not self._taiga_mode:
-            menu_list = menubar.addMenu('&List')
+            menu_list = menubar.addMenu(_('&List'))
             menu_list.addAction(self.action_undo)
             menu_list.addAction(self.action_redo)
             menu_list.addSeparator()
@@ -483,15 +490,15 @@ class MainWindow(QMainWindow):
             menu_list.addSeparator()
             menu_list.addAction(action_scan_library)
             menu_list.addAction(action_rescan_library)
-            self.menu_mediatype = menubar.addMenu('&Mediatype')
+            self.menu_mediatype = menubar.addMenu(_('&Mediatype'))
             self.mediatype_actiongroup = QActionGroup(self)
             self.mediatype_actiongroup.setExclusive(True)
             self.mediatype_actiongroup.triggered.connect(self.s_mediatype)
-            menu_options = menubar.addMenu('&Options')
+            menu_options = menubar.addMenu(_('&Options'))
             menu_options.addAction(self.action_reload)
             menu_options.addSeparator()
             menu_options.addAction(action_settings)
-            menu_help = menubar.addMenu('&Help')
+            menu_help = menubar.addMenu(_('&Help'))
             menu_help.addAction(action_about)
             menu_help.addAction(action_about_qt)
 
@@ -583,10 +590,16 @@ class MainWindow(QMainWindow):
             # "Progress" for Taiga mode -- match that name here too, or
             # this entry would read "Percent" while the header (and the
             # column it toggles) actually says "Progress".
-            label = 'Progress' if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
-                else column_name
+            label = _('Progress') if (self._taiga_mode and i == ShowListModel.COL_PERCENT) \
+                else _(column_name)
             action = QAction(label, self, checkable=True)
             action.setData(i)
+            # The untranslated identity, kept separate from the
+            # (possibly translated) display text above -- s_toggle_column
+            # and the checked-state sync in reload() key the
+            # visible_columns config off this, not action.text(), so a
+            # non-English label can't break persistence.
+            action._column_name = column_name
             if column_name in self.api_config['visible_columns']:
                 action.setChecked(True)
 
@@ -1021,7 +1034,7 @@ class MainWindow(QMainWindow):
 
         # Tray icon
         tray_menu = QMenu(self)
-        action_hide = QAction('Show/Hide', self)
+        action_hide = QAction(_('Show/Hide'), self)
         action_hide.triggered.connect(self.s_hide)
         tray_menu.addAction(action_hide)
         if self._taiga_mode:
@@ -1057,6 +1070,7 @@ class MainWindow(QMainWindow):
         self.worker.prompt_for_update.connect(self.ws_prompt_update)
         self.worker.prompt_for_add.connect(self.ws_prompt_add)
         self.worker.undo_stack_changed.connect(self.ws_undo_stack_changed)
+        self.worker.titles_changed.connect(self._rebuild_view)
 
         # Show main window
         if not (self.config['show_tray'] and self.config['start_in_tray']):
@@ -1080,7 +1094,7 @@ class MainWindow(QMainWindow):
         self.menu_columns.setEnabled(False)
         for action in self.menu_columns.actions():
             action.setChecked(
-                action.text() in self.api_config['visible_columns'])
+                action._column_name in self.api_config['visible_columns'])
         self.menu_columns.setEnabled(True)
 
         self.show()
@@ -1234,14 +1248,12 @@ class MainWindow(QMainWindow):
         self._apply_filter_bar()
         self._apply_sync_action_label()
         self._apply_subminer_state()
-        # Refresh the multi-sync overlay so it follows the Settings
-        # toggle immediately (on or off), instead of lingering until
-        # the next full list rebuild.
+        # Rebuild once so both the multi-sync overlay and the selected
+        # AOD/AniDB primary-title mode take effect immediately.
         try:
-            self._apply_multisync_overlay(self.worker.engine.get_list())
+            self._rebuild_view()
         except utils.HakubunError:
             pass
-        # TODO: Reload listviews?
         if self._taiga_mode:
             self._rebuild_library_folders_menu()
         if self.worker.engine.get_config('sync_on_settings_apply'):
@@ -1337,7 +1349,7 @@ class MainWindow(QMainWindow):
             action.triggered.connect(
                 lambda checked=False, s=status: self._set_show_status_from_menu(s))
 
-        self.notebook.addTab("All")
+        self.notebook.addTab(_("All"))
 
         if self._taiga_mode:
             self._rebuild_quick_score_menu()
@@ -1498,7 +1510,7 @@ class MainWindow(QMainWindow):
             if status is not None:
                 status_name = self.mediainfo['statuses_dict'][status]
             else:
-                status_name = "All"
+                status_name = _("All")
                 status = "!ALL"
 
             self.notebook.setTabText(page, "{} ({})".format(
@@ -1511,6 +1523,7 @@ class MainWindow(QMainWindow):
         """
         showlist = self.worker.engine.get_list()
         altnames = self.worker.engine.altnames()
+        primary_titles = self.worker.engine.primary_titles()
         library = self.worker.engine.library()
 
         # Set allowed ranges (this will be reported by the engine later)
@@ -1521,7 +1534,8 @@ class MainWindow(QMainWindow):
         self.view.model().setFilterStatus(
             self.notebook.tabData(self.notebook.currentIndex()))
         self.view.model().sourceModel().setMediaInfo(self.mediainfo)
-        self.view.model().sourceModel().setShowList(showlist, altnames, library)
+        self.view.model().sourceModel().setShowList(
+            showlist, altnames, library, primary_titles)
         self._apply_multisync_overlay(showlist)
         self.view.resizeRowsToContents()
         self.view.setSortingEnabled(True)
@@ -1723,7 +1737,8 @@ class MainWindow(QMainWindow):
         # Update information
         metrics = QtGui.QFontMetrics(self.show_title.font())
         title = metrics.elidedText(
-            show['title'], QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
+            self.worker.engine.primary_title(show),
+            QtCore.Qt.TextElideMode.ElideRight, self.show_title.width())
         self.show_title.setText(title)
 
         self.show_progress.setValue(show['my_progress'])
@@ -2704,9 +2719,12 @@ class MainWindow(QMainWindow):
                           '<p>Optional fuzzy title matching uses '
                           '<a href="https://github.com/rapidfuzz/RapidFuzz">RapidFuzz</a>, '
                           'licensed under the MIT license.</p>'
+                          '<p align="center"><img src="%s" width="205" height="27"></p>'
+                          '<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>'
                           '<p>Copyright (C) z411</p>'
                           '<p><a href="https://github.com/trektn/hakubun-plus">https://github.com/trektn/hakubun-plus</a></p>') % (
-                              utils.DATADIR + '/about_logo.png', self.app_name, version))
+                              utils.DATADIR + '/about_logo.png', self.app_name,
+                              version, utils.DATADIR + '/tmdb-logo.svg'))
 
     def s_about_qt(self):
         QMessageBox.aboutQt(self, 'About Qt')
@@ -2718,7 +2736,7 @@ class MainWindow(QMainWindow):
 
     def s_toggle_column(self, visible):
         w = self.sender()
-        index, column_name = w.data(), w.text()
+        index, column_name = w.data(), w._column_name
         MIN_WIDTH = 30  # Width to restore columns to if too small to see
 
         if visible:

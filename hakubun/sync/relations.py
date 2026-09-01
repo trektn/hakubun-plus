@@ -68,10 +68,32 @@ def aod_paths():
     """Candidate local AOD files, from user override to app data cache."""
     return (
         utils.to_config_path('anime-offline-database.json'),
-        utils.to_data_path('anime-offline-database.json'),
+        utils.to_config_path('anime-offline-database-minified.json'),
         utils.to_config_path('anime-offline-database.jsonl'),
+        utils.to_data_path('anime-offline-database.json'),
+        utils.to_data_path('anime-offline-database-minified.json'),
         utils.to_data_path('anime-offline-database.jsonl'),
     )
+
+
+def iter_aod_records(path):
+    """Yield anime records from an AOD JSON or JSONL export."""
+    path = os.fspath(path)
+    if path.endswith('.jsonl'):
+        with open(path, encoding='utf-8') as source:
+            for line in source:
+                item = json.loads(line)
+                # JSONL's first line is database metadata, not an anime.
+                if isinstance(item, dict) and 'sources' in item:
+                    yield item
+        return
+
+    with open(path, encoding='utf-8') as source:
+        root = json.load(source)
+    records = root.get('data', []) if isinstance(root, dict) else root
+    for item in records:
+        if isinstance(item, dict):
+            yield item
 
 
 class RelationsAtlas:
@@ -120,8 +142,10 @@ class RelationsAtlas:
         reach a provider no single row named directly."""
         if len(ids) < 2:
             return
-        for provider, provider_id in ids.items():
-            others = {p: v for p, v in ids.items() if p != provider}
+        normalized = {provider: str(provider_id)
+                      for provider, provider_id in ids.items()}
+        for provider, provider_id in normalized.items():
+            others = {p: v for p, v in normalized.items() if p != provider}
             key = (provider, provider_id)
             links = self._by_key.setdefault(key, {})
             old_sources = self._sources.setdefault(key, {})
@@ -146,33 +170,24 @@ class RelationsAtlas:
         path = path or next((p for p in aod_paths() if os.path.isfile(p)), None)
         if not path:
             return self
-        path = os.fspath(path)
         try:
-            if path.endswith('.jsonl'):
-                with open(path, encoding='utf-8') as f:
-                    records = []
-                    for line in f:
-                        item = json.loads(line)
-                        if isinstance(item, dict) and 'sources' in item:
-                            records.append(item)
-            else:
-                with open(path, encoding='utf-8') as f:
-                    root = json.load(f)
-                records = root.get('data', []) if isinstance(root, dict) else root
-            for record in records:
-                if not isinstance(record, dict):
-                    continue
+            for record in iter_aod_records(path):
                 ids = {}
                 for url in record.get('sources', []):
-                    match = re.search(r'https?://(?:www\.)?myanimelist\.net/anime/(\d+)', url)
+                    match = re.search(
+                        r'https?://(?:www\.)?myanimelist\.net/anime/(\d+)',
+                        url)
                     if match:
                         ids['mal'] = match.group(1)
                         continue
-                    match = re.search(r'https?://(?:www\.)?anilist\.co/anime/(\d+)', url)
+                    match = re.search(
+                        r'https?://(?:www\.)?anilist\.co/anime/(\d+)', url)
                     if match:
                         ids['anilist'] = match.group(1)
                         continue
-                    match = re.search(r'https?://(?:www\.)?kitsu\.(?:app|io)/anime/(\d+)', url)
+                    match = re.search(
+                        r'https?://(?:www\.)?kitsu\.(?:app|io)/anime/(\d+)',
+                        url)
                     if match:
                         ids['kitsu'] = match.group(1)
                 self._add_ids(ids, SOURCE_AOD)

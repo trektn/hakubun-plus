@@ -37,8 +37,50 @@ from hakubun import accounts
 from hakubun import data
 from hakubun import messenger
 from hakubun import utils
+from hakubun.i18n import _p
 from hakubun.extras import redirections
 from hakubun.parser import get_parser_class
+
+
+def _localize_mediainfo(mediainfo):
+    """Returns a copy of a lib adapter's mediainfo dict with
+    statuses_dict's values translated for display.
+
+    mediainfo (and the statuses_dict inside it) is the *class-level*
+    dict a hakubun/lib/*.py adapter defines (e.g. libanilist.py's
+    mediatypes['anime']), shared by every account using that library.
+    Two things follow from that:
+
+    - It can't be translated at its definition site. Class bodies run
+      at import time, almost always before the UI has called
+      i18n.install() with the user's chosen language (module imports
+      happen before Qt/GTK have parsed the config to know what that
+      choice even is), so any translation baked in there would be
+      stuck on whatever _translation was default at that point.
+    - It must never be mutated in place here -- every account sharing
+      the class would see the translated copy, including a
+      hypothetical later account whose own language differs.
+
+    Called once per account/mediatype load (see get_api_info() and
+    start()), which happens well after i18n.install(), and returns
+    fresh copies both times -- cheap dicts, and it means every UI
+    consumer reading self.mediainfo['statuses_dict'] gets a translated
+    value for free, without patching each of the many call sites
+    individually.
+
+    The status *codes* statuses_dict keys on ('CURRENT', 'watching',
+    ...) are provider-internal and untouched -- only the English
+    display strings they map to are translated.
+    """
+    statuses_dict = mediainfo.get('statuses_dict')
+    if not statuses_dict:
+        return mediainfo
+
+    localized = dict(mediainfo)
+    localized['statuses_dict'] = {
+        code: _p('status', label) for code, label in statuses_dict.items()
+    }
+    return localized
 
 
 class Engine:
@@ -84,6 +126,7 @@ class Engine:
                'episode_missing': None,
                'undo_stack_changed': None,
                'mal_score_changed': None,
+               'titles_changed': None,
                }
 
     # Maximum number of user actions kept in the undo/redo history.
@@ -124,6 +167,11 @@ class Engine:
         # viewing the schedule costs nothing -- and so a "no schedule"
         # answer isn't re-asked on every single open.
         self._next_airing_cache = {}
+        self._title_fetch_epoch = 0
+        self._title_refreshing_epoch = None
+        self._anilist_native_titles = {}
+        self._anilist_native_looked_up = set()
+        self._synopsis_resolver = None
 
         # Utility parameter to get the account from the account manager
         if accountnum:
@@ -163,6 +211,10 @@ class Engine:
             self.config['searchdir']) if self._searchdir_exists(path)]
 
     def _init_data_handler(self, mediatype=None):
+        self._title_fetch_epoch += 1
+        self._title_refreshing_epoch = None
+        self._anilist_native_titles = {}
+        self._anilist_native_looked_up = set()
         # Create data handler
         self.data_handler = data.Data(
             self.msg, self.config, self.account, mediatype)
@@ -181,6 +233,7 @@ class Engine:
 
         # Record the API details
         (self.api_info, self.mediainfo) = self.data_handler.get_api_info()
+        self.mediainfo = _localize_mediainfo(self.mediainfo)
 
         # The undo/redo history is tied to this account+mediatype's data,
         # so it's reset whenever that changes (initial load, account
@@ -390,7 +443,15 @@ class Engine:
                 'titles': self.data_handler.get_show_titles(show),
             }
 
-        altnames_map = self.data_handler.get_altnames_map()
+        # Both manual aliases and the selected AOD/AniDB primary title are
+        # valid filename-matching names. The list overlay is display-only,
+        # but recognizing that displayed name keeps playback tracking
+        # intuitive.
+        matching_titles = self.primary_titles()
+        matching_titles.update(self.altnames())  # manual aliases win
+        altnames_map = {
+            name.lower(): showid for showid, name in matching_titles.items()
+        }
         return (tracker_list, altnames_map)
 
     def _update_tracker(self):
@@ -439,6 +500,7 @@ class Engine:
         # Start the data handler
         try:
             (self.api_info, self.mediainfo) = self.data_handler.start()
+            self.mediainfo = _localize_mediainfo(self.mediainfo)
         except utils.DataError as e:
             raise utils.DataFatal(str(e))
         except utils.APIError as e:
@@ -568,8 +630,143 @@ class Engine:
                 self.msg.exception(sys.exc_info())
 
         self.loaded = True
+        self._start_title_database_refresh()
         self.msg.debug("Engine started")
         return True
+
+    def _start_title_database_refresh(self):
+        """Refresh title data and Native-mode fallbacks in the background."""
+        if (self.data_handler.userconfig.get('mediatype') != 'anime'
+                or self.account.get('api') not in ('mal', 'kitsu', 'anilist')
+                or self._title_refreshing_epoch == self._title_fetch_epoch):
+            return
+
+        from hakubun.sync.relations import aod_paths
+        if not any(os.path.isfile(path) for path in aod_paths()):
+            return  # AniDB titles are unusable without AOD's ID bridge.
+
+        from hakubun.titles import anidb_title_paths
+        had_titles = any(os.path.isfile(path) for path in anidb_title_paths())
+        epoch = self._title_fetch_epoch
+        self._title_refreshing_epoch = epoch
+        threading.Thread(
+            target=self._refresh_title_database_task,
+            args=(epoch, had_titles), daemon=True).start()
+
+    def _refresh_title_database_task(self, epoch, had_titles):
+        from hakubun.titles import TitleDataError, refresh_anidb_titles
+
+        try:
+            if self.config.get('anidb_titles_time'):
+                if not had_titles:
+                    self.msg.info('Fetching AniDB title data...')
+                try:
+                    _path, changed = refresh_anidb_titles(
+                        self.config.get('anidb_titles_url'),
+                        self.config.get('anidb_titles_time', 7))
+                except TitleDataError as error:
+                    self.msg.warn(str(error))
+                else:
+                    if epoch != self._title_fetch_epoch:
+                        return  # account/mediatype changed while downloading
+                    if changed or not had_titles:
+                        self.msg.info('AniDB title data is ready.')
+                        self._emit_signal('titles_changed')
+
+            if epoch == self._title_fetch_epoch \
+                    and self._uses_native_title_fallback():
+                self._fetch_anilist_native_titles(epoch)
+        finally:
+            if epoch == self._title_fetch_epoch:
+                self._title_refreshing_epoch = None
+
+    def _fetch_anilist_native_titles(self, epoch):
+        """Fill AniDB Native-title gaps from AniList in batches."""
+        from hakubun.titles import TitleDatabase
+
+        provider = self.account.get('api')
+        database = TitleDatabase.default()
+        mode = self._resolved_title_mode()
+        by_anilist_id = {}
+        changed = False
+        for show in self.data_handler.get().values():
+            show_id = show.get('id')
+            if mode in ('zh-Hans', 'zh-Hant') \
+                    and database.exact_title_for(provider, show_id, mode):
+                continue
+            if database.native_title_for(provider, show_id):
+                continue
+
+            # AniList list responses already include this, so using an
+            # AniList account normally costs no additional request.
+            native = show.get('title_native')
+            if native:
+                if self._anilist_native_titles.get(show_id) != native:
+                    self._anilist_native_titles[show_id] = native
+                    changed = True
+                continue
+
+            if show_id in self._anilist_native_looked_up:
+                continue
+            anilist_id = database.anilist_id_for(provider, show_id)
+            if anilist_id:
+                by_anilist_id.setdefault(int(anilist_id), []).append(show_id)
+
+        query = '''
+        query ($ids: [Int], $perPage: Int) {
+          Page(page: 1, perPage: $perPage) {
+            media(id_in: $ids, type: ANIME) {
+              id
+              title { native }
+            }
+          }
+        }'''
+        anilist_ids = list(by_anilist_id)
+        for offset in range(0, len(anilist_ids), self.AIRING_SCHEDULE_BATCH):
+            if epoch != self._title_fetch_epoch:
+                return
+            batch = anilist_ids[offset:offset + self.AIRING_SCHEDULE_BATCH]
+            try:
+                data = self._anilist_public_query(
+                    query, {'ids': batch,
+                            'perPage': self.AIRING_SCHEDULE_BATCH})
+                page = (data.get('data') or {}).get('Page') or {}
+                if not page and data.get('errors'):
+                    raise utils.EngineError(data['errors'])
+                media_rows = page.get('media') or []
+            except (utils.HakubunError, AttributeError) as error:
+                self.msg.warn("Could not fetch AniList native titles: %s"
+                              % error)
+                continue
+
+            for anilist_id in batch:
+                self._anilist_native_looked_up.update(
+                    by_anilist_id[anilist_id])
+            for media in media_rows:
+                native = (media.get('title') or {}).get('native')
+                if not native:
+                    continue
+                for show_id in by_anilist_id.get(media.get('id'), ()):
+                    if self._anilist_native_titles.get(show_id) != native:
+                        self._anilist_native_titles[show_id] = native
+                        changed = True
+
+        if changed and epoch == self._title_fetch_epoch:
+            self._emit_signal('titles_changed')
+
+    def _resolved_title_mode(self):
+        mode = self.config.get('title_language', 'auto')
+        if mode == 'auto':
+            from hakubun import i18n
+            mode = i18n.default_title_mode(i18n.active_language())
+        return mode
+
+    def _uses_native_title_fallback(self):
+        mode = self._resolved_title_mode()
+        return (mode == 'native'
+                or (mode in ('zh-Hans', 'zh-Hant')
+                    and self.config.get(
+                        'chinese_native_title_fallback', True)))
 
     def unload(self):
         """
@@ -624,7 +821,16 @@ class Engine:
         Note that this writes the configuration only to memory; when you're
         done doing all necessary changes, make sure to write the configuration file
         with :func:`save_config`."""
+        changed = self.config.get(key) != value
         self.config[key] = value
+        if (changed and key in ('title_language',
+                                'chinese_native_title_fallback')
+                and getattr(self, 'loaded', False)):
+            self._emit_signal('titles_changed')
+            if self._uses_native_title_fallback():
+                self._start_title_database_refresh()
+        if changed and key == 'tmdb_api_key':
+            self._synopsis_resolver = None
 
     def save_config(self):
         """Writes all configuration files to disk."""
@@ -681,7 +887,11 @@ class Engine:
         """
         Returns detailed information about **show** requested from the data handler.
         """
-        details = self.data_handler.info_get(show)
+        details = dict(self.data_handler.info_get(show))
+        primary_title = self.primary_title(show)
+        details['title'] = primary_title
+        details = self._localized_details(show, details)
+        details = self._localized_metadata(details)
 
         # mal_score isn't part of the detail-fetch response itself.
         # Shows already on the user's list get it from the cached
@@ -709,6 +919,9 @@ class Engine:
         # added here shows up in all of them without UI-side work.
         rows = []
 
+        if primary_title != show.get('title'):
+            rows.append(('Tracker title', show.get('title')))
+
         if show.get('mal_score'):
             rows.append(('MAL Score', show['mal_score']))
 
@@ -726,7 +939,8 @@ class Engine:
             if when:
                 rows.append(('Next episode will air in', when))
                 if episode:
-                    rows.append(('Next episode', str(episode)))
+                    rows.append(
+                        ('Next episode', utils.format_episode_number(episode)))
 
         # A manually pinned folder (set_show_folder) is otherwise
         # invisible once set -- nothing in the list marks a show as
@@ -941,7 +1155,63 @@ class Engine:
 
         results = self.data_handler.search(criteria, method)
         self._prefetch_search_mal_scores(results)
+        self._localize_search_synopses(results)
+        self._localize_search_metadata(results)
         return results
+
+    def _localized_metadata(self, details):
+        if self.data_handler.userconfig.get('mediatype') != 'anime':
+            return details
+        from hakubun.metadata import localize_details
+        return localize_details(details, self.account.get('api'))
+
+    def _localize_search_metadata(self, results):
+        if self.data_handler.userconfig.get('mediatype') != 'anime':
+            return results
+        for show in results:
+            localized = self._localized_metadata(show)
+            show.clear()
+            show.update(localized)
+        return results
+
+    def _synopsis_resolver_instance(self):
+        if getattr(self, '_synopsis_resolver', None) is None:
+            from hakubun.synopses import SynopsisResolver
+            self._synopsis_resolver = SynopsisResolver(self.config)
+        return self._synopsis_resolver
+
+    def _localize_search_synopses(self, results):
+        if self.data_handler.userconfig.get('mediatype') != 'anime':
+            return results
+        try:
+            return self._synopsis_resolver_instance().enrich(
+                results, self.account.get('api'))
+        except Exception as error:
+            # Synopsis localization is an optional display enhancement; a
+            # source/cache failure must never turn a successful tracker search
+            # into an error dialog.
+            if getattr(self, 'msg', None):
+                self.msg.debug(
+                    "Could not localize search synopses: %s" % error)
+            return results
+
+    def _localized_details(self, show, details):
+        if self.data_handler.userconfig.get('mediatype') != 'anime':
+            return details
+        lookup = dict(details)
+        lookup.update(show)
+        lookup['extra'] = details.get('extra') or ()
+        try:
+            resolver = self._synopsis_resolver_instance()
+            synopsis = resolver.resolve(lookup, self.account.get('api'))
+            if synopsis:
+                from hakubun.synopses import with_synopsis
+                return with_synopsis(details, synopsis)
+        except Exception as error:
+            if getattr(self, 'msg', None):
+                self.msg.debug(
+                    "Could not localize synopsis details: %s" % error)
+        return details
 
     def _prefetch_search_mal_scores(self, results):
         """
@@ -1751,6 +2021,69 @@ class Engine:
         Gets a dictionary of all set alternative names.
         """
         return self.data_handler.altnames_get()
+
+    def primary_titles(self):
+        """Localized display titles keyed by active-provider show id.
+
+        AOD and AniDB are optional local datasets. If either is unavailable,
+        or the active media type/provider cannot be mapped, this is simply an
+        empty mapping and every caller keeps the tracker title.
+        """
+        if self.data_handler.userconfig.get('mediatype') != 'anime':
+            return {}
+        provider = self.account.get('api')
+        if provider not in ('mal', 'kitsu', 'anilist'):
+            return {}
+        from hakubun.titles import TitleDatabase
+        database = TitleDatabase.default()
+        shows = list(self.data_handler.get().values())
+        mode = self._resolved_title_mode()
+        selected = database.titles_for(shows, provider, mode)
+        if mode == 'native':
+            for show in shows:
+                show_id = show.get('id')
+                if database.native_title_for(provider, show_id):
+                    continue
+                fallback = (show.get('title_native')
+                            or self._anilist_native_titles.get(show_id))
+                if fallback and fallback != show.get('title'):
+                    selected[show_id] = fallback
+        elif (mode in ('zh-Hans', 'zh-Hant')
+              and self.config.get('chinese_native_title_fallback', True)):
+            for show in shows:
+                show_id = show.get('id')
+                if database.exact_title_for(provider, show_id, mode):
+                    continue
+                fallback = (database.native_title_for(provider, show_id)
+                            or show.get('title_native')
+                            or self._anilist_native_titles.get(show_id))
+                if fallback and fallback != show.get('title'):
+                    selected[show_id] = fallback
+        return selected
+
+    def primary_title(self, show):
+        """Localized display title for one show, tracker title as fallback."""
+        if (self.data_handler.userconfig.get('mediatype') != 'anime'
+                or self.account.get('api') not in ('mal', 'kitsu', 'anilist')):
+            return show['title']
+        from hakubun.titles import TitleDatabase
+        database = TitleDatabase.default()
+        provider = self.account['api']
+        mode = self._resolved_title_mode()
+        title = database.title_for(provider, show['id'], mode)
+        if mode == 'native' \
+                and not database.native_title_for(provider, show['id']):
+            title = (show.get('title_native')
+                     or self._anilist_native_titles.get(show['id'])
+                     or title)
+        elif (mode in ('zh-Hans', 'zh-Hant')
+              and self.config.get('chinese_native_title_fallback', True)
+              and not database.exact_title_for(provider, show['id'], mode)):
+            title = (database.native_title_for(provider, show['id'])
+                     or show.get('title_native')
+                     or self._anilist_native_titles.get(show['id'])
+                     or title)
+        return title or show['title']
 
     def filter_list(self, status_num):
         """

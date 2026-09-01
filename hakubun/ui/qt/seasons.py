@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMenu, QMe
                              QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.qt.add import AddStatusDialog
 from hakubun.ui.qt.details import DetailsDialog
 from hakubun.ui.qt.models import AddListProxy
@@ -94,10 +95,10 @@ class SeasonsWidget(QWidget):
         self._layout.removeWidget(self._unavailable_label)
 
         self.season_combo = QComboBox()
-        self.season_combo.addItem('Winter', utils.Season.WINTER)
-        self.season_combo.addItem('Spring', utils.Season.SPRING)
-        self.season_combo.addItem('Summer', utils.Season.SUMMER)
-        self.season_combo.addItem('Fall', utils.Season.FALL)
+        self.season_combo.addItem(_('Winter'), utils.Season.WINTER)
+        self.season_combo.addItem(_('Spring'), utils.Season.SPRING)
+        self.season_combo.addItem(_('Summer'), utils.Season.SUMMER)
+        self.season_combo.addItem(_('Fall'), utils.Season.FALL)
 
         today = date.today()
         current_season = (today.month - 1) // 3
@@ -107,22 +108,22 @@ class SeasonsWidget(QWidget):
         self.year_spin.setRange(1900, today.year + 1)
         self.year_spin.setValue(today.year)
 
-        self.search_btn = QPushButton('Refresh')
+        self.search_btn = QPushButton(_('Refresh'))
         self.search_btn.clicked.connect(self.s_search)
 
         self.group_combo = QComboBox()
-        self.group_combo.addItem('No grouping', AddListProxy.GROUP_NONE)
-        self.group_combo.addItem('Airing status', AddListProxy.GROUP_AIRING_STATUS)
-        self.group_combo.addItem('List status', AddListProxy.GROUP_LIST_STATUS)
-        self.group_combo.addItem('Type', AddListProxy.GROUP_TYPE)
+        self.group_combo.addItem(_('No grouping'), AddListProxy.GROUP_NONE)
+        self.group_combo.addItem(_('Airing status'), AddListProxy.GROUP_AIRING_STATUS)
+        self.group_combo.addItem(_('List status'), AddListProxy.GROUP_LIST_STATUS)
+        self.group_combo.addItem(_('Type'), AddListProxy.GROUP_TYPE)
         self.group_combo.currentIndexChanged.connect(self.s_group_changed)
 
         self.sort_combo = QComboBox()
-        self.sort_combo.addItem('Airing date', AddListProxy.SORT_AIRING_DATE)
-        self.sort_combo.addItem('Episodes', AddListProxy.SORT_EPISODES)
-        self.sort_combo.addItem('Popularity', AddListProxy.SORT_POPULARITY)
-        self.sort_combo.addItem('Score', AddListProxy.SORT_SCORE)
-        self.sort_combo.addItem('Type', AddListProxy.SORT_TYPE)
+        self.sort_combo.addItem(_('Airing date'), AddListProxy.SORT_AIRING_DATE)
+        self.sort_combo.addItem(_('Episodes'), AddListProxy.SORT_EPISODES)
+        self.sort_combo.addItem(_('Popularity'), AddListProxy.SORT_POPULARITY)
+        self.sort_combo.addItem(_('Score'), AddListProxy.SORT_SCORE)
+        self.sort_combo.addItem(_('Type'), AddListProxy.SORT_TYPE)
         self.sort_combo.currentIndexChanged.connect(self.s_sort_changed)
 
         filters_layout = QHBoxLayout()
@@ -130,9 +131,9 @@ class SeasonsWidget(QWidget):
         filters_layout.addWidget(self.year_spin)
         filters_layout.addWidget(self.search_btn)
         filters_layout.addStretch(1)
-        filters_layout.addWidget(QLabel('Group by:'))
+        filters_layout.addWidget(QLabel(_('Group by:')))
         filters_layout.addWidget(self.group_combo)
-        filters_layout.addWidget(QLabel('Sort by:'))
+        filters_layout.addWidget(QLabel(_('Sort by:')))
         filters_layout.addWidget(self.sort_combo)
 
         self.card_view = AddCardView(
@@ -213,13 +214,13 @@ class SeasonsWidget(QWidget):
 
         menu = QMenu(self)
         if show['id'] in self.mylist:
-            move_to = menu.addMenu('Move to')
+            move_to = menu.addMenu(_('Move to'))
             for status in self.statuses:
                 action = move_to.addAction(self.statuses_dict.get(status, str(status)))
                 action.triggered.connect(
                     lambda checked=False, s=status, showid=show['id']: self.s_move_to(showid, s))
         else:
-            add_action = menu.addAction('Add to list...')
+            add_action = menu.addAction(_('Add to list...'))
             add_action.triggered.connect(lambda checked=False, s=show: self.s_add(s))
         menu.exec(self.card_view.viewport().mapToGlobal(pos))
 

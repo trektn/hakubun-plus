@@ -21,6 +21,7 @@ import threading
 from gi.repository import GObject, Gtk
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.gtk import gtk_dir
 from hakubun.ui.gtk.imagebox import ImageBox
 
@@ -73,7 +74,7 @@ class ShowInfoBox(Gtk.Box):
             else:
                 self.image_box.set_image_remote(show['image'], imagefile)
         else:
-            self.image_box.set_text('No Image')
+            self.image_box.set_text(_('No Image'))
 
         # Start info loading thread
         threading.Thread(target=self._show_load_start_task).start()
@@ -103,22 +104,27 @@ class ShowInfoBox(Gtk.Box):
             show_id = (self._show or {}).get('id')
             if show_id:
                 detail.append("<b>%s</b>\n%s" % (
-                    html.escape('%s ID' % self._engine.api_info['name']),
+                    html.escape(_('%s ID') % self._engine.api_info['name']),
                     html.escape(str(show_id))))
             for line in self.details['extra']:
                 if line[0] and line[1]:
-                    title, content, *_ = line
+                    # Not "*_" -- gettext.install() makes "_" the global
+                    # translation function, and Python's function-wide
+                    # local scoping means shadowing it anywhere in this
+                    # method (even in an unreached branch) would break
+                    # the _() calls elsewhere in _show_load_finish_idle.
+                    title, content, *_rest = line
 
                     if isinstance(content, list):
                         content = ", ".join(filter(None, content))
 
-                    detail.append("<b>%s</b>\n%s" % (html.escape(str(title)),
+                    detail.append("<b>%s</b>\n%s" % (html.escape(_(str(title))),
                                                      html.escape(str(content))))
 
             self.data_label.set_text("\n\n".join(detail))
             self.data_label.set_use_markup(True)
         else:
-            self.label_title.set_text('Error while getting details.')
+            self.label_title.set_text(_('Error while getting details.'))
 
             if self.details_e:
                 self.data_label.set_text(str(self.details_e))

@@ -22,6 +22,7 @@ import traceback
 from gi.repository import GdkPixbuf, GLib, Gtk
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.ui.gtk.imagebox import ImageThread, scale
 
 _CARD_WIDTH = 140
@@ -37,7 +38,7 @@ class AiringScheduleWindow(Gtk.Window):
     """
 
     def __init__(self, engine, transient_for=None):
-        Gtk.Window.__init__(self, title='Airing Schedule',
+        Gtk.Window.__init__(self, title=_('Airing Schedule'),
                             transient_for=transient_for)
         self.set_default_size(1100, 420)
         self._engine = engine
@@ -50,7 +51,7 @@ class AiringScheduleWindow(Gtk.Window):
         outer.set_border_width(8)
 
         self._status_label = Gtk.Label(
-            label='Loading airing schedule...', xalign=0)
+            label=_('Loading airing schedule...'), xalign=0)
         outer.pack_start(self._status_label, False, False, 0)
 
         scroller = Gtk.ScrolledWindow()
@@ -61,7 +62,7 @@ class AiringScheduleWindow(Gtk.Window):
         outer.pack_start(scroller, True, True, 0)
 
         button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        close_btn = Gtk.Button(label='Close')
+        close_btn = Gtk.Button(label=_('Close'))
         close_btn.connect('clicked', lambda *_a: self.destroy())
         button_row.pack_end(close_btn, False, False, 0)
         outer.pack_start(button_row, False, False, 0)
@@ -78,7 +79,7 @@ class AiringScheduleWindow(Gtk.Window):
             # Expected failures (network, AniList error bodies) come
             # through as EngineError -- show them plainly.
             GLib.idle_add(self._status_label.set_text,
-                          'Could not load airing schedule: %s' % e)
+                          _('Could not load airing schedule: %s') % e)
             return
         except Exception as e:
             # Anything else is a bug, but this daemon thread dying
@@ -86,7 +87,7 @@ class AiringScheduleWindow(Gtk.Window):
             # keep the traceback visible instead of swallowing it.
             traceback.print_exc()
             GLib.idle_add(self._status_label.set_text,
-                          'Could not load airing schedule: %s' % e)
+                          _('Could not load airing schedule: %s') % e)
             return
         GLib.idle_add(self._populate, schedule)
 
@@ -102,14 +103,14 @@ class AiringScheduleWindow(Gtk.Window):
         total_this_week = sum(len(entries) for entries in by_day.values())
         if not schedule:
             self._status_label.set_text(
-                'No airing shows with a known schedule in your list.')
+                _('No airing shows with a known schedule in your list.'))
         elif not total_this_week:
             self._status_label.set_text(
-                'Nothing airing in the next 7 days -- %d upcoming episode(s) further out.'
+                _('Nothing airing in the next 7 days -- %d upcoming episode(s) further out.')
                 % len(schedule))
         else:
             self._status_label.set_text(
-                '%d episode(s) airing this week.' % total_this_week)
+                _('%d episode(s) airing this week.') % total_this_week)
 
         api_info = self._engine.api_info
         for day in days:
@@ -131,7 +132,7 @@ class AiringScheduleWindow(Gtk.Window):
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         column.set_size_request(_CARD_WIDTH, -1)
 
-        header_text = day.strftime('%A\n%b %d')
+        header_text = utils.format_airing_day(day)
         header = Gtk.Label(justify=Gtk.Justification.CENTER)
         escaped = GLib.markup_escape_text(header_text)
         if day == datetime.date.today():
@@ -176,7 +177,7 @@ class AiringScheduleWindow(Gtk.Window):
         card.pack_start(title, False, False, 0)
 
         when_label = Gtk.Label(
-            label='Ep %d — %s' % (
+            label=_('Ep %d — %s') % (
                 entry['episode'], utils.format_relative_airtime(entry['airing_at'])),
             wrap=True, justify=Gtk.Justification.CENTER)
         when_label.set_tooltip_text(utils.format_local_time(entry['airing_at']))
@@ -185,10 +186,11 @@ class AiringScheduleWindow(Gtk.Window):
         behind_by = (entry['episode'] - 1) - (show.get('my_progress') or 0)
         status = Gtk.Label()
         if behind_by <= 0:
-            status.set_markup('<span foreground="#4CAF50"><b>Up to date</b></span>')
+            status.set_markup('<span foreground="#4CAF50"><b>%s</b></span>' % _('Up to date'))
         else:
             status.set_markup(
-                '<span foreground="#E5A400"><b>Behind by %d</b></span>' % behind_by)
+                '<span foreground="#E5A400"><b>%s</b></span>' % (
+                    _('Behind by %d') % behind_by))
         card.pack_start(status, False, False, 0)
 
         return card

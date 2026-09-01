@@ -47,10 +47,10 @@ def test_aod_json_adds_mal_kitsu_anilist_ids(tmp_path):
     path.write_text('''{"data": [{"sources": [
         "https://myanimelist.net/anime/1/Test",
         "https://kitsu.app/anime/2",
-        "https://anilist.co/anime/3/Test"
+        "https://anilist.co/anime/3/Test",
+        "https://anidb.net/anime/4"
     ]}]}''')
-    atlas = RelationsAtlas()
-    atlas.add_aod(str(path))
+    atlas = RelationsAtlas().add_aod(path)
     assert atlas.lookup('mal', '1') == {'kitsu': '2', 'anilist': '3'}
     assert atlas.lookup_sources('mal', '1') == {
         'kitsu': 'anime-offline-database',
@@ -65,8 +65,7 @@ def test_anime_relations_wins_aod_conflict(tmp_path):
         "https://myanimelist.net/anime/1/Test",
         "https://kitsu.app/anime/99"
     ]}]}''')
-    atlas = RelationsAtlas.from_file(str(relation_path))
-    atlas.add_aod(str(aod_path))
+    atlas = RelationsAtlas.from_file(relation_path).add_aod(aod_path)
     assert atlas.lookup('mal', '1')['kitsu'] == '2'
     assert atlas.lookup_sources('mal', '1')['kitsu'] == 'anime-relations'
 

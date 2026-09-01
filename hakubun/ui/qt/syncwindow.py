@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QDialog,
                              QVBoxLayout, QWidget)
 
 from hakubun import utils
+from hakubun.i18n import _
 from hakubun.sync import adapters, present
 from hakubun.sync.models import (FieldPolicy, NormalizedEntry,
                                  SyncCancelled, SyncOperation, USER_FIELDS)
@@ -1634,7 +1635,7 @@ class SyncWindow(QDialog):
         providers = (cand or {}).get('providers') or {}
         media_type = (cand or {}).get('media_type')
         for provider, pid in sorted(providers.items()):
-            action = menu.addAction('Open on %s' % provider.capitalize())
+            action = menu.addAction(_('Open on %s') % provider.capitalize())
             action.triggered.connect(
                 lambda checked=False, p=provider, mt=media_type, i=pid:
                 self._open_provider_page(p, mt, i))
@@ -1659,7 +1660,7 @@ class SyncWindow(QDialog):
         menu = QMenu(self)
         inspect_target = self._identity_inspect_target(issue)
         if inspect_target is not None:
-            inspect_action = menu.addAction('Inspect identity')
+            inspect_action = menu.addAction(_('Inspect identity'))
             inspect_action.triggered.connect(
                 lambda _checked=False, target=inspect_target:
                 self._inspect_from_identity(*target))
@@ -1667,7 +1668,7 @@ class SyncWindow(QDialog):
             if inspect_target is not None:
                 menu.addSeparator()
             ignore_action = menu.addAction(
-                'Leave %s alone for this title'
+                _('Leave %s alone for this title')
                 % issue['provider'].capitalize())
             ignore_action.triggered.connect(
                 lambda: self._ignore_identity_gap(issue))
@@ -1676,7 +1677,7 @@ class SyncWindow(QDialog):
         media_type = (issue.get('entry') or {}).get('media_type')
         url = adapters.web_url(issue['provider'], media_type,
                                issue['provider_id'])
-        open_action = menu.addAction('Open on %s'
+        open_action = menu.addAction(_('Open on %s')
                                      % issue['provider'].capitalize())
         open_action.setEnabled(url is not None)
         if url:
@@ -1866,7 +1867,7 @@ class SyncWindow(QDialog):
         url = adapters.web_url(provider, result.media_type, provider_id)
         self.inspect_open_button.setEnabled(url is not None)
         self.inspect_open_button.setText(
-            'Open on %s' % provider.capitalize())
+            _('Open on %s') % provider.capitalize())
         self._inspect_url = url
 
     def s_inspect_open(self):

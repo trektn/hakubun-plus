@@ -34,6 +34,8 @@ import time
 import uuid
 from enum import Enum, auto
 
+from hakubun.i18n import _
+
 try:
     from rapidfuzz import fuzz as rapidfuzz_fuzz
     from rapidfuzz import process as rapidfuzz_process
@@ -137,10 +139,13 @@ class Type(BaseEnum):
     MANGA = "Manga"
     NOVEL = "Novel"
     ONE_SHOT = "One Shot"
+    # Kept after the existing concrete members so their persisted integer
+    # positions do not move. Music videos used to alias OTHER, which made
+    # it impossible for the UI to display the more useful "MV" type.
+    MUSIC = "Music Video"
 
     # aliases
     SP = SPECIAL
-    MUSIC = OTHER
 
 
 class Tracker(Enum):
@@ -868,6 +873,22 @@ config_defaults = {
     # 'graphql' (libkitsu_graphql). Defaults to legacy so existing Kitsu
     # accounts keep working exactly as before unless explicitly switched.
     'kitsu_api': 'legacy',
+    # Language-aware primary title shown in list views. ``auto`` selects the
+    # first mode for the active UI language. Tracker data stays untouched;
+    # hakubun.titles supplies a display overlay from local AOD + AniDB data.
+    'title_language': 'auto',
+    # For Simplified/Traditional modes, prefer the work's native title when
+    # no matching Chinese title exists, before falling back to romaji or the
+    # tracker-provided title.
+    'chinese_native_title_fallback': True,
+    # TMDB v3 API key used for localized synopsis lookups. Kept in the
+    # user's config (or HAKUBUN_TMDB_API_KEY), never bundled in source.
+    'tmdb_api_key': '',
+    # AniDB's compact title dump is cached separately from user-supplied
+    # files. Zero disables automatic fetching; positive values are the
+    # maximum cache age in days.
+    'anidb_titles_url': 'https://anidb.net/api/anime-titles.xml.gz',
+    'anidb_titles_time': 7,
 }
 
 userconfig_defaults = {
@@ -947,6 +968,10 @@ gtk_defaults = {
     # Preferences window reads it directly, so its absence here was a
     # KeyError on opening Preferences at all.
     'show_subminer_toggle': True,
+    # UI language override. 'auto' follows the system locale; otherwise
+    # one of hakubun.i18n.SUPPORTED_LANGUAGES. Read once at startup, so
+    # changing it needs a restart to take effect.
+    'language': 'auto',
     # Multi-sync (same keys/semantics as qt_defaults below): the list
     # overlay, owner-system score editing and the Sync button's
     # headless multi-sync all gate on these.
@@ -999,6 +1024,8 @@ qt_defaults = {
     # menu in Taiga mode) is shown at all -- purely cosmetic, doesn't
     # touch config_defaults' 'use_subminer' switch itself.
     'show_subminer_toggle': True,
+    # Same key/semantics as gtk_defaults above.
+    'language': 'auto',
     'multisync_enabled': True,
     # Same keys/semantics as config_defaults above.
     'multisync_plan_only': True,
@@ -1083,16 +1110,16 @@ def format_airtime_delta(dt, now=None) -> str:
     minutes = seconds / 60
     if minutes < 60:
         n = max(1, round(minutes))
-        return '%d minute%s' % (n, '' if n == 1 else 's')
+        return _('%d minute') % n if n == 1 else _('%d minutes') % n
 
     hours = minutes / 60
     if hours < 24:
         n = max(1, round(hours))
-        return '%d hour%s' % (n, '' if n == 1 else 's')
+        return _('%d hour') % n if n == 1 else _('%d hours') % n
 
     days = hours / 24
     n = max(1, round(days))
-    return '%d day%s' % (n, '' if n == 1 else 's')
+    return _('%d day') % n if n == 1 else _('%d days') % n
 
 
 def format_relative_airtime(dt, now=None) -> str:
@@ -1104,12 +1131,64 @@ def format_relative_airtime(dt, now=None) -> str:
     """
     delta = format_airtime_delta(dt, now)
     if delta is not None:
-        return 'In %s' % delta
+        return _('In %s') % delta
 
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
     seconds = (as_utc(dt) - as_utc(now)).total_seconds()
-    return 'Airing now' if seconds > -1800 else 'Aired'
+    return _('Airing now') if seconds > -1800 else _('Aired')
+
+
+def _localized_date(dt, include_year=False) -> str:
+    """Format a short date using the active language's native grammar."""
+    from hakubun import i18n
+
+    local = as_utc(dt).astimezone()
+    short_weekdays = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+    months = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug',
+              'Sep', 'Oct', 'Nov', 'Dec')
+    language = i18n.active_language()
+    if language == 'ja':
+        weekday = ('月', '火', '水', '木', '金', '土', '日')[local.weekday()]
+        year = '%d年' % local.year if include_year else ''
+        return '%s%d月%d日（%s）' % (year, local.month, local.day, weekday)
+    if language in ('zh_CN', 'zh_TW'):
+        prefix = '周' if language == 'zh_CN' else '週'
+        weekday = ('一', '二', '三', '四', '五', '六', '日')[local.weekday()]
+        year = '%d年' % local.year if include_year else ''
+        return '%s%d月%d日（%s%s）' % (
+            year, local.month, local.day, prefix, weekday)
+    weekday = _(short_weekdays[local.weekday()])
+    month = _(months[local.month - 1])
+    if language == 'es':
+        suffix = ' de %d' % local.year if include_year else ''
+        return '%s, %d de %s%s' % (weekday, local.day, month, suffix)
+    suffix = ', %d' % local.year if include_year else ''
+    return '%s %s %02d%s' % (weekday, month, local.day, suffix)
+
+
+def format_airing_day(day) -> str:
+    """Formats an airing-schedule day using the active UI language."""
+    from hakubun import i18n
+
+    language = i18n.active_language()
+    if language == 'ja':
+        weekday = ('月', '火', '水', '木', '金', '土', '日')[day.weekday()]
+        return '%d月%d日（%s）' % (day.month, day.day, weekday)
+    if language in ('zh_CN', 'zh_TW'):
+        prefix = '周' if language == 'zh_CN' else '週'
+        weekday = ('一', '二', '三', '四', '五', '六', '日')[day.weekday()]
+        return '%d月%d日（%s%s）' % (day.month, day.day, prefix, weekday)
+    weekdays = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                'Saturday', 'Sunday')
+    months = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug',
+              'Sep', 'Oct', 'Nov', 'Dec')
+    if language == 'es':
+        return '%s\n%d de %s' % (
+            _(weekdays[day.weekday()]), day.day,
+            _(months[day.month - 1]))
+    return '%s\n%s %02d' % (
+        _(weekdays[day.weekday()]), _(months[day.month - 1]), day.day)
 
 
 def format_next_airing(dt, now=None) -> str:
@@ -1122,8 +1201,35 @@ def format_next_airing(dt, now=None) -> str:
     delta = format_airtime_delta(dt, now)
     if delta is None:
         return None
+    from hakubun import i18n
+
     local = as_utc(dt).astimezone()
-    return '%s (%s)' % (delta, local.strftime('%a %b %d, %Y'))
+    language = i18n.active_language()
+    reference = as_utc(now).astimezone() if now is not None \
+        else datetime.datetime.now().astimezone()
+    include_year = local.year != reference.year
+    date = _localized_date(local, include_year=include_year)
+    if language == 'ja':
+        return '%s・あと%s' % (date, delta)
+    if language == 'zh_CN':
+        return '%s · %s后' % (date, delta)
+    if language == 'zh_TW':
+        return '%s · %s後' % (date, delta)
+    if language == 'es':
+        return '%s · dentro de %s' % (date, delta)
+    return '%s (%s)' % (delta, _localized_date(local, include_year=True))
+
+
+def format_episode_number(episode) -> str:
+    """Display an episode number with native counters where appropriate."""
+    from hakubun import i18n
+
+    language = i18n.active_language()
+    if language == 'ja':
+        return '第%s話' % episode
+    if language in ('zh_CN', 'zh_TW'):
+        return '第%s集' % episode
+    return str(episode)
 
 
 def format_clock(milliseconds) -> str:
@@ -1257,7 +1363,8 @@ def date_to_season(dt) -> str:
         return '?'
     seasons = (Season.WINTER, Season.SPRING, Season.SUMMER, Season.FALL)
     season = seasons[(dt.month - 1) // 3]
-    return f'{season!s} {dt.year}'
+    from hakubun.metadata import localize_season
+    return localize_season(f'{season!s} {dt.year}')
 
 
 _RELEASE_STATUS_LABELS = {
@@ -1273,9 +1380,10 @@ def release_status_label(status) -> str:
     'Upcoming', ...). Shared by the list views' Release Status column;
     same paint-path rules as get_season_label below: cheap, and never
     mutates anything."""
+    from hakubun.metadata import localize_status
     label = _RELEASE_STATUS_LABELS.get(status)
     if label:
-        return label
+        return localize_status(status)
     if status in (None, Status.UNKNOWN):
         return '?'
     return str(status)
@@ -1299,9 +1407,14 @@ def get_season_label(show) -> str:
     fetches.) The computation below is a short tuple scan plus an
     f-string -- cheap enough to redo per call.
     """
+    canonical = show.get('season_canonical')
+    if canonical:
+        from hakubun.metadata import localize_season
+        return localize_season(canonical)
     for key, value in show.get('extra') or []:
         if key == 'Season' and value:
-            return value
+            from hakubun.metadata import localize_season
+            return localize_season(value)
     return date_to_season(show.get('start_date'))
 
 
@@ -1327,6 +1440,21 @@ def season_sort_key(label):
     text = str(label)
     if text.isdigit():
         return (int(text), -1)
+    # Localized forms may put the year first (2026年夏) or between words
+    # (Verano de 2026), so identify the year and translated season token
+    # independently instead of assuming English word order.
+    year_match = re.search(r'(?<!\d)(\d{4})(?!\d)', text)
+    if year_match:
+        from hakubun.metadata import localize_season
+        found_year = year_match.group(1)
+        for season, position in _SEASON_CHRONO_ORDER.items():
+            localized = localize_season(
+                '%s %s' % (season, found_year))
+            marker = localized.replace(found_year, '')
+            marker = marker.replace('年', '').replace(' de ', '').strip()
+            if season in text or (marker and marker in text):
+                return (int(year_match.group(1)), position)
+        return (int(year_match.group(1)), -1)
     season, sep, year = text.rpartition(' ')
     if sep and year.isdigit():
         return (int(year), _SEASON_CHRONO_ORDER.get(season, len(_SEASON_CHRONO_ORDER)))
