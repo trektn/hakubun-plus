@@ -191,10 +191,10 @@
 
 # Packaging
 
-* [ ] **Packaging:** Fix AUR packages
+* [x] **Packaging:** Fix AUR packages
 
-  * Push when ready
-  * **ON HOLD:** AUR attacks / current security situation
+  * Published 2026-08-31: `python-anitomy-ng-bin` `c8e79c2`,
+    `hakubun-git` `48ae715`, `hakubun-plus-git` `3fd7035`
   * Scope: `hakubun`, `hakubun+`
 
 ---
@@ -289,7 +289,7 @@ These should be handled after the MultiSync rework and rapid-fire work, with car
 
 ## On Hold
 
-* [ ] AUR packaging fixes
+* [x] AUR packaging fixes
 
 ## Do Last
 

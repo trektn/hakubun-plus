@@ -13,7 +13,7 @@
 #   packaging/windows/build-windows.sh              # build
 #   packaging/windows/build-windows.sh --clean      # rebuild from scratch
 #   BUILD_PREFIX=~/somewhere packaging/windows/build-windows.sh
-#   HAKUBUN_BUILD_LABEL=0.13-beta packaging/windows/build-windows.sh
+#   HAKUBUN_BUILD_LABEL=0.14-beta packaging/windows/build-windows.sh
 #
 set -euo pipefail
 

@@ -14,7 +14,7 @@ bundle for an interface no Windows user is likely to prefer over Qt.
 ## Building from Linux (cross-build under Wine)
 
 ```sh
-HAKUBUN_BUILD_LABEL=0.13-beta packaging/windows/build-windows.sh
+HAKUBUN_BUILD_LABEL=0.14-beta packaging/windows/build-windows.sh
 ```
 
 Needs `wine` (64-bit), `curl`, `zip` and `xvfb-run` on the host. The first run

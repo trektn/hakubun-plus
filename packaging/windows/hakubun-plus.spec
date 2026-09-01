@@ -28,8 +28,8 @@ sys.path.insert(0, ROOT)
 with open(os.path.join(ROOT, 'hakubun', 'utils.py'), encoding='utf-8') as fp:
     VERSION = re.search(r"^VERSION = '([^']+)'", fp.read(), re.M).group(1)
 
-# Names the output folder/zip. Defaults to the source version ('0.13.dev0');
-# set HAKUBUN_BUILD_LABEL=0.13-beta for a friendlier release name. The version
+# Names the output folder/zip. Defaults to the source version ('0.14.dev0');
+# set HAKUBUN_BUILD_LABEL=0.14-beta for a friendlier release name. The version
 # baked into the executables always comes from utils.py.
 LABEL = os.environ.get('HAKUBUN_BUILD_LABEL') or VERSION
 
@@ -44,7 +44,7 @@ if not os.path.exists(os.path.join(DATA_DIR, 'anime-relations',
 def _version_resource():
     """Write a Win32 VERSIONINFO resource for both executables.
 
-    The dotted VERSION ('0.13.dev0') can't go in the numeric field, so only
+    The dotted VERSION ('0.14.dev0') can't go in the numeric field, so only
     its leading numbers are used there; the readable string keeps it whole.
     """
     numbers = [int(part) for part in re.findall(r'\d+', VERSION)[:4]]

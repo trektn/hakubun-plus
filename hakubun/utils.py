@@ -42,7 +42,7 @@ try:
 except ImportError:
     rapidfuzz_fuzz = rapidfuzz_process = None
 
-VERSION = '0.13'
+VERSION = '0.14'
 
 DATADIR = os.path.dirname(__file__) + '/data'
 
